@@ -17,7 +17,11 @@
 #define MAXOBJ    24
 #define NSTOCK    17
 
-struct gobj { u8 type, used, null; u16 style, width; u32 color; };   /* fonts: style = height, width = weight */
+struct gobj { u8 type, used, null; u16 style, width; u32 color; };   /* fonts: style = height, width = weight;
+                                                                        pattern brushes: style BS_PATTERN, width = bitmap */
+#define BS_PATTERN 3
+#define MAXBMP 4
+static struct { u8 used, w, h; u16 rows[16]; } bmps[MAXBMP];      /* monochrome bitmaps up to 16x16 */
 static struct gobj stock[NSTOCK];
 static struct gobj objs[MAXOBJ];
 static struct dc dcs[MAXDC];
@@ -92,8 +96,12 @@ static struct gcstate gcs[MAXDC + 1];
 static u8 nocache;
 #define GS(d) (&gcs[((d)->hdc - HDC_BASE) >> 1])
 
+static u8 srv_exclend;                  /* the server implements GR_MODE_EXCLUDEENDPOINT */
+
 static void gs_mode(struct gcstate *g, int mode)
 {
+    if (srv_exclend)
+        mode |= GR_MODE_EXCLUDEENDPOINT;
     if (nocache || !(g->known & K_MODE) || g->mode != mode) {
         GrSetGCMode(g->gc, mode);
         g->mode = mode;
@@ -160,6 +168,14 @@ int gdi_init(void)
     memset(gcs, 0, sizeof(gcs));
     gcs[MAXDC].gc = gdi_gc;
     {
+        GR_GC_INFO gi;                  /* a patched server acknowledges the end-point flag */
+        GrSetGCMode(gdi_gc, GR_MODE_COPY | GR_MODE_EXCLUDEENDPOINT);
+        GrGetGCInfo(gdi_gc, &gi);
+        srv_exclend = (gi.mode & GR_MODE_HAVE_EXCLUDEENDPOINT) != 0;
+        GrSetGCMode(gdi_gc, GR_MODE_COPY);
+        vlog("w16: Nano-X server %s line end points itself\n", srv_exclend ? "leaves out" : "draws");
+    }
+    {
         const char *e = getenv("W16_NOCACHE");
         nocache = e && *e == '1';
         if (nocache)
@@ -190,6 +206,15 @@ void gdi_census(u16 *ndc, u16 *nobj)
     for (i = 0; i < MAXOBJ; i++)
         if (objs[i].used)
             (*nobj)++;
+    for (i = 0; i < MAXBMP; i++)
+        if (bmps[i].used)
+            (*nobj)++;
+}
+
+static int bmp_index(u16 h)
+{
+    u16 i = (u16)(h - HBMP_BASE) >> 1;
+    return (h >= HBMP_BASE && !(h & 1) && i < MAXBMP && bmps[i].used) ? (int)i : -1;
 }
 
 void gdi_shutdown(void)
@@ -294,6 +319,11 @@ u32 g_DeleteObject(u16 ss, u16 ap)
 {
     u16 h = AW(0), i;
     struct gobj *o = obj_get(h);
+    int bi = bmp_index(h);
+    if (bi >= 0) {
+        bmps[bi].used = 0;
+        return 1;
+    }
     if (!o)
         return 0;
     if (h < HOBJ_BASE)
@@ -370,6 +400,47 @@ static int brush_of(struct dc *d, GR_COLOR *c)
     return 1;
 }
 
+static int brush_pat(struct dc *d)
+{
+    struct gobj *o = obj_get(d->brush);
+    return o && o->type == OBJ_BRUSH && o->style == BS_PATTERN && bmps[o->width].used ? o->width : -1;
+}
+
+/* Fill with a monochrome pattern aligned to the window origin: 1 bits in the background colour, 0 bits
+ * in the text colour, as Windows paints a pattern brush. One GrBitmap per 16 rows (the client library
+ * splits requests over 512 bytes itself). The screen is 320 pixels wide, so 20 words cover a row. */
+static void pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
+{
+    GR_BITMAP *buf = (GR_BITMAP *)w16_scratch;      /* 640 bytes of the shared scratch */
+    int wpr, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
+    if (w <= 0 || h <= 0)
+        return;
+    if (w > 320)
+        w = 320;
+    wpr = (w + 15) / 16;
+    gs_mode(GS(d), GR_MODE_COPY);
+    gs_fg(GS(d), rgb_to_gr(d->bkcolor));
+    gs_bg(GS(d), rgb_to_gr(d->textcolor));
+    gs_usebg(GS(d), 1);
+    for (y0 = 0; y0 < h; y0 += 16) {
+        int rows = h - y0 > 16 ? 16 : h - y0;
+        for (r = 0; r < rows; r++) {
+            u16 pr = bmps[bi].rows[((y + y0 + r) % bh + bh) % bh], word = 0;
+            for (k = 0; k < wpr; k++) {
+                int px;
+                if (!k || !same) {
+                    word = 0;
+                    for (px = 0; px < 16; px++)
+                        if (pr & (0x8000u >> (((x + 16 * k + px) % bw + bw) % bw)))
+                            word |= (u16)(0x8000u >> px);
+                }
+                buf[r * wpr + k] = word;
+            }
+        }
+        GrBitmap(d->wid, d->gc, x, y + y0, w, rows, buf);
+    }
+}
+
 /* Set the GC for pen or brush output in colour c under the DC's binary raster op (SetROP2).
  * Returns 0 when the op leaves the screen alone, 2 when it combines with the screen (XOR-like). */
 static int set_rop(struct dc *d, GR_COLOR c)
@@ -416,10 +487,16 @@ u32 g_Rectangle(u16 ss, u16 ap)
     int b = (i16)AW(0), r = (i16)AW(2), t = (i16)AW(4), l = (i16)AW(6);
     struct dc *d = dc_get(AW(8));
     GR_COLOR pc, bc;
-    int pen;
+    int pen, bi;
     if (!d || r <= l || b <= t)
         return 0;
     pen = pen_of(d, &pc);
+    if ((bi = brush_pat(d)) >= 0) {             /* pattern brush inside the outline */
+        pat_fill(d, l + pen, t + pen, r - l - 2 * pen, b - t - 2 * pen, bi);
+        if (pen && set_rop(d, pc))
+            GrRect(d->wid, d->gc, l, t, r - l, b - t);
+        return 1;
+    }
     if (pen && d->rop2 == R2_COPYPEN && brush_of(d, &bc) && bc == pc && !nocache) {
         set_rop(d, bc);                         /* outline and inside alike: one request */
         GrFillRect(d->wid, d->gc, l, t, r - l, b - t);
@@ -464,8 +541,11 @@ u32 g_MoveTo(u16 ss, u16 ap)
     return prev;
 }
 
-/* LineTo(hdc, x, y): like Windows, the end point itself is not drawn, which matters for XOR modes
- * where joined segments would otherwise invert their shared corner twice */
+/* LineTo(hdc, x, y). Windows draws from the current position up to but not including (x, y), so a
+ * zero-length line draws nothing and joined segments never touch their shared corner twice. The
+ * patched Nano-X server leaves the end point out itself (GR_MODE_EXCLUDEENDPOINT, probed at
+ * start); with a stock server the end point is drawn, and in the modes that combine with the
+ * screen it is drawn again to undo it. In plain copy modes on a stock server it stays drawn. */
 u32 g_LineTo(u16 ss, u16 ap)
 {
     int y = (i16)AW(0), x = (i16)AW(2), k;
@@ -473,10 +553,10 @@ u32 g_LineTo(u16 ss, u16 ap)
     GR_COLOR c;
     if (!d)
         return 0;
-    if (pen_of(d, &c) && (k = set_rop(d, c)) != 0) {
+    if ((x != d->curx || y != d->cury) && pen_of(d, &c) && (k = set_rop(d, c)) != 0) {
         GrLine(d->wid, d->gc, d->curx, d->cury, x, y);
-        if (k == 2)
-            GrPoint(d->wid, d->gc, x, y);       /* undo the end point */
+        if (k == 2 && !srv_exclend)
+            GrPoint(d->wid, d->gc, x, y);
     }
     d->curx = x; d->cury = y;
     return 1;
@@ -500,6 +580,105 @@ u32 u_FillRect(u16 ss, u16 ap)
     GrFillRect(d->wid, d->gc, l, t, r - l, b - t);
     return 1;
 }
+
+/* ---------------------------------------------------------------- bitmaps, pattern brushes, PatBlt */
+/* CreateBitmap(nWidth, nHeight, nPlanes, nBitCount, lpBits): monochrome bitmaps up to 16x16, the brush
+ * patterns programs build; rows are WORD aligned with the leftmost pixel in the most significant bit */
+u32 g_CreateBitmap(u16 ss, u16 ap)
+{
+    u16 off = AW(0), seg = AW(2), bpp = AW(4), planes = AW(6), h = AW(8), w = AW(10), y;
+    int i;
+    if (planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
+        wlog("w16: CreateBitmap %ux%u, %u planes, %u bits: only monochrome bitmaps up to 16x16 are provided\n",
+             w, h, planes, bpp);
+        return 0;
+    }
+    for (i = 0; i < MAXBMP && bmps[i].used; i++)
+        ;
+    if (i == MAXBMP) {
+        wlog("w16: bitmap table full (%d)\n", MAXBMP);
+        return 0;
+    }
+    bmps[i].used = 1; bmps[i].w = (u8)w; bmps[i].h = (u8)h;
+    for (y = 0; y < h; y++)
+        bmps[i].rows[y] = (seg || off) ? (u16)((rd8(seg, (u16)(off + 2 * y)) << 8) | rd8(seg, (u16)(off + 2 * y + 1))) : 0;
+    return (u16)(HBMP_BASE + 2 * i);
+}
+
+/* CreatePatternBrush(hBitmap) */
+u32 g_CreatePatternBrush(u16 ss, u16 ap)
+{
+    int i = bmp_index(AW(0));
+    if (i < 0)
+        return 0;
+    return obj_new(OBJ_BRUSH, 0x808080ul, BS_PATTERN, (u16)i);    /* grey where a pattern cannot be drawn */
+}
+
+/* PatBlt(hDC, X, Y, nWidth, nHeight, dwRop): fill with the brush, invert, blacken or whiten */
+u32 g_PatBlt(u16 ss, u16 ap)
+{
+    u32 rop = AL(0);
+    int h = (i16)AW(4), w = (i16)AW(6), y = (i16)AW(8), x = (i16)AW(10), bi;
+    struct dc *d = dc_get(AW(12));
+    GR_COLOR c;
+    if (!d)
+        return 0;
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+    if (!w || !h)
+        return 1;
+    switch (rop) {
+    case 0x00F00021ul:                                      /* PATCOPY */
+        if ((bi = brush_pat(d)) >= 0) {
+            pat_fill(d, x, y, w, h, bi);
+            return 1;
+        }
+        if (!brush_of(d, &c))
+            return 1;
+        gs_mode(GS(d), GR_MODE_COPY); gs_fg(GS(d), c);
+        break;
+    case 0x005A0049ul:                                      /* PATINVERT: brush XOR screen */
+        if (!brush_of(d, &c))
+            return 1;
+        gs_mode(GS(d), GR_MODE_XOR); gs_fg(GS(d), c);
+        break;
+    case 0x00550009ul:                                      /* DSTINVERT */
+        gs_mode(GS(d), GR_MODE_INVERT); gs_fg(GS(d), GR_RGB(255, 255, 255));
+        break;
+    case 0x00000042ul:                                      /* BLACKNESS */
+        gs_mode(GS(d), GR_MODE_COPY); gs_fg(GS(d), GR_RGB(0, 0, 0));
+        break;
+    case 0x00FF0062ul:                                      /* WHITENESS */
+        gs_mode(GS(d), GR_MODE_COPY); gs_fg(GS(d), GR_RGB(255, 255, 255));
+        break;
+    default:
+        wlog("w16: PatBlt raster operation %08lx drawn as PATCOPY\n", (unsigned long)rop);
+        if (!brush_of(d, &c))
+            return 1;
+        gs_mode(GS(d), GR_MODE_COPY); gs_fg(GS(d), c);
+        break;
+    }
+    GrFillRect(d->wid, d->gc, x, y, w, h);
+    return 1;
+}
+
+/* GetTextExtent(hDC, lpString, nCount): width in the low word, height in the high word */
+u32 g_GetTextExtent(u16 ss, u16 ap)
+{
+    char buf[128];
+    int n = (i16)AW(0);
+    GR_SIZE w, h, b;
+    struct dc *d = dc_get(AW(6));
+    if (!d || n <= 0)
+        return 0;
+    if (n > (int)sizeof(buf))
+        n = sizeof(buf);
+    fcopy_in(buf, AW(4), AW(2), (u16)n);
+    GrGetGCTextSize(d->gc, buf, n, GR_TFASCII, &w, &h, &b);
+    return ((u32)(u16)h << 16) | (u16)w;
+}
+
+u32 g_UnrealizeObject(u16 ss, u16 ap) { (void)ss; (void)ap; return 1; }   /* brushes have no origin here */
 
 /* ---------------------------------------------------------------- text */
 #define TA_UPDATECP   1

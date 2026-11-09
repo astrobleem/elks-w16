@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 export PATH="$WATCOM/binl64:$WATCOM/binl:$PATH"
 export INCLUDE="$WATCOM/h:$WATCOM/h/win"
 python3 mkicon.py dlgtest.ico
+python3 mknametab.py nametab.bin
 wcc -bt=windows -0 -mm -zW -s -os -zq -wx -we -fo=DLGTEST.OBJ DLGTEST.C
 wrc -q -r -30 -bt=windows -fo=DLGTEST.RES DLGTEST.RC
 wlink system windows name DLGTEST.EXE file DLGTEST.OBJ \

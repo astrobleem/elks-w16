@@ -1,7 +1,8 @@
 /* w16mouse - test driver: feeds Nano-X's serial mouse driver through an ELKS pseudo-tty.
  *
  *   w16mouse /dev/ptypN READYFILE STEP...                       one program
- *   w16mouse /dev/ptypN -serve READYFILE STEPFILE STOPFILE      several programs in a row
+ *   w16mouse /dev/ptypN -serve READYFILE STEPFILE STOPFILE [/dev/ptypK]   several programs in a row;
+ *       the optional second pty is Nano-X's keyboard (start the server with CONSOLE=/dev/ttypK)
  *
  * The pty master must be opened before the Nano-X server opens the slave /dev/ttypN (MOUSE_PORT,
  * MOUSE_TYPE=ms): ELKS refuses a master open while the slave is open, so one process keeps it
@@ -9,13 +10,16 @@
  * program's first paint), runs the steps in STEPFILE, then waits for READYFILE to be removed;
  * it ends when STOPFILE exists. Steps:
  *   home            move to (0,0) with many small left/up moves
- *   move X Y        move to absolute screen position X,Y (after home)
+ *   move X Y        move to absolute screen position X,Y (homes first: the program may have moved the
+ *                   pointer itself, as REVERSI's hint does with SetCursorPos)
  *   click / dclick  left click / double click
  *   button ID       click the centre of target ID (dialog push button, menu bar item 1000+n, or menu
  *                   item), as listed by w16 -r in READYFILE; waits up to 30 s for it to be listed
  *   snap NAME       save meminfo and ps output to /tmp/m_NAME.txt and /tmp/p_NAME.txt
  *   sleep N         wait N seconds
  *   say TEXT        log "@@SAY TEXT"
+ *   key K[,K...]    type keys into the keyboard pty as the ELKS console would send them: a character,
+ *                   enter, esc, tab, bs, space, up, down, left, right, f1..f12, alt-X (ESC X)
  * Progress goes to port 0xE9 (emulator debug console) and to /tmp/mouse.log.
  * Packets are 3-byte Microsoft serial mouse reports; each move is at most 4 pixels so the driver's
  * acceleration (threshold 5) never applies and positions stay exact. This injects input at the
@@ -27,7 +31,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-static int fd, curx, cury, buttons;
+static int fd, kfd = -1, curx, cury, buttons;
 static long npackets, nfail;
 static char line[100];
 
@@ -87,6 +91,16 @@ static void moveby(int dx, int dy)
     }
 }
 
+/* back to (0,0), where the server clamps the pointer: the one position known for certain, since the
+ * program can move the pointer itself (SetCursorPos) and no position report comes back this way */
+static void rehome(void)
+{
+    int k;
+    for (k = 0; k < 90; k++)
+        packet(-4, -4);
+    curx = cury = 0;
+}
+
 static void click(void)
 {
     buttons = 2; packet(0, 0);      /* MS protocol: left button is bit 5 (value 2 in bits 4-5) */
@@ -139,23 +153,51 @@ static void button(const char *ready, int want)
             fclose(f);
         return;
     }
-    moveby(x - curx, y - cury);
+    rehome();
+    moveby(x, y);
     progress("at button");
     click();
     progress("clicked button");
 }
 
+/* one key as the ELKS console delivers it: F1..F12 are ESC a..l, Alt+letter is ESC + the capital,
+ * cursor keys ESC [ A..D; the bytes of a key go out in one write so the reader sees them together */
+static void key(const char *name)
+{
+    unsigned char b[4];
+    int n = 0, esc = 0;
+    if (kfd < 0) {
+        e9("@@SAY w16mouse: no keyboard pty for a key step\n");
+        return;
+    }
+    if (!strcmp(name, "enter")) b[n++] = '\r';
+    else if (!strcmp(name, "esc")) { b[n++] = 27; esc = 1; }
+    else if (!strcmp(name, "tab")) b[n++] = 9;
+    else if (!strcmp(name, "bs")) b[n++] = 8;
+    else if (!strcmp(name, "space")) b[n++] = ' ';
+    else if (!strcmp(name, "up")) { b[n++] = 27; b[n++] = '['; b[n++] = 'A'; }
+    else if (!strcmp(name, "down")) { b[n++] = 27; b[n++] = '['; b[n++] = 'B'; }
+    else if (!strcmp(name, "right")) { b[n++] = 27; b[n++] = '['; b[n++] = 'C'; }
+    else if (!strcmp(name, "left")) { b[n++] = 27; b[n++] = '['; b[n++] = 'D'; }
+    else if (name[0] == 'f' && name[1] >= '1' && name[1] <= '9') { b[n++] = 27; b[n++] = (unsigned char)('a' + atoi(name + 1) - 1); }
+    else if (!strncmp(name, "alt-", 4) && name[4]) { b[n++] = 27; b[n++] = (unsigned char)(name[4] >= 'a' && name[4] <= 'z' ? name[4] - 32 : name[4]); }
+    else b[n++] = (unsigned char)name[0];
+    write(kfd, b, n);
+    sprintf(line, "@@KEY %s\n", name);
+    e9(line);
+    usleep(esc ? 1500000UL : 500000UL);         /* a lone ESC is one that nothing follows at once */
+}
+
 static void run_steps(int n, char **v, const char *ready)
 {
-    int i, k;
+    int i;
     for (i = 0; i < n; i++) {
         if (!strcmp(v[i], "home")) {
-            for (k = 0; k < 90; k++)
-                packet(-4, -4);
-            curx = cury = 0;
+            rehome();
             progress("homed");
         } else if (!strcmp(v[i], "move") && i + 2 < n) {
-            moveby(atoi(v[i + 1]) - curx, atoi(v[i + 2]) - cury);
+            rehome();
+            moveby(atoi(v[i + 1]), atoi(v[i + 2]));
             i += 2;
             progress("moved");
         } else if (!strcmp(v[i], "snap") && i + 1 < n) {
@@ -172,6 +214,12 @@ static void run_steps(int n, char **v, const char *ready)
             progress("double-clicked");
         } else if (!strcmp(v[i], "sleep") && i + 1 < n) {
             sleep(atoi(v[++i]));
+        } else if (!strcmp(v[i], "key") && i + 1 < n) {
+            char *k, *rest = v[++i];
+            while ((k = strtok(rest, ",")) != 0) {
+                rest = 0;
+                key(k);
+            }
         } else if (!strcmp(v[i], "say") && i + 1 < n) {
             sprintf(line, "@@SAY %s\n", v[++i]);
             e9(line);
@@ -196,7 +244,7 @@ int main(int argc, char **argv)
 {
     if (argc < 3) {
         fprintf(stderr, "usage: w16mouse /dev/ptypN READYFILE STEP...\n"
-                        "       w16mouse /dev/ptypN -serve READYFILE STEPFILE STOPFILE\n");
+                        "       w16mouse /dev/ptypN -serve READYFILE STEPFILE STOPFILE [/dev/ptypK]\n");
         return 2;
     }
     fd = open(argv[1], O_RDWR | O_NONBLOCK);
@@ -207,6 +255,11 @@ int main(int argc, char **argv)
     if (!strcmp(argv[2], "-serve") && argc >= 6) {
         static char buf[1200];
         static char *tok[240];
+        if (argc >= 7) {
+            kfd = open(argv[6], O_RDWR | O_NONBLOCK);
+            if (kfd < 0)
+                perror(argv[6]);
+        }
         for (;;) {
             int r = wait_for(argv[3], argv[5], 1), n = 0, f, len;
             char *p;

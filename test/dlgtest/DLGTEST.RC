@@ -45,3 +45,19 @@ DlgData DATA
 BEGIN
     "w16 data", 0x1234
 END
+
+/* Also for the host tests: a second dialog and DATA resource with ordinal ids, named through a
+   Windows 3.0 style NAMETABLE (type 15, built by mknametab.py), the way RC 3.0 stored names. */
+2 DIALOG 10, 10, 60, 30
+STYLE WS_POPUP | WS_CAPTION
+CAPTION "NtDlg"
+BEGIN
+    DEFPUSHBUTTON   "OK", IDOK, 10, 10, 40, 14
+END
+
+2 DATA
+BEGIN
+    "nt data", 0x0002
+END
+
+1 15 nametab.bin

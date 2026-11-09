@@ -6,6 +6,11 @@
 //   app -> API stub -> api_common -> C handler -> w16_call16 -> app window procedure -> API ...
 // The loader's DS is kept in the code segment (w16_ldr_ds) because an API stub has no
 // free register on entry.
+//
+// w16 is built in the medium memory model: C functions are far (called with lcall, return with
+// lret) and may live in a second code segment, while this file stays in the near text segment.
+// So every entry point below returns with lret, its arguments start at 6(%bp), and calls into
+// C are far calls.
 
 	.arch	i8086, nojumps
 	.code16
@@ -37,25 +42,25 @@ w16_thunk_init:
 	cmp	%ax, %dx
 	je	2f
 	mov	$-1, %ax
-	ret
+	lret
 1:	mov	%ds, %cs:w16_ldr_ds
 2:	xor	%ax, %ax
-	ret
+	lret
 
 	.global w16_thunk_done
 w16_thunk_done:
 	movw	$0, %cs:w16_ldr_ds
-	ret
+	lret
 
 	.global w16_get_cs
 w16_get_cs:
 	mov	%cs, %ax
-	ret
+	lret
 
 	.global w16_get_ds
 w16_get_ds:
 	mov	%ds, %ax
-	ret
+	lret
 
 // void w16_farcpy(u16 dseg, u16 doff, u16 sseg, u16 soff, u16 n)
 	.global w16_farcpy
@@ -66,11 +71,11 @@ w16_farcpy:
 	push	%di
 	push	%es
 	push	%ds
-	mov	4(%bp), %es
-	mov	6(%bp), %di
-	mov	10(%bp), %si
-	mov	12(%bp), %cx
-	mov	8(%bp), %ds
+	mov	6(%bp), %es
+	mov	8(%bp), %di
+	mov	12(%bp), %si
+	mov	14(%bp), %cx
+	mov	10(%bp), %ds
 	cld
 	rep movsb
 	pop	%ds
@@ -78,7 +83,7 @@ w16_farcpy:
 	pop	%di
 	pop	%si
 	pop	%bp
-	ret
+	lret
 
 // void w16_farset(u16 seg, u16 off, u16 val, u16 n)
 	.global w16_farset
@@ -87,16 +92,16 @@ w16_farset:
 	mov	%sp, %bp
 	push	%di
 	push	%es
-	mov	4(%bp), %es
-	mov	6(%bp), %di
-	mov	8(%bp), %ax
-	mov	10(%bp), %cx
+	mov	6(%bp), %es
+	mov	8(%bp), %di
+	mov	10(%bp), %ax
+	mov	12(%bp), %cx
 	cld
 	rep stosb
 	pop	%es
 	pop	%di
 	pop	%bp
-	ret
+	lret
 
 // void w16_setvect(u16 vec, u16 off, u16 seg)
 	.global w16_setvect
@@ -107,11 +112,11 @@ w16_setvect:
 	push	%bx
 	xor	%ax, %ax
 	mov	%ax, %es
-	mov	4(%bp), %bx
+	mov	6(%bp), %bx
 	shl	%bx
 	shl	%bx
-	mov	6(%bp), %ax
-	mov	8(%bp), %dx
+	mov	8(%bp), %ax
+	mov	10(%bp), %dx
 	pushf
 	cli
 	mov	%ax, %es:(%bx)
@@ -120,7 +125,7 @@ w16_setvect:
 	pop	%bx
 	pop	%es
 	pop	%bp
-	ret
+	lret
 
 // u32 w16_getvect(u16 vec)
 	.global w16_getvect
@@ -131,7 +136,7 @@ w16_getvect:
 	push	%bx
 	xor	%ax, %ax
 	mov	%ax, %es
-	mov	4(%bp), %bx
+	mov	6(%bp), %bx
 	shl	%bx
 	shl	%bx
 	mov	%es:(%bx), %ax
@@ -139,7 +144,7 @@ w16_getvect:
 	pop	%bx
 	pop	%es
 	pop	%bp
-	ret
+	lret
 
 // int w16_cpu_is_nec(void): AAD with base 16 gives 0x11 on Intel 8086/8088; the NEC V20/V30 always
 // uses base 10 and gives 0x0B. Safe on both (no invalid opcodes).
@@ -151,18 +156,18 @@ w16_cpu_is_nec:
 	mov	$0, %ax
 	jne	1f
 	inc	%ax
-1:	ret
+1:	lret
 
 // void w16_outb(u16 port, u16 val)
 	.global w16_outb
 w16_outb:
 	push	%bp
 	mov	%sp, %bp
-	mov	4(%bp), %dx
-	mov	6(%bp), %ax
+	mov	6(%bp), %dx
+	mov	8(%bp), %ax
 	outb	%al, %dx
 	pop	%bp
-	ret
+	lret
 
 // ---------------------------------------------------------------- API entry
 // One 8-byte stub per api_table entry: AX = index, then the common path.
@@ -170,7 +175,7 @@ w16_outb:
 	.global w16_stubs
 w16_stubs:
 	.set	w16_i, 0
-	.rept	128
+	.rept	160
 	.balign	8, 0x90
 	mov	$w16_i, %ax
 	jmp	api_common
@@ -200,7 +205,7 @@ api_common:
 	mov	%si, %es
 	cld
 	push	%ax
-	call	w16_api_dispatch	// DX:AX result; may move the frame up to pop arguments
+	lcall	$"w16_api_dispatch!"@SEG, $w16_api_dispatch	// DX:AX result; may move the frame up to pop arguments
 	add	$2, %sp
 	mov	w16_app_ss, %bx
 	mov	w16_app_sp, %bp
@@ -251,7 +256,7 @@ w16_int21:
 	push	%dx
 	mov	%si, %es
 	cld
-	call	w16_int21_dispatch	// edits the register frame in place
+	lcall	$"w16_int21_dispatch!"@SEG, $w16_int21_dispatch	// edits the register frame in place
 	pop	%dx
 	pop	%cx
 	mov	w16_app_ss, %bx
@@ -292,12 +297,12 @@ w16_call16:
 	push	%es
 	push	w16_ldr_sp
 	mov	%sp, w16_ldr_sp
-	mov	4(%bp), %ax
-	mov	%ax, %cs:cb_target
 	mov	6(%bp), %ax
+	mov	%ax, %cs:cb_target
+	mov	8(%bp), %ax
 	mov	%ax, %cs:cb_target+2
-	mov	10(%bp), %cx
-	mov	12(%bp), %si
+	mov	12(%bp), %cx
+	mov	14(%bp), %si
 	mov	w16_app_ss, %es
 	mov	w16_app_sp, %di
 	jcxz	2f
@@ -305,7 +310,7 @@ w16_call16:
 	lodsw
 	mov	%ax, %es:(%di)
 	loop	1b
-2:	mov	8(%bp), %ax
+2:	mov	10(%bp), %ax
 	mov	%es, %bx
 	cli
 	mov	%bx, %ss
@@ -325,7 +330,7 @@ w16_call16:
 	pop	%di
 	pop	%si
 	pop	%bp
-	ret
+	lret
 
 // u16 w16_start16(const u16 *regs)  regs: IP CS SS SP DS ES AX BX CX DX SI DI BP
 // Starts the program like a Windows task; returns its exit code when w16_exit16 is called.
@@ -339,7 +344,7 @@ w16_start16:
 	push	w16_ldr_sp
 	mov	%sp, w16_ldr_sp
 	mov	%sp, w16_exit_sp
-	mov	4(%bp), %si
+	mov	6(%bp), %si
 	mov	(%si), %ax
 	mov	%ax, %cs:cb_target
 	mov	2(%si), %ax
@@ -392,11 +397,12 @@ w16_start16:
 	pop	%ds
 	ljmpw	*%cs:cb_target
 
-// void w16_exit16(u16 code): called on the loader stack; abandons every nested frame.
+// void w16_exit16(u16 code): called on the loader stack; abandons every nested frame and
+// returns from w16_start16 with the code.
 	.global w16_exit16
 w16_exit16:
 	mov	%sp, %bx
-	mov	2(%bx), %ax
+	mov	4(%bx), %ax		// past the far return address
 	cli
 	mov	w16_exit_sp, %sp
 	sti
@@ -405,4 +411,4 @@ w16_exit16:
 	pop	%di
 	pop	%si
 	pop	%bp
-	ret
+	lret

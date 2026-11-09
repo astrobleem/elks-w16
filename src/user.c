@@ -16,12 +16,14 @@ struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
 
 #define QSIZE 24
-struct qmsg { u16 hwnd, msg, wp; u32 lp; i16 x, y; u32 time; };
+struct qmsg { u16 hwnd, msg, wp; u32 lp; i16 x, y; u32 time; u8 ch; };
 static struct qmsg queue[QSIZE];
 static int qhead, qcount;
 static int quit_pending;
 static u16 quit_code;
 static u32 msgclock;
+/* characters of the key-down messages most recently handed to the program, for TranslateMessage;
+ * the character travels in the queue entry until then, so a burst of keys cannot overwrite it */
 static struct { u32 time; u8 ch; } keychars[8];
 static int kcnext;
 static u16 keyup_hwnd, keyup_vk;
@@ -34,6 +36,9 @@ static u32 sysclick_ms;
 char opt_dump[40];
 int  opt_ready;
 static char readyfile[40] = "/tmp/w16.ready";
+static u16 capture_hwnd, focus_hwnd;    /* SetCapture / SetFocus */
+static u16 key_mods;                    /* MWKMOD_* of the latest key event (GetKeyState, accelerators) */
+static u16 mouse_buttons;               /* MWBUTTON_* of the latest mouse event */
 
 #define CAPH  (font_h + 1)
 
@@ -170,16 +175,30 @@ static void draw_nc(struct wnd *w)
 }
 
 /* ---------------------------------------------------------------- queue */
-static void post(u16 hwnd, u16 msg, u16 wp, u32 lp, int x, int y)
+static int post(u16 hwnd, u16 msg, u16 wp, u32 lp, int x, int y)
 {
     struct qmsg *m;
     if (qcount == QSIZE) {
         wlog("w16: message queue full, dropping message %04x\n", msg);
-        return;
+        return 0;
     }
     m = &queue[(qhead + qcount++) % QSIZE];
-    m->hwnd = hwnd; m->msg = msg; m->wp = wp; m->lp = lp; m->x = x; m->y = y;
+    m->hwnd = hwnd; m->msg = msg; m->wp = wp; m->lp = lp; m->x = x; m->y = y; m->ch = 0;
     m->time = ++msgclock;
+    return 1;
+}
+
+/* take the oldest queued message; a key-down's character is kept for TranslateMessage */
+static void dequeue(struct qmsg *m)
+{
+    *m = queue[qhead];
+    qhead = (qhead + 1) % QSIZE;
+    qcount--;
+    if (m->msg == WM_KEYDOWN) {
+        keychars[kcnext].time = m->time;
+        keychars[kcnext].ch = m->ch;
+        kcnext = (kcnext + 1) & 7;
+    }
 }
 
 void w16_post(u16 hwnd, u16 msg, u16 wp, u32 lp)
@@ -245,7 +264,7 @@ u32 u_KillTimer(u16 ss, u16 ap)
 }
 
 /* ---------------------------------------------------------------- measurements (-m) */
-int opt_metrics;
+int opt_metrics, opt_quit_s;
 u32 w16_t0;
 static u32 lat_t;
 static u8 lat_on;
@@ -345,12 +364,29 @@ static u16 vk_from_key(GR_KEY ch, u8 *ascii)
     case MWKEY_RIGHT: return 0x27;
     case MWKEY_DOWN:  return 0x28;
     case MWKEY_DELETE: return 0x2E;
+    case MWKEY_INSERT: return 0x2D;
+    case MWKEY_HOME:   return 0x24;
+    case MWKEY_END:    return 0x23;
+    case MWKEY_PAGEUP: return 0x21;
+    case MWKEY_PAGEDOWN: return 0x22;
     }
+    if (ch >= MWKEY_F1 && ch <= MWKEY_F12)
+        return (u16)(0x70 + (ch - MWKEY_F1));           /* VK_F1.. */
     if (ch > ' ' && ch < 127) { *ascii = (u8)ch; return 0xBA; }   /* punctuation: an OEM key */
     return 0;
 }
 
 static void paint_control(struct wnd *w);
+
+static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x, int y, int rx, int ry)
+{
+    u16 msg = (changed & MWBUTTON_R) ? (down ? WM_RBUTTONDOWN : WM_RBUTTONUP) : (down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
+    u16 mk = (buttons & MWBUTTON_L ? 1 : 0) | (buttons & MWBUTTON_R ? 2 : 0);
+    post(w->hwnd, msg, mk, ((u32)(u16)y << 16) | (u16)x, rx, ry);
+    if (opt_verbose)
+        wlog("w16: button %s at %d,%d -> %s\n", down ? "down" : "up", x, y,
+             msg == WM_LBUTTONDOWN ? "WM_LBUTTONDOWN" : msg == WM_LBUTTONUP ? "WM_LBUTTONUP" : "right button");
+}
 
 static void translate_event(GR_EVENT *ev)
 {
@@ -381,6 +417,7 @@ static void translate_event(GR_EVENT *ev)
         u8 ascii;
         u16 vk = vk_from_key(ev->keystroke.ch, &ascii);
         u32 lp = 1ul | ((u32)(ev->keystroke.scancode & 0xFF) << 16);
+        key_mods = ev->keystroke.modifiers;
         w = win_by_nx(ev->keystroke.wid, &isclient);
         if (w && !w->ctl && w->hmenu && menu_key(w, ev->keystroke.ch, ev->keystroke.modifiers))
             break;
@@ -392,10 +429,8 @@ static void translate_event(GR_EVENT *ev)
             break;
         if (keyup_pending)                 /* previous key never got a real key-up */
             post(keyup_hwnd, WM_KEYUP, keyup_vk, keyup_lp | 0xC0000000ul, 0, 0);
-        post(w->hwnd, WM_KEYDOWN, vk, lp, 0, 0);
-        keychars[kcnext].time = msgclock;
-        keychars[kcnext].ch = ascii;
-        kcnext = (kcnext + 1) & 7;
+        if (post(w->hwnd, WM_KEYDOWN, vk, lp, 0, 0))
+            queue[(qhead + qcount - 1) % QSIZE].ch = ascii;
         keyup_pending = !saw_real_keyup;
         keyup_hwnd = w->hwnd; keyup_vk = vk; keyup_lp = lp;
         if (opt_verbose)
@@ -416,6 +451,16 @@ static void translate_event(GR_EVENT *ev)
     case GR_EVENT_TYPE_BUTTON_UP: {
         int down = ev->type == GR_EVENT_TYPE_BUTTON_DOWN;
         w = win_by_nx(ev->button.wid, &isclient);
+        mouse_buttons = ev->button.buttons;
+        if (capture_hwnd && (!w || !w->ctl)) {  /* SetCapture: button events go to that window */
+            struct wnd *cw = win_get(capture_hwnd);
+            if (cw) {
+                post_button(cw, down, ev->button.changebuttons, ev->button.buttons,
+                            ev->button.rootx - (cw->x + cw->cx), ev->button.rooty - (cw->y + cw->cy),
+                            ev->button.rootx, ev->button.rooty);
+                break;
+            }
+        }
         if (!w)
             break;
         if (w->ctl) {                   /* built-in control: push buttons notify their dialog */
@@ -431,13 +476,8 @@ static void translate_event(GR_EVENT *ev)
                 }
             }
         } else if (isclient) {
-            u16 msg = (ev->button.changebuttons & MWBUTTON_R) ? (down ? WM_RBUTTONDOWN : WM_RBUTTONUP)
-                                                             : (down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
-            u16 mk = (ev->button.buttons & MWBUTTON_L ? 1 : 0) | (ev->button.buttons & MWBUTTON_R ? 2 : 0);
-            post(w->hwnd, msg, mk, ((u32)(u16)ev->button.y << 16) | (u16)ev->button.x, ev->button.rootx, ev->button.rooty);
-            if (opt_verbose)
-                wlog("w16: button %s at %d,%d -> %s\n", down ? "down" : "up", ev->button.x, ev->button.y,
-                     msg == WM_LBUTTONDOWN ? "WM_LBUTTONDOWN" : msg == WM_LBUTTONUP ? "WM_LBUTTONUP" : "right button");
+            post_button(w, down, ev->button.changebuttons, ev->button.buttons, ev->button.x, ev->button.y,
+                        ev->button.rootx, ev->button.rooty);
         } else if (down && w->hmenu && menu_bar_click(w, ev->button.x, ev->button.y)) {
             ;                               /* the menu bar opened or chose an item */
         } else if (down && (w->style & WS_SYSMENU)) {
@@ -455,6 +495,29 @@ static void translate_event(GR_EVENT *ev)
                 }
             }
         }
+        break;
+    }
+    case GR_EVENT_TYPE_MOUSE_POSITION: {
+        struct wnd *t;
+        int x = ev->mouse.x, y = ev->mouse.y;
+        u16 mk;
+        w = win_by_nx(ev->mouse.wid, &isclient);
+        mouse_buttons = ev->mouse.buttons;
+        if (capture_hwnd && (t = win_get(capture_hwnd)) != 0) {
+            x = ev->mouse.rootx - (t->x + t->cx);
+            y = ev->mouse.rooty - (t->y + t->cy);
+        } else if (!w || !isclient || w->ctl)
+            break;
+        else
+            t = w;
+        mk = (mouse_buttons & MWBUTTON_L ? 1 : 0) | (mouse_buttons & MWBUTTON_R ? 2 : 0);
+        /* like Windows, only the latest position is kept while the program has not read the previous one */
+        if (qcount && queue[(qhead + qcount - 1) % QSIZE].msg == WM_MOUSEMOVE &&
+            queue[(qhead + qcount - 1) % QSIZE].hwnd == t->hwnd) {
+            struct qmsg *m = &queue[(qhead + qcount - 1) % QSIZE];
+            m->wp = mk; m->lp = ((u32)(u16)y << 16) | (u16)x; m->x = ev->mouse.rootx; m->y = ev->mouse.rooty;
+        } else
+            post(t->hwnd, WM_MOUSEMOVE, mk, ((u32)(u16)y << 16) | (u16)x, ev->mouse.rootx, ev->mouse.rooty);
         break;
     }
     case GR_EVENT_TYPE_CLOSE_REQ:
@@ -661,7 +724,8 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
-                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
+                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_MOUSE_POSITION);
+    cursor_attach(w->frame, w->client);
     vlog("w16: CreateWindow \"%s\" class \"%s\" style %08lx at %d,%d %dx%d -> hwnd %04x (client %dx%d)\n",
           w->title, c->name, (unsigned long)style, x, y, wd, h, w->hwnd, w->cw, w->ch);
 
@@ -751,6 +815,10 @@ static void destroy_window(struct wnd *w)
     menu_close_for(hwnd);
     GrDestroyWindow(w->frame);          /* also destroys the Nano-X windows of its controls */
     kill_timers(hwnd);
+    if (capture_hwnd == hwnd)
+        capture_hwnd = 0;
+    if (focus_hwnd == hwnd)
+        focus_hwnd = 0;
     if (w->hmenu)
         menu_free(w->hmenu);
     w->hmenu = 0;
@@ -808,12 +876,22 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
 
 /* The next message for this task, in Windows order: posted and input messages, WM_QUIT,
  * then WM_PAINT for invalid windows; blocks in the Nano-X client library when idle. */
-static void next_msg(struct qmsg *m)
+static int next_msg(struct qmsg *m, int block)
 {
     GR_EVENT ev;
     u16 i;
+    static u8 quit_sent;
 
     for (;;) {
+        if (opt_quit_s && !quit_sent && now_ms() - w16_t0 >= (u32)opt_quit_s * 1000ul) {
+            quit_sent = 1;                  /* -q: close the main window as the system menu would */
+            for (i = 0; i < MAXWIN; i++)
+                if (wins[i].used && !wins[i].ctl && !wins[i].isdialog) {
+                    vlog("w16: -q: closing window %04x after %d s\n", wins[i].hwnd, opt_quit_s);
+                    post(wins[i].hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, 0, 0);
+                    break;
+                }
+        }
         for (;;) {                      /* take whatever Nano-X already has */
             GrGetNextEventTimeout(&ev, GR_TIMEOUT_POLL);
             if (ev.type == GR_EVENT_TYPE_NONE || ev.type == GR_EVENT_TYPE_TIMEOUT)
@@ -821,16 +899,14 @@ static void next_msg(struct qmsg *m)
             translate_event(&ev);
         }
         if (qcount) {
-            *m = queue[qhead];
-            qhead = (qhead + 1) % QSIZE;
-            qcount--;
-            return;
+            dequeue(m);
+            return 1;
         }
         if (quit_pending) {
             memset(m, 0, sizeof(*m));
             m->msg = WM_QUIT; m->wp = quit_code; m->time = ++msgclock;
             quit_pending = 0;
-            return;
+            return 1;
         }
         if (keyup_pending) {
             keyup_pending = 0;
@@ -847,7 +923,7 @@ static void next_msg(struct qmsg *m)
             if (wins[i].used && wins[i].visible && wins[i].invalid) {
                 memset(m, 0, sizeof(*m));
                 m->hwnd = wins[i].hwnd; m->msg = WM_PAINT; m->time = ++msgclock;
-                return;
+                return 1;
             }
         {                               /* timers: one WM_TIMER per elapsed timer, after paints, like Windows */
             static int rr;
@@ -866,11 +942,13 @@ static void next_msg(struct qmsg *m)
                     m->hwnd = timers[t].hwnd; m->msg = WM_TIMER; m->wp = timers[t].id;
                     m->lp = ((u32)timers[t].procseg << 16) | timers[t].procoff;
                     m->time = ++msgclock;
-                    return;
+                    return 1;
                 }
                 if ((u32)left < wait)
                     wait = (u32)left;
             }
+            if (!block)                         /* PeekMessage: nothing to report */
+                return 0;
             if (wait != 0xFFFFFFFFul) {         /* sleep in the client library until input or the next timer */
                 GrGetNextEventTimeout(&ev, wait);
                 if (ev.type != GR_EVENT_TYPE_NONE && ev.type != GR_EVENT_TYPE_TIMEOUT)
@@ -916,10 +994,122 @@ u32 u_GetMessage(u16 ss, u16 ap)
 {
     u16 off = AW(6), seg = AW(8);
     struct qmsg m;
-    next_msg(&m);
+    next_msg(&m, 1);
     write_msg(seg, off, &m);
     return m.msg != WM_QUIT;
 }
+
+/* PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg): like GetMessage, but returns 0
+ * instead of waiting. PM_NOREMOVE looks at the queue without taking from it; the WM_PAINT and WM_TIMER
+ * that are made up on demand are only reported when removing (a look would cost a timer its tick). */
+u32 u_PeekMessage(u16 ss, u16 ap)
+{
+    u16 off = AW(8), seg = AW(10), flags = AW(0);
+    struct qmsg m;
+    GR_EVENT ev;
+    if (!(flags & 1)) {                 /* PM_NOREMOVE */
+        for (;;) {
+            GrGetNextEventTimeout(&ev, GR_TIMEOUT_POLL);
+            if (ev.type == GR_EVENT_TYPE_NONE || ev.type == GR_EVENT_TYPE_TIMEOUT)
+                break;
+            translate_event(&ev);
+        }
+        if (!qcount)
+            return 0;
+        write_msg(seg, off, &queue[qhead]);
+        return 1;
+    }
+    if (!next_msg(&m, 0))
+        return 0;
+    write_msg(seg, off, &m);
+    return 1;
+}
+
+/* PostMessage(hWnd, wMsg, wParam, lParam) */
+u32 u_PostMessage(u16 ss, u16 ap)
+{
+    u16 hwnd = AW(8);
+    if (hwnd == 0xFFFF) {
+        wlog("w16: PostMessage to every window is not supported\n");
+        return 0;
+    }
+    if (hwnd && !win_get(hwnd))
+        return 0;
+    return post(hwnd, AW(6), AW(4), AL(0), 0, 0);
+}
+
+/* SetCapture(hWnd) / ReleaseCapture(): mouse events go to the capture window wherever the pointer is */
+u32 u_SetCapture(u16 ss, u16 ap)
+{
+    u16 prev = capture_hwnd;
+    capture_hwnd = win_get(AW(0)) ? AW(0) : 0;
+    return prev;
+}
+
+u32 u_ReleaseCapture(u16 ss, u16 ap)
+{
+    (void)ss; (void)ap;
+    capture_hwnd = 0;
+    return 0;
+}
+
+/* SetFocus(hWnd): returns the window that had the focus */
+u32 u_SetFocus(u16 ss, u16 ap)
+{
+    struct wnd *w = win_get(AW(0));
+    u16 prev = focus_hwnd;
+    if (!w)
+        return 0;
+    focus_hwnd = w->hwnd;
+    GrSetFocus(w->ctl ? w->frame : w->client);
+    return prev;
+}
+
+u32 u_IsIconic(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }   /* windows are never minimised here */
+
+/* SetWindowText(hWnd, lpString) */
+u32 u_SetWindowText(u16 ss, u16 ap)
+{
+    struct wnd *w = win_get(AW(4));
+    if (!w)
+        return 0;
+    fstrncpy_in(w->title, AW(2), AW(0), sizeof(w->title));
+    vlog("w16: SetWindowText(%04x) \"%s\"\n", AW(4), w->title);
+    if (w->visible && w->ctl)
+        paint_control(w);
+    else if (w->visible)
+        draw_nc(w);
+    return 0;
+}
+
+/* ClientToScreen(hWnd, lpPoint) */
+u32 u_ClientToScreen(u16 ss, u16 ap)
+{
+    u16 off = AW(0), seg = AW(2);
+    struct wnd *w = win_get(AW(4));
+    if (!w)
+        return 0;
+    wr16(seg, off, (u16)(rd16(seg, off) + w->x + w->cx));
+    wr16(seg, off + 2, (u16)(rd16(seg, off + 2) + w->y + w->cy));
+    return 0;
+}
+
+/* GetKeyState(nVirtKey): the state at the latest input event; 0x8000 when down */
+u32 u_GetKeyState(u16 ss, u16 ap)
+{
+    u16 down = 0;
+    switch (AW(0)) {
+    case 0x01: down = (mouse_buttons & MWBUTTON_L) != 0; break;   /* VK_LBUTTON */
+    case 0x02: down = (mouse_buttons & MWBUTTON_R) != 0; break;   /* VK_RBUTTON */
+    case 0x04: down = (mouse_buttons & MWBUTTON_M) != 0; break;   /* VK_MBUTTON */
+    case 0x10: down = (key_mods & MWKMOD_SHIFT) != 0; break;      /* VK_SHIFT */
+    case 0x11: down = (key_mods & MWKMOD_CTRL) != 0; break;       /* VK_CONTROL */
+    case 0x12: down = (key_mods & MWKMOD_ALT) != 0; break;        /* VK_MENU */
+    }
+    return down ? 0x8000 : 0;
+}
+
+u16 user_key_mods(void) { return key_mods; }
 
 /* TranslateMessage(lpMsg): WM_KEYDOWN -> WM_CHAR for keys with a character */
 u32 u_TranslateMessage(u16 ss, u16 ap)
@@ -972,8 +1162,8 @@ u32 u_InvalidateRect(u16 ss, u16 ap)
     return 0;
 }
 
-/* LoadCursor / LoadIcon: predefined ones, or the program's own if the resource exists (the
- * arrow and the window icons drawn here stand in for them) */
+/* LoadIcon: a predefined icon, or the program's own if the resource exists (the icon drawn in the
+ * frame stands in for either; LoadCursor is in cursor.c) */
 static u32 load_resource(u16 ss, u16 ap, u16 handle, u16 type, const char *what)
 {
     u16 off = AW(0), seg = AW(2), hinst = AW(4), id, len;
@@ -991,7 +1181,6 @@ static u32 load_resource(u16 ss, u16 ap, u16 handle, u16 type, const char *what)
     return 0;
 }
 
-u32 u_LoadCursor(u16 ss, u16 ap) { return load_resource(ss, ap, HCURSOR, 12, "LoadCursor"); }
 u32 u_LoadIcon(u16 ss, u16 ap)   { return load_resource(ss, ap, HICON, RT_GROUP_ICON, "LoadIcon"); }
 
 /* GetDC(hWnd): the client area, or the screen for hWnd 0 */
@@ -1129,7 +1318,7 @@ static long dbx_num, dbx_den, dby_num, dby_den;
 #define DX(v) ((int)((long)(v) * dbx_num / dbx_den))
 #define DY(v) ((int)((long)(v) * dby_num / dby_den))
 
-static u8 *res_load(u16 type, const char *name, u16 id, u16 *len)
+u8 *res_load(u16 type, const char *name, u16 id, u16 *len)
 {
     u32 off;
     u16 n;
@@ -1394,25 +1583,20 @@ u32 u_DialogBox(u16 ss, u16 ap)
 }
 
 /* MessageBox(hWndParent, lpText, lpCaption, wType): a dialog built here, run like DialogBox */
-u32 u_MessageBox(u16 ss, u16 ap)
+u16 message_box(const char *text, const char *caption, u16 type)
 {
     static const u8 nbtn[6] = { 1, 2, 3, 3, 2, 2 };
     static const u16 btn[6][3] = { { 1 }, { 1, 2 }, { 3, 4, 5 }, { 6, 7, 2 }, { 6, 7 }, { 4, 2 } };
     static const char *const bname[8] = { "", "OK", "Cancel", "&Abort", "&Retry", "&Ignore", "&Yes", "&No" };
-    u16 type = AW(0), kind = type & 0xF, k, r;
-    char text[100];
+    u16 kind = type & 0xF, k, r;
     GR_SIZE tw, th, tb;
     int maxw = scr_w - 32, textw, lines, nb, bw = 44, bh = font_h + 8, gap = 8, W, H, bx;
     if (kind > 5)
         kind = 0;
     nb = nbtn[kind];
     memset(&dtmpl, 0, sizeof(dtmpl));
-    if (AW(4))
-        fstrncpy_in(dtmpl.caption, AW(4), AW(2), sizeof(dtmpl.caption));
-    else
-        strcpy(dtmpl.caption, "Error");
-    fstrncpy_in(text, AW(8), AW(6), sizeof(text));
-    GrGetGCTextSize(gdi_gc, text, strlen(text), GR_TFASCII, &tw, &th, &tb);
+    strncpy(dtmpl.caption, caption, sizeof(dtmpl.caption) - 1);
+    GrGetGCTextSize(gdi_gc, (void *)text, strlen(text), GR_TFASCII, &tw, &th, &tb);
     textw = tw <= maxw ? tw : maxw;
     lines = tw <= maxw ? 1 : (tw + maxw - 1) / maxw + 1;      /* room for word wrap */
     W = textw + 2 * gap;
@@ -1441,6 +1625,18 @@ u32 u_MessageBox(u16 ss, u16 ap)
     r = run_dialog("MessageBox", 0, 0, w16_mod->dgroup, 1, text);
     vlog("w16: MessageBox \"%s\" -> %u\n", text, r);
     return r;
+}
+
+/* MessageBox(hWndParent, lpText, lpCaption, wType) */
+u32 u_MessageBox(u16 ss, u16 ap)
+{
+    char text[100], caption[48];
+    if (AW(4))
+        fstrncpy_in(caption, AW(4), AW(2), sizeof(caption));
+    else
+        strcpy(caption, "Error");
+    fstrncpy_in(text, AW(8), AW(6), sizeof(text));
+    return message_box(text, caption, AW(0));
 }
 
 /* Create the dialog in dtmpl (dialog units, or pixels), run its modal loop, return EndDialog's result.
@@ -1510,7 +1706,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     d->visible = 1;
 
     while (!d->ended) {
-        next_msg(&m);
+        next_msg(&m, 1);
         if (m.msg == WM_QUIT) {                 /* leave the loop and repost the quit */
             quit_pending = 1;
             quit_code = m.wp;
@@ -1534,8 +1730,8 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
             case WM_CHAR:
             case WM_KEYUP:
                 break;
-            case WM_COMMAND:
-                win_send(d, WM_COMMAND, m.wp, m.lp);
+            case WM_COMMAND:                    /* a button: through dlg_command, which also ends message boxes */
+                dlg_command(d, m.wp);
                 break;
             case WM_SYSCOMMAND:
                 if ((m.wp & 0xFFF0) == SC_CLOSE)
@@ -1569,6 +1765,17 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     purge(d->hwnd);
     free_controls(d->hwnd);
     d->used = 0;
+    {                                   /* the keyboard goes back to the program's window */
+        struct wnd *o = win_get(focus_hwnd);
+        if (!o || o->isdialog || o->ctl)
+            for (k = 0, o = 0; k < MAXWIN; k++)
+                if (wins[k].used && !wins[k].ctl && !wins[k].isdialog && wins[k].visible) {
+                    o = &wins[k];
+                    break;
+                }
+        if (o)
+            GrSetFocus(o->client);
+    }
     ready_write();                      /* the dialog's buttons are gone; menus are clickable again */
     w16_census("dialog end");
     return (u16)r;
@@ -1667,18 +1874,18 @@ void paint_done(struct wnd *w)
  * menu bar items as "button 1000+n", and the items of an open menu by command id */
 void ready_write(void)
 {
-    static char buf[600];
+    char *buf = (char *)w16_scratch;    /* 600 bytes of the shared scratch */
     int n = 8, i, fd;
     if (!opt_ready)
         return;
     memcpy(buf, "painted\n", 8);
     for (i = 0; i < MAXWIN; i++) {
         struct wnd *c = &wins[i], *d = c->used && c->ctl == CTL_BUTTON ? win_get(c->parent) : 0;
-        if (d && d->isdialog && n < (int)sizeof(buf) - 40)
+        if (d && d->isdialog && n < 600 - 40)
             n += sprintf(buf + n, "button %u %d %d\n", c->id, d->x + d->cx + c->x + c->w / 2,
                          d->y + d->cy + c->y + c->h / 2);
     }
-    n += menu_ready_lines(buf + n, sizeof(buf) - n);
+    n += menu_ready_lines(buf + n, 600 - n);
     fd = open(readyfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) {
         write(fd, buf, n);              /* one write: the driver never sees half a file */

@@ -9,6 +9,7 @@
 #include "w16.h"
 
 int opt_verbose, opt_trace, opt_debugport;
+u8 w16_scratch[W16_SCRATCH];
 
 #ifdef W16_HOST
 /* ---------------------------------------------------------------- host: simulated memory */

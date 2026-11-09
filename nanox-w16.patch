@@ -1,0 +1,210 @@
+--- a/src/include/nano-X.h
++++ b/src/include/nano-X.h
+@@ -99,6 +99,8 @@
+ 
+ #define GR_MODE_DRAWMASK	0x00FF
+ #define GR_MODE_EXCLUDECHILDREN	0x0100		/* exclude children on clip*/
++#define GR_MODE_EXCLUDEENDPOINT	0x0200		/* GrLine leaves out its end point (Windows LineTo)*/
++#define GR_MODE_HAVE_EXCLUDEENDPOINT 0x0400	/* set by a server that implements the flag above*/
+ 
+ /* Line modes */
+ #define GR_LINE_SOLID           MWLINE_SOLID
+--- a/src/nanox/serv.h
++++ b/src/nanox/serv.h
+@@ -216,6 +216,12 @@
+ 	int		shm_cmds_size;
+ 	int		shm_cmds_shmid;
+ 	int		processid;	/* client process id*/
++#if ELKS
++	/* bytes read from the client's socket and not yet handled: on ELKS each system call is
++	 * expensive, so requests are read in blocks and handled without a select() each */
++	unsigned char	rbuf[256];
++	int		rpos, rlen;
++#endif
+ };
+ 
+ /*
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -2182,10 +2182,32 @@
+ GsRead(int fd, void *buf, int c)
+ {
+ 	int e, n;
++#if ELKS
++	GR_CLIENT *cl = GsFindClient(fd);
++#endif
+ 
+ 	n = 0;
+ 
+ 	while(n < c) {
++#if ELKS
++		if (cl) {
++			if (cl->rpos < cl->rlen) {	/* take what was read already */
++				int k = cl->rlen - cl->rpos;
++				if (k > c - n)
++					k = c - n;
++				memcpy(((char *)buf) + n, cl->rbuf + cl->rpos, k);
++				cl->rpos += k;
++				n += k;
++				continue;
++			}
++			e = read(fd, cl->rbuf, sizeof(cl->rbuf));	/* whatever is there, up to 256 */
++			if (e > 0) {
++				cl->rpos = 0;
++				cl->rlen = e;
++				continue;
++			}
++		} else
++#endif
+ 		e = read(fd, ((char *)buf) + n, c - n);
+ 		if(e <= 0) {
+ 			if (e == 0)
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -214,6 +214,9 @@
+ 	client->prev = NULL;
+ 	client->waiting_for_event = FALSE;
+ 	client->shm_cmds = 0;
++#if ELKS
++	client->rpos = client->rlen = 0;	/* malloc may return a freed client's memory */
++#endif
+ 
+ 	if(connectcount++ == 0)
+ 		root_client = client;
+@@ -545,8 +548,21 @@
+ 
+ 			/* curclient may be freed in GsDropClient*/
+ 			curclient_next = curclient->next;
+-			if(FD_ISSET(curclient->id, &rfds))
++			if(FD_ISSET(curclient->id, &rfds)) {
++#if ELKS
++				int fd = curclient->id;
++				GR_CLIENT *cl;
++				GsHandleClient(fd);
++				/* handle every request already read, without another select() */
++				/* (a client's requests can drop only that client, so curclient_next stays valid) */
++				while ((cl = GsFindClient(fd)) != NULL && cl->rpos < cl->rlen) {
++					curclient = cl;
++					GsHandleClient(fd);
++				}
++#else
+ 				GsHandleClient(curclient->id);
++#endif
++			}
+ 			curclient = curclient_next;
+ 		}
+ #endif /* NONETWORK */
+--- a/src/nanox/srvfunc.c
++++ b/src/nanox/srvfunc.c
+@@ -2326,6 +2326,8 @@
+ 
+ 	SERVER_LOCK();
+ 
++	if (mode & GR_MODE_EXCLUDEENDPOINT)
++		mode |= GR_MODE_HAVE_EXCLUDEENDPOINT;	/* tell clients the flag is understood */
+ 	gcp = GsFindGC(gc);
+ 	if (!gcp || gcp->mode == mode) {
+ 		SERVER_UNLOCK();
+@@ -2604,7 +2606,8 @@
+ 	switch (GsPrepareDrawing(id, gc, &dp)) {
+ 	case GR_DRAW_TYPE_WINDOW:
+ 	case GR_DRAW_TYPE_PIXMAP:
+-		GdLine(dp->psd, dp->x + x1, dp->y + y1, dp->x + x2, dp->y + y2, TRUE);
++		GdLine(dp->psd, dp->x + x1, dp->y + y1, dp->x + x2, dp->y + y2,
++			!(GsFindGC(gc)->mode & GR_MODE_EXCLUDEENDPOINT));
+ 		break;
+ 	}
+ 
+--- a/src/drivers/kbd_tty.c
++++ b/src/drivers/kbd_tty.c
+@@ -69,7 +69,9 @@
+ #else
+ 	char *		kbd;
+ 	/* Open "CONSOLE" or /dev/tty device*/
+-	if (!(kbd = getenv("CONSOLE")))
++	/* KEYBOARD names the keyboard device alone (tests feed one through a pseudo-tty); CONSOLE
++	 * is shared with the screen driver and stays the console */
++	if (!(kbd = getenv("KEYBOARD")) && !(kbd = getenv("CONSOLE")))
+ 		kbd = KEYBOARD;
+ 	fd = open(kbd, O_NONBLOCK);
+ #endif
+@@ -146,6 +148,9 @@
+ #endif
+ 	int	cc;			/* characters read */
+ 	MWKEY mwkey;
++#if ELKS
++	static MWKEYMOD altmod;		/* modifier of the key being returned */
++#endif
+ 
+ 	cc = read(fd, buf + buflen, 1);
+ 	if ((cc < 0) && (errno != EINTR) && (errno != EAGAIN)) {
+@@ -167,6 +172,34 @@
+ 	if (mwkey == 27) {
+ 		mwkey = 0;
+ 		buflen += cc;
++#if ELKS
++		/* The ELKS console sends two-byte sequences: ESC a..l for F1..F12 and ESC A..Z for
++		 * Alt+letter (cursor keys are ESC [ x). Read the second byte alone, so the key that
++		 * follows is never swallowed, and decode the two-byte forms here. */
++		if (buflen == 1) {
++			cc = read(fd, buf + 1, 1);
++			if (cc <= 0) {			/* nothing follows: a lone ESC */
++				buflen = 0;
++				mwkey = 27;
++				goto out;
++			}
++			buflen = 2;
++		}
++		if (buf[1] != '[' && buf[1] != 27) {
++			unsigned char c = buf[1];
++			buflen = 0;
++			if (c >= 'a' && c <= 'l') {
++				mwkey = MWKEY_F1 + (c - 'a');
++				goto out;
++			}
++			if (c >= 'A' && c <= 'Z') {
++				mwkey = c - 'A' + 'a';
++				altmod = MWKMOD_LALT;
++				goto out;
++			}
++			return 0;			/* unknown two-byte sequence: dropped */
++		}
++#endif
+ 		if (buflen < 3) {
+ 			/* Need more characters - escape sequences are 3+ chars */
+ 			do {
+@@ -370,7 +403,12 @@
+ #endif
+ out:
+ 	*kbuf = mwkey;		/* no translation*/
++#if ELKS
++	*modifiers = altmod;	/* Alt+letter from the console's ESC A..Z */
++	altmod = 0;
++#else
+ 	*modifiers = 0;		/* no modifiers*/
++#endif
+ 	*scancode = 0;		/* no scancode*/
+ 	return KBD_KEYPRESS;/* keypress*/
+ }
+--- a/src/engine/devdraw.c
++++ b/src/engine/devdraw.c
+@@ -1304,6 +1304,7 @@
+ 	MWCOORD maxx;
+ 	MWIMAGEBITS bitvalue = 0;	/* bitmap word value */
+ 	int bitcount;			/* number of bits left in bitmap word */
++	int ownclip = clipresult < 0;	/* else the caller checked the cursor and restores it */
+ 
+ #if MWPIXEL_FORMAT != MWPF_PALETTE
+ 	DPRINTF("Using slow GdBitmapByPoint\n");
+@@ -1348,7 +1349,10 @@
+ 			bitcount = 0;
+ 		}
+ 	}
+-	GdFixCursor(psd);
++	/* a caller that passed its clip result (gen_drawtext) draws several bitmaps under one cursor
++	 * check and restores the cursor itself; restoring it here left the next glyphs under it */
++	if (ownclip)
++		GdFixCursor(psd);
+ }
+ 
+ /**

@@ -29,6 +29,7 @@ if fl & 0x100:
 start = int(sys.argv[3], 16) if len(sys.argv) > 3 else 0
 end = int(sys.argv[4], 16) if len(sys.argv) > 4 else sz
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
+md.skipdata = True                      # keep going past bytes that are not code (tables inside the segment)
 for ins in md.disasm(code[start:end], start):
     tag = ''.join('  ; ' + notes[a] for a in range(ins.address, ins.address + ins.size) if a in notes)
     print('%04x: %-22s %s %s%s' % (ins.address, ins.bytes.hex(), ins.mnemonic, ins.op_str, tag))

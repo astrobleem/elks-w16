@@ -10,6 +10,7 @@
  *     -d  dump the 32 KB Tandy frame buffer to PREFIX<n>.bin after each paint
  *     -r  create /tmp/w16.ready after the first paint (test synchronisation)
  *     -m  measure: startup time, input-to-screen latency, timer message cost, resource census
+ *     -q  test hook: close the program's main window SECS seconds after start (as the system menu would)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -198,7 +199,7 @@ int main(int argc, char **argv)
 
 #else
 /* ---------------------------------------------------------------- ELKS */
-extern int opt_strict_dos, opt_metrics;
+extern int opt_strict_dos, opt_metrics, opt_quit_s;
 extern u32 w16_t0;
 u32  now_ms(void);
 void kernel_shutdown(void);
@@ -208,7 +209,7 @@ void w16_thunk_done(void);
 
 static void usage(void)
 {
-    fputs("usage: w16 [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] PROGRAM.EXE [ARGS...]\n", stderr);
+    fputs("usage: w16 [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] PROGRAM.EXE [ARGS...]\n", stderr);
     exit(2);
 }
 
@@ -224,6 +225,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc && argv[i][0] == '-'; i++) {
         char *o = argv[i] + 1;
         if (!strcmp(o, "d") && i + 1 < argc) { strncpy(opt_dump, argv[++i], sizeof(opt_dump) - 1); continue; }
+        if (!strcmp(o, "q") && i + 1 < argc) { opt_quit_s = atoi(argv[++i]); continue; }
         for (; *o; o++)
             switch (*o) {
             case 'v': opt_verbose = 1; break;
@@ -287,7 +289,7 @@ int main(int argc, char **argv)
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
     old21 = w16_getvect(0x21);
-    w16_setvect(0x21, (u16)(unsigned)w16_int21, w16_get_cs());
+    w16_setvect(0x21, FOFF(w16_int21), FSEG(w16_int21));
     vlog("w16: starting %s at %04x:%04x, SS:SP %04x:%04x\n", path, regs[1], regs[0], regs[2], regs[3]);
     if (opt_debugport)
         e9puts("@@START\n");

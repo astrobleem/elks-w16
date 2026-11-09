@@ -8,10 +8,11 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include "w16.h"
 
 #define PROF_MAX 2048                   /* larger files are refused, not truncated */
-static char pbuf[PROF_MAX + 1];
+#define pbuf ((char *)w16_scratch)     /* PROF_MAX + 1 bytes: the shared scratch (see w16.h) */
 
 const char *prof_path(void)
 {
@@ -19,16 +20,26 @@ const char *prof_path(void)
     return p && *p ? p : "win.ini";
 }
 
-/* bytes read (0 when there is no file), or -1 when the file is too large */
+/* bytes read (0 when there is no file), or -1 when the file cannot be read or is too large;
+ * a missing file is normal, anything else is reported, and the writer then leaves the file alone */
 static int load(const char *path)
 {
     int fd = open(path, O_RDONLY), n = 0, r;
     char c;
     pbuf[0] = 0;
-    if (fd < 0)
-        return 0;
+    if (fd < 0) {
+        if (errno == ENOENT)
+            return 0;
+        wlog("w16: cannot open %s (errno %d); profile functions leave it alone\n", path, errno);
+        return -1;
+    }
     while (n < PROF_MAX && (r = read(fd, pbuf + n, PROF_MAX - n)) > 0)
         n += r;
+    if (r < 0) {
+        close(fd);
+        wlog("w16: cannot read %s (errno %d); profile functions leave it alone\n", path, errno);
+        return -1;
+    }
     if (n == PROF_MAX && read(fd, &c, 1) > 0) {
         close(fd);
         wlog("w16: %s is larger than %d bytes; profile functions ignore it\n", path, PROF_MAX);
@@ -126,15 +137,20 @@ static int put_key(int fd, const char *key, const char *val)
     return put(fd, key, (int)strlen(key)) | put(fd, "=", 1) | put(fd, val, (int)strlen(val)) | put(fd, "\n", 1);
 }
 
-/* Set key in [app] to val; val 0 deletes the key, key 0 deletes the whole section. */
+/* Set key in [app] to val; val 0 deletes the key, key 0 deletes the whole section.
+ * The new contents go to PATH.new; the old file is kept as PATH.bak until the new one is in
+ * place, so a failure at any step leaves either the original or a restorable copy. (ELKS
+ * rename() is link + unlink and refuses an existing target, so the old file must move first.) */
 int prof_put(const char *path, const char *app, const char *key, const char *val)
 {
-    char tmp[64];
+    char tmp[64], bak[64];
     const char *p, *a = 0, *v = 0;
-    int an = 0, vn = 0, insec = 0, done = 0, seen = 0, err = 0, fd;
-    if (strlen(path) + 5 > sizeof(tmp) || load(path) < 0)
+    int an = 0, vn = 0, insec = 0, done = 0, seen = 0, err = 0, fd, had;
+    had = load(path);
+    if (strlen(path) + 5 > sizeof(tmp) || had < 0)
         return -1;
     sprintf(tmp, "%s.new", path);
+    sprintf(bak, "%s.bak", path);
     fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0)
         return -1;
@@ -169,6 +185,18 @@ int prof_put(const char *path, const char *app, const char *key, const char *val
         unlink(tmp);
         return -1;
     }
-    unlink(path);
-    return rename(tmp, path) ? -1 : 0;
+    if (had > 0 || access(path, F_OK) == 0) {       /* an existing file steps aside first */
+        unlink(bak);
+        if (rename(path, bak)) {
+            unlink(tmp);
+            return -1;
+        }
+    }
+    if (rename(tmp, path)) {
+        rename(bak, path);                          /* put the original back */
+        unlink(tmp);
+        return -1;
+    }
+    unlink(bak);
+    return 0;
 }

@@ -63,25 +63,30 @@ if rsrc != resn:
             key = ('#%d' % (rid & 0x7FFF)) if rid & 0x8000 else b[rsrc + rid + 1:rsrc + rid + 1 + b[rsrc + rid]].decode('latin1')
             if t & 0x8000:
                 resources.append((t & 0x7FFF, key, off << shift, ln << shift))
-names = []                                  # NAMETABLE: (type, name, ordinal key)
+            else:                               # a type stored by name ("DATA"): keyed by that name
+                tname = b[rsrc + t + 1:rsrc + t + 1 + b[rsrc + t]].decode('latin1')
+                resources.append((tname, key, off << shift, ln << shift))
+names = []                                  # NAMETABLE: (type number or type name, name, ordinal key)
 for t, key, off, ln in resources:
     if t == 15:
         q = off
         while q + 8 <= off + ln and u16(q) >= 8:
             sz, nt, ordv = u16(q), u16(q + 2) & 0x7FFF, u16(q + 4)
-            nm = b[q + 7:b.index(b'\0', q + 7)].decode('latin1')
-            names.append((nt, nm, '#%d' % (ordv & 0x7FFF)))
+            tn_end = b.index(b'\0', q + 6)
+            tn = b[q + 6:tn_end].decode('latin1')
+            nm = b[tn_end + 1:b.index(b'\0', tn_end + 1)].decode('latin1')
+            names.append((tn if tn else nt, nm, '#%d' % (ordv & 0x7FFF)))
             q += sz
 for t, key, off, ln in resources:
     out = run(['-R', str(t), key])
-    expect('at %d length %d' % (off, ln) in out, 'resource %d %s: expected %d/%d, got %r' % (t, key, off, ln, out.strip()))
+    expect('at %d length %d' % (off, ln) in out, 'resource %s %s: expected %d/%d, got %r' % (t, key, off, ln, out.strip()))
     if not key.startswith('#'):
         out = run(['-R', str(t), key.lower()])
         expect('at %d length %d' % (off, ln) in out, 'case-insensitive lookup of %s' % key)
 for t, nm, ordkey in names:
-    want = [r for r in resources if r[0] == t and r[1] == ordkey][0]
+    want = [r for r in resources if str(r[0]).upper() == str(t).upper() and r[1] == ordkey][0]
     out = run(['-R', str(t), nm.lower()])
-    expect('at %d length %d' % (want[2], want[3]) in out, 'NAMETABLE name %s for type %d' % (nm, t))
+    expect('at %d length %d' % (want[2], want[3]) in out, 'NAMETABLE name %s for type %s' % (nm, t))
 for t, key, off, ln in resources:
     if t != 5:
         continue

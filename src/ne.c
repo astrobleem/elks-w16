@@ -65,6 +65,7 @@
 
 static u16 g16(const u8 *p) { return (u16)(p[0] | (p[1] << 8)); }
 static const struct ne_module *rmod;    /* owner of the cached relocation block (each_reloc) */
+static int res_validate(struct ne_module *m);
 static u32 g32(const u8 *p) { return (u32)g16(p) | ((u32)g16(p + 2) << 16); }
 
 const char *ne_errstr(int e)
@@ -356,6 +357,10 @@ int ne_open(struct ne_module *m, const char *path)
             return W16_ENOMEM;
         if ((e = rd_at(m, m->ne_off + m->rsrc_off, m->rsrc, m->rsrc_len, "resource table")))
             return e;
+        if (res_validate(m)) {
+            wlog("w16: %s: the resource table or its NAMETABLE is malformed\n", path);
+            return W16_EFORMAT;
+        }
     }
 
     /* module name (first resident name) */
@@ -646,7 +651,7 @@ static int apply_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
 static int load_segment_data(struct ne_module *m, int i)
 {
     struct ne_seg *sp = &m->seg[i];
-    static u8 buf[1024];
+    u8 *buf = w16_scratch;             /* 1 KB of the shared scratch */
     u16 done = 0, n;
     u32 pos = (u32)sp->fileoff << m->align;
     int e;
@@ -656,7 +661,7 @@ static int load_segment_data(struct ne_module *m, int i)
     if (!sp->fileoff)
         return 0;
     while (done < sp->size) {
-        n = (u16)(sp->size - done) > (u16)sizeof(buf) ? (u16)sizeof(buf) : (u16)(sp->size - done);
+        n = (u16)(sp->size - done) > 1024u ? 1024u : (u16)(sp->size - done);
         if ((e = rd_at(m, pos + done, buf, n, "segment data")))
             return e;
         fcopy_out(sp->sel, done, buf, n);
@@ -811,48 +816,110 @@ int ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *of
     return ne_res_find_t(m, type, 0, name, id, off, len);
 }
 
-/* type is an RT_ number, or tname names the type ("DATA"); name is a string or 0 to use id.
- * Windows 3.0 replaced names by numbers and recorded them in a NAMETABLE resource whose entries are
- * {WORD size, WORD type, WORD id, type name\0 (empty for a numbered type), resource name\0}. */
+/* NAMETABLE walk. Windows 3.0 replaced resource names by numbers and recorded them in a NAMETABLE
+ * resource of entries {WORD size, WORD type, WORD id, type name\0 (empty for a numbered type),
+ * resource name\0}; a zero size ends the table (the resource is padded to its sector). The table
+ * is read in windows of 256 bytes, so any length works on the 6 KB loader stack, and every bound is
+ * checked as a subtraction so nothing can wrap in the target's 16-bit int. cb returns nonzero to
+ * stop; nt_walk returns that value, 0 at the end, or -1 for a malformed table. */
+typedef int (*nt_cb)(void *ctx, u16 type, u16 id, const char *tname, const char *rname);
+
+static int nt_walk(struct ne_module *m, nt_cb cb, void *ctx)
+{
+    u8 buf[257];
+    u32 noff;
+    u16 nlen, pos = 0;
+    if (res_scan(m, 0x8000 | RT_NAMETABLE, 0, 0, 1, &noff, &nlen))
+        return 0;
+    while (pos + 1 < nlen) {
+        u16 n = nlen - pos > 256 ? 256 : nlen - pos, sz, tl;
+        int r;
+        if (ne_read(m, noff + pos, buf, n))
+            return -1;
+        buf[n] = 0;
+        sz = g16(buf);
+        if (!sz)
+            return 0;                                /* the rest is padding */
+        if (sz < 8 || sz > n || buf[sz - 1])
+            return -1;
+        tl = (u16)strlen((char *)buf + 6);
+        if (tl > sz - 8u)                            /* leaves no room for the resource name */
+            return -1;
+        r = cb(ctx, g16(buf + 2), g16(buf + 4), (char *)buf + 6, (char *)buf + 7 + tl);
+        if (r)
+            return r;
+        pos += sz;
+    }
+    return 0;
+}
+
+struct nt_find { struct ne_module *m; u16 type, id; const char *tname, *name; u32 *off; u16 *len; };
+
+static int nt_match(void *ctx, u16 t, u16 ord, const char *tn, const char *rn)
+{
+    struct nt_find *f = ctx;
+    u16 tr;
+    if (f->tname ? !(*tn && name_eq((const u8 *)tn, (u8)strlen(tn), f->tname)) : *tn || (t & 0x7FFF) != f->type)
+        return 0;
+    tr = f->tname ? (u16)(t | 0x8000) : (u16)(0x8000 | f->type);
+    if (f->name) {
+        if (!(ord & 0x8000) || !name_eq((const u8 *)rn, (u8)strlen(rn), f->name))
+            return 0;
+        ord &= 0x7FFF;
+    } else
+        ord = f->id;
+    /* a named type is stored either as the number the entry gives (RC 3.0) or by its name (other linkers) */
+    return !res_scan(f->m, tr, 0, 0, ord, f->off, f->len) ||
+           (f->tname && !res_scan(f->m, 0, tn, 0, ord, f->off, f->len));
+}
+
+static int nt_ok(void *ctx, u16 t, u16 ord, const char *tn, const char *rn)
+{
+    (void)ctx; (void)t; (void)ord; (void)tn; (void)rn;
+    return 0;
+}
+
+/* type is an RT_ number, or tname names the type ("DATA"); name is a string or 0 to use id. */
 int ne_res_find_t(struct ne_module *m, u16 type, const char *tname, const char *name, u16 id, u32 *off, u16 *len)
 {
-    u32 noff;
-    u16 nlen, p = 0;
-    u8 buf[512];
+    struct nt_find f;
     if (!res_scan(m, tname ? 0 : 0x8000 | type, tname, name, id, off, len))
         return 0;
-    if ((!name && !tname) || res_scan(m, 0x8000 | RT_NAMETABLE, 0, 0, 1, &noff, &nlen))
+    if (!name && !tname)
         return -1;
-    if (nlen > sizeof(buf))
-        nlen = sizeof(buf);
-    if (ne_read(m, noff, buf, nlen))
+    f.m = m; f.type = type; f.id = id; f.tname = tname; f.name = name; f.off = off; f.len = len;
+    return nt_walk(m, nt_match, &f) == 1 ? 0 : -1;
+}
+
+/* Check the resource table and the NAMETABLE once at open, so malformed metadata is reported up
+ * front (also by -n) and the lookups above can trust the structure. 0 ok, -1 malformed. */
+static int res_validate(struct ne_module *m)
+{
+    const u8 *r = m->rsrc;
+    u16 n = m->rsrc_len, p = 2, shift, k;
+    if (!r)
+        return 0;
+    if (n < 4 || (shift = g16(r)) > 15)
         return -1;
-    while (p + 8 <= nlen) {
-        u16 sz = g16(buf + p), t = g16(buf + p + 2), ord = g16(buf + p + 4), tl, rl;
-        const char *tn, *rn;
-        if (sz < 8 || p + sz > nlen || buf[p + sz - 1])
+    while (p + 8 <= n) {
+        u16 t = g16(r + p), cnt = g16(r + p + 2);
+        if (!t)
             break;
-        tn = (const char *)buf + p + 6;
-        tl = (u16)strlen(tn);
-        if (6u + tl + 1 >= sz)                       /* no room left for the resource name */
-            break;
-        rn = tn + tl + 1;
-        rl = (u16)strlen(rn);
-        if (tl > 255 || rl > 255) {
-            p += sz;
-            continue;
+        if (!(t & 0x8000) && (t >= n || r[t] >= n - t))
+            return -1;
+        p += 8;
+        if (cnt > (n - p) / 12)
+            return -1;
+        for (k = 0; k < cnt; k++, p += 12) {
+            u32 off = (u32)g16(r + p) << shift, len = (u32)g16(r + p + 2) << shift;
+            u16 rid = g16(r + p + 6);
+            if (off > m->filesize || len > m->filesize - off)
+                return -1;
+            if (!(rid & 0x8000) && (rid >= n || r[rid] >= n - rid))
+                return -1;
         }
-        if (tname ? tl && name_eq((const u8 *)tn, (u8)tl, tname) : !tl && (t & 0x7FFF) == type) {
-            u16 tr = tname ? (u16)(t | 0x8000) : (u16)(0x8000 | type);
-            if (name) {
-                if ((ord & 0x8000) && name_eq((const u8 *)rn, (u8)rl, name))
-                    return res_scan(m, tr, 0, 0, ord & 0x7FFF, off, len);
-            } else if (!res_scan(m, tr, 0, 0, id, off, len))
-                return 0;
-        }
-        p += sz;
     }
-    return -1;
+    return nt_walk(m, nt_ok, 0);
 }
 
 /* STRINGTABLE: block (id / 16) + 1 holds 16 strings of {BYTE length, text}. Returns the length copied

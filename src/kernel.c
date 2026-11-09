@@ -114,6 +114,13 @@ u32 k_GetWinFlags(u16 ss, u16 ap)
     return 0x0040ul;            /* WF_CPU086 */
 }
 
+/* GetModuleUsage(hModule): one instance of everything */
+u32 k_GetModuleUsage(u16 ss, u16 ap)
+{
+    (void)ss; (void)ap;
+    return 1;
+}
+
 /* LockSegment(wSegment) / UnlockSegment(wSegment): segments never move here; -1 means the caller's DS */
 u32 k_LockSegment(u16 ss, u16 ap)
 {

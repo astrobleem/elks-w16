@@ -99,7 +99,7 @@ static int border_w(u32 style)
 /* attach a MENU resource to w as its menu bar; widths are measured once, here */
 u16 menu_load(struct wnd *w, const char *name, u16 id)
 {
-    static u8 buf[512];
+    u8 *buf = w16_scratch;             /* 512 bytes of the shared scratch */
     struct menu *mn;
     GR_SCREEN_INFO si;
     u32 off;
@@ -116,8 +116,8 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
         return 0;
     }
     mn = &menus[i];
-    if (len > sizeof(buf))
-        len = sizeof(buf);
+    if (len > 512)
+        len = 512;
     if (ne_read(w16_mod, off, buf, len) || menu_parse(buf, len, &mn->t)) {
         wlog("w16: menu %s is malformed or has more than %d items\n", name ? name : "(ordinal)", MENU_MAXITEMS);
         return 0;

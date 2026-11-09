@@ -1,0 +1,148 @@
+--- a/src/drivers/tandy4.c
++++ b/src/drivers/tandy4.c
+@@ -12,11 +12,26 @@
+ 
+ extern unsigned int tandy_screen_segment;
+ 
++/* byte offset of each screen row in the interleaved mode 09h layout: bank (y & 3) at 8 KB steps,
++ * 160 bytes per row within a bank. A lookup replaces a multiply and two shifts per pixel. */
++static unsigned int rowoff[200];
++static int rowoff_ready;
++
++static void rowoff_init(void)
++{
++    int y;
++    for (y = 0; y < 200; y++)
++        rowoff[y] = ((unsigned)(y & 3) << 13) + (unsigned)(y >> 2) * 160;
++    rowoff_ready = 1;
++}
++
+ static FARADDR pixeladdr(PSD p, MWCOORD x, MWCOORD y)
+ {
+-    if (p->flags & PSF_SCREEN)
+-        return MK_FP(tandy_screen_segment, ((unsigned)(y & 3) << 13) +
+-                     (unsigned)(y >> 2) * 160 + (x >> 1));
++    if (p->flags & PSF_SCREEN) {
++        if (!rowoff_ready)
++            rowoff_init();
++        return MK_FP(tandy_screen_segment, rowoff[y] + (x >> 1));
++    }
+     return (FARADDR)(p->addr + (unsigned)y * p->pitch + (x >> 1));
+ }
+ static MWPIXELVAL readpixel(PSD p, MWCOORD x, MWCOORD y)
+@@ -35,19 +50,43 @@
+ {
+     putpixel(p,x,y,c,gr_mode);
+ }
++/* a horizontal line: odd ends pixel by pixel, the middle byte by byte in every raster mode */
+ static void hline(PSD p, MWCOORD x, MWCOORD end, MWCOORD y, MWPIXELVAL c)
+ {
+     FARADDR a;
++    unsigned char cc = (c & 15) * 17;
++    if ((x&1) && x<=end) putpixel(p,x++,y,c,gr_mode);
++    if (x >= end) {
++        if (x == end) putpixel(p,x,y,c,gr_mode);
++        return;
++    }
++    a = pixeladdr(p,x,y);
+     if (gr_mode == MWROP_COPY) {
+-        if ((x&1) && x<=end) putpixel(p,x++,y,c,MWROP_COPY);
+-        a = pixeladdr(p,x,y);
+-        while (x<end) { *a++ = (c&15)*17; x+=2; }
+-        if (x<=end) putpixel(p,x,y,c,MWROP_COPY);
+-    } else while (x<=end) putpixel(p,x++,y,c,gr_mode);
++        while (x<end) { *a++ = cc; x+=2; }
++    } else {
++        while (x<end) {
++            unsigned char old = *a;
++            *a++ = (unsigned char)((applyOpR(gr_mode, c, old >> 4) << 4) | (applyOpR(gr_mode, c, old & 15) & 15));
++            x+=2;
++        }
++    }
++    if (x<=end) putpixel(p,x,y,c,gr_mode);
+ }
+ static void vline(PSD p, MWCOORD x, MWCOORD y, MWCOORD end, MWPIXELVAL c)
+ {
+-    while (y<=end) putpixel(p,x,y++,c,gr_mode);
++    unsigned shift = (1-(x&1))*4;
++    if (p->flags & PSF_SCREEN) {
++        if (!rowoff_ready)
++            rowoff_init();
++        while (y<=end) {
++            FARADDR a = MK_FP(tandy_screen_segment, rowoff[y] + (x >> 1));
++            unsigned char old = *a;
++            unsigned value = gr_mode == MWROP_COPY ? c : applyOpR(gr_mode,c,(old>>shift)&15);
++            *a = (old & ~(15<<shift)) | ((value & 15)<<shift);
++            y++;
++        }
++    } else
++        while (y<=end) putpixel(p,x,y++,c,gr_mode);
+ }
+ static void blit(PSD d, MWCOORD dx, MWCOORD dy, MWCOORD w, MWCOORD h,
+                  PSD s, MWCOORD sx, MWCOORD sy, int op)
+@@ -57,6 +96,13 @@
+     int transparent = op == MWROP_SRCTRANSCOPY;
+     int backward = d==s && (dy>sy || (dy==sy && dx>sx));
+     if (op>MWROP_SIMPLE_MAX) op=MWROP_COPY;
++    if (op == MWROP_COPY && !(dx & 1) && !(sx & 1) && !(w & 1) && !backward) {
++        for (j=0;j<h;++j) {                     /* even-aligned copy: whole bytes */
++            FARADDR da = pixeladdr(d,dx,dy+j), sa = pixeladdr(s,sx,sy+j);
++            for (i=0;i<w;i+=2) *da++ = *sa++;
++        }
++        return;
++    }
+     for (j=0;j<h;++j) {
+         y=backward ? h-1-j : j;
+         for (i=0;i<w;++i) {
+@@ -67,8 +113,50 @@
+         }
+     }
+ }
++/* Text: a 1-bit glyph (16-bit words, most significant bit first, src_pitch bytes per row) to the
++ * screen or a memory surface, 1 bits in the foreground colour, 0 bits left alone or in the
++ * background colour with usebg. The engine clips the destination before calling (srcx may start
++ * inside a word). Two pixels go out per byte; before, every glyph pixel went through DrawPixel,
++ * and the per-glyph fallback also re-showed the software cursor between glyphs. */
++static void maskblit(PSD p, PMWBLITPARMS gc)
++{
++    MWCOORD y, w = gc->width, h = gc->height;
++    unsigned char fg = gc->fg_pixelval & 15, bg = gc->bg_pixelval & 15, pair = fg * 17;
++    const MWIMAGEBITS *row = (const MWIMAGEBITS *)((const unsigned char *)gc->data + gc->src_pitch * (unsigned)gc->srcy) + (gc->srcx >> 4);
++    unsigned skip = gc->srcx & 15;
++    for (y = 0; y < h; y++, row = (const MWIMAGEBITS *)((const unsigned char *)row + gc->src_pitch)) {
++        const MWIMAGEBITS *s = row;
++        FARADDR a = pixeladdr(p, gc->dstx, gc->dsty + y);
++        unsigned bits = ((unsigned)*s++ << skip) & 0xFFFFu;
++        int left = 16 - (int)skip, n = w;
++        if (gc->dstx & 1) {                             /* a lone first pixel in a low nibble */
++            if (bits & 0x8000) *a = (*a & 0xF0) | fg;
++            else if (gc->usebg) *a = (*a & 0xF0) | bg;
++            a++; n--;
++            bits = (bits << 1) & 0xFFFFu;
++            if (--left == 0) { bits = *s++; left = 16; }
++        }
++        while (n >= 2) {                                /* whole bytes: two pixels at a time */
++            unsigned b0, b1;
++            b0 = bits & 0x8000; bits = (bits << 1) & 0xFFFFu;
++            if (--left == 0) { bits = *s++; left = 16; }
++            b1 = bits & 0x8000; bits = (bits << 1) & 0xFFFFu;
++            if (--left == 0) { bits = *s++; left = 16; }
++            if (gc->usebg) *a = (unsigned char)(((b0 ? fg : bg) << 4) | (b1 ? fg : bg));
++            else if (b0 && b1) *a = pair;
++            else if (b0) *a = (*a & 0x0F) | (fg << 4);
++            else if (b1) *a = (*a & 0xF0) | fg;
++            a++; n -= 2;
++        }
++        if (n) {                                        /* a last pixel in a high nibble */
++            if (bits & 0x8000) *a = (*a & 0x0F) | (fg << 4);
++            else if (gc->usebg) *a = (*a & 0x0F) | (bg << 4);
++        }
++    }
++}
+ static SUBDRIVER packed4 = {
+-    drawpixel, readpixel, hline, vline, gen_fillrect, blit
++    drawpixel, readpixel, hline, vline, gen_fillrect, blit,
++    0, 0, 0, 0, maskblit               /* BlitCopyMaskMonoWordMSB: core font glyphs */
+ };
+ PSUBDRIVER tandyplan4[4] = { &packed4 };
+ PSUBDRIVER memplan4[4] = { &packed4 };

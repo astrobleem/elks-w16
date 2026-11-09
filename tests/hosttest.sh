@@ -105,16 +105,29 @@ for f in $T/rfuzz/*.exe; do
 done
 [ $crash -eq 0 ] && ok "800 resource/dialog mutations: no crash, sanitizer report or leak" || bad "$crash resource fuzz failures"
 
-echo "== 7. menus, string tables, named resource types and WIN.INI"
+echo "== 7. menus, string tables, named resource types, the NAMETABLE and WIN.INI"
 D=test/dlgtest/DLGTEST.EXE
-$H -M DlgMenu -S 1 -S 2 -S 17 -S 3 -S 16 -R DATA DlgData -R data dlgdata -R DATA Nope $D > $T/out.txt 2>&1
+$H -M DlgMenu -S 1 -S 2 -S 17 -S 3 -S 16 -R DATA DlgData -R data dlgdata -R DATA Nope \
+   -R 5 NtDlg -R 5 ntdlg -R DATA NtData -R 15 "#1" -R 5 NtNope -D NtDlg $D > $T/out.txt 2>&1
 for want in "menu DlgMenu: 8 items" "item 0 parent -1 flags 0010 id 0 text '&File'" "item 2 parent 0 flags 0800 id 0 text ''" \
             "item 3 parent 0 flags 0008 id 11 text 'E&xit'" "item 5 parent 4 flags 0001 id 20 text '&Big'" \
             "item 7 parent -1 flags 0000 id 30 text '&Help!'" "string 1 'first' length 5" "string 17 'block two' length 9" \
-            "string 3 not found" "string 16 not found" "resource DATA DlgData at 2906 length 10" \
-            "resource data dlgdata at 2906 length 10" "resource DATA Nope not found" "live allocations after free 0"; do
+            "string 3 not found" "string 16 not found" "resource DATA DlgData at 2990 length 10" \
+            "resource data dlgdata at 2990 length 10" "resource DATA Nope not found" \
+            "resource 5 NtDlg at 2870 length 40" "resource 5 ntdlg at 2870 length 40" "resource DATA NtData at 3000 length 10" \
+            "resource 15 #1 at 3010 length 34" "resource 5 NtNope not found" "caption 'NtDlg'" "live allocations after free 0"; do
     grep -qF "$want" $T/out.txt && ok "DLGTEST: $want" || { bad "DLGTEST: missing '$want'"; cat $T/out.txt; }
 done
+# malformed resource tables and NAMETABLEs are refused when the file is opened (so also by w16 -n on the target)
+python3 tests/mkbadres.py $D $T/badres > /dev/null
+while read name code text; do
+    $H $T/badres/$name > $T/out.txt 2>&1; rc=$?
+    if [ $rc -eq $code ] && grep -qF "$text" $T/out.txt && grep -q "live allocations after free 0" $T/out.txt; then
+        ok "$name -> $rc: $text"
+    else
+        bad "$name expected $code '$text', got $rc"; cat $T/out.txt
+    fi
+done < $T/badres/expect.txt
 if [ -n "${W16_PRIVATE:-}" ] && [ -f "$W16_PRIVATE/CLOCK.EXE" ]; then
     # Windows 3.0 RC: names live in a NAMETABLE, including the string type "DATA" (type F006h)
     $H -R DATA CLOCK -R 4 CLOCK -R 5 CLOCK -R 14 CCKK -M CLOCK -S 1 -S 2 -S 4 -S 23 $W16_PRIVATE/CLOCK.EXE > $T/out.txt 2>&1
@@ -122,6 +135,16 @@ if [ -n "${W16_PRIVATE:-}" ] && [ -f "$W16_PRIVATE/CLOCK.EXE" ]; then
                 "resource 14 CCKK at 8736 length 48" "menu CLOCK: 5 items" "item 4 parent 0 flags 0000 id 4 text 'A&bout Clock...'" \
                 "string 2 'data' length 4" "string 4 'digital.fon' length 11" "string 23 'iFormat' length 7"; do
         grep -qF "$want" $T/out.txt && ok "CLOCK: $want" || { bad "CLOCK: missing '$want'"; cat $T/out.txt; }
+    done
+fi
+if [ -n "${W16_PRIVATE:-}" ] && [ -f "$W16_PRIVATE/REVERSI.EXE" ]; then
+    # accelerators named through the NAMETABLE, a cursor group, the menu with three popups
+    $H -M "#1" -R 9 MainAcc -R 9 mainacc -R 12 "#1" -R 1 "#4" -S 13 -D "#3" $W16_PRIVATE/REVERSI.EXE > $T/out.txt 2>&1
+    for want in "resource 9 MainAcc at 14864 length 16" "resource 9 mainacc at 14864 length 16" "resource 12 #1 at 13664 length 32" \
+                "resource 1 #4 at 13728 length 320" "menu #1: 20 items" "item 19 parent 11 flags 0000 id 36 text '&About Reversi...'" \
+                "item 4 parent 0 flags 0800 id 0 text ''" "string 13 'You may only move to a space where the cursor is a cross.' length 57" \
+                "caption 'About Reversi'" "live allocations after free 0"; do
+        grep -qF "$want" $T/out.txt && ok "REVERSI: $want" || { bad "REVERSI: missing '$want'"; cat $T/out.txt; }
     done
 fi
 I=$T/w.ini
@@ -136,6 +159,12 @@ grep -q "^absent" $T/out.txt && grep -q "sTime" $I && ok "WIN.INI: delete one ke
 $H -P $I intl - - > /dev/null; ! grep -q "intl\|sTime" $I && grep -q "; comment" $I && ok "WIN.INI: delete a section keeps comments" || { bad "WIN.INI section delete"; cat $I; }
 head -c 3000 /dev/zero | tr '\0' 'x' > $I; $H -P $I a b c > $T/out.txt 2>&1
 grep -q "^put failed" $T/out.txt && [ "$(wc -c < $I)" = 3000 ] && ok "WIN.INI: an oversized file is refused, not truncated" || { bad "WIN.INI oversize"; cat $T/out.txt; }
+printf '[a]\nb=1\n' > $I; mkdir -p $I.new; $H -P $I a b 2 > $T/out.txt 2>&1
+grep -q "^put failed" $T/out.txt && [ "$(cat $I)" = "$(printf '[a]\nb=1')" ] && [ ! -e $I.bak ] && ok "WIN.INI: a replacement that cannot be written leaves the original" || { bad "WIN.INI tmp failure"; cat $T/out.txt; }
+rmdir $I.new; $H -P $I a b 3 > /dev/null; [ ! -e $I.new ] && [ ! -e $I.bak ] && grep -q "b=3" $I && ok "WIN.INI: a successful rewrite leaves no .new or .bak" || { bad "WIN.INI leftovers"; ls $T; }
+mkdir -p $T/inidir; $H -P $T/inidir a b c > $T/out.txt 2>&1
+grep -q "^put failed" $T/out.txt && [ -d $T/inidir ] && grep -q "cannot read" $T/out.txt && ok "WIN.INI: a read error is reported and nothing is written" || { bad "WIN.INI read error"; cat $T/out.txt; }
+$H -P $T/nonexistent/x.ini a b > $T/out.txt 2>&1; grep -q "^absent" $T/out.txt && ok "WIN.INI: a missing file reads as absent without complaint" || { bad "WIN.INI absent path"; cat $T/out.txt; }
 
 echo "== 8. menu template fuzz (ASan/UBSan)"
 python3 - $D "$T/mfuzz" <<'PY'

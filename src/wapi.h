@@ -19,6 +19,7 @@
 #define WM_KEYDOWN       0x0100
 #define WM_KEYUP         0x0101
 #define WM_CHAR          0x0102
+#define WM_SYSKEYDOWN    0x0104
 #define WM_SYSCOMMAND    0x0112
 #define WM_TIMER         0x0113
 #define WM_INITMENU      0x0116
@@ -47,6 +48,12 @@
 #define WS_POPUP         0x80000000ul
 #define WS_TABSTOP       0x00010000ul
 #define DS_MODALFRAME    0x0080
+
+/* GC mode flags added to Nano-X by nanox-w16.patch; a stock server stores them without effect */
+#ifndef GR_MODE_EXCLUDEENDPOINT
+#define GR_MODE_EXCLUDEENDPOINT      0x0200      /* GrLine leaves out its end point (Windows LineTo) */
+#define GR_MODE_HAVE_EXCLUDEENDPOINT 0x0400      /* set by the server when it honours the flag above */
+#endif
 
 /* SetROP2 binary raster operations */
 #define R2_BLACK        1
@@ -119,14 +126,24 @@ struct dc {
 #define HDC_BASE   0x0200
 #define HSTOCK     0x0300       /* stock objects: HSTOCK + 2 * index */
 #define HOBJ_BASE  0x0400
-#define HCURSOR    0x0500
-#define HICON      0x0502
+#define HCURSOR_BASE 0x0500     /* cursors: HCURSOR_BASE + 2 * index (cursor.c) */
+#define HICON      0x0590
+#define HACCEL_BASE 0x0800      /* accelerator tables */
+#define HBMP_BASE  0x0900       /* monochrome bitmaps (gdi.c) */
 #define HMENU_BASE 0x0600       /* menu bars: HMENU_BASE + 0x20 * n; their popups add 2 * (item + 1) */
 
 extern struct wnd wins[MAXWIN];
 struct wnd *win_get(u16 hwnd);
 u32  win_send(struct wnd *w, u16 msg, u16 wp, u32 lp);
 void win_invalidate_all(struct wnd *w, int erase);
+
+u8       *res_load(u16 type, const char *name, u16 id, u16 *len);   /* malloc'd copy of a resource */
+u16       message_box(const char *text, const char *caption, u16 type);
+u16       user_key_mods(void);        /* MWKMOD_* at the latest key event */
+
+/* cursors and accelerators (cursor.c) */
+void      cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client);
+void      cursor_census(u16 *n);
 
 /* GDI */
 GR_COLOR  rgb_to_gr(u32 colorref);

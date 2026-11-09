@@ -58,6 +58,11 @@ void fzero(u16 seg, u16 off, u16 n);
 u16  fstrncpy_in(char *dst, u16 seg, u16 off, u16 max);    /* NUL-terminated copy, returns length */
 void res_name(u16 off, u16 seg, char *name, u16 *id);     /* resource name or ordinal; name[34] */
 
+/* one 2 KB scratch area shared by code that never runs at the same time: segment loading (ne.c),
+ * WIN.INI (profile.c), pattern fills and the ready file (gdi.c, user.c), menu templates (menu.c) */
+#define W16_SCRATCH 2049
+extern u8 w16_scratch[W16_SCRATCH];
+
 /* segment allocation: whole paragraphs, owned by this process */
 int  seg_alloc(u16 paras, u16 *seg);
 void seg_free(u16 seg);
@@ -127,10 +132,13 @@ int  ne_read(struct ne_module *m, u32 off, void *buf, u16 n);
 
 /* resources: type is the RT_ number; name is a string (case-insensitive) or 0 to use id.
  * Names may also resolve through a Windows 3.0 NAMETABLE (type 15). Returns 0 and the file range. */
+#define RT_CURSOR     1
 #define RT_ICON       3
 #define RT_MENU       4
 #define RT_DIALOG     5
 #define RT_STRING     6
+#define RT_ACCELERATOR 9
+#define RT_GROUP_CURSOR 12
 #define RT_GROUP_ICON 14
 #define RT_NAMETABLE  15
 int  ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *off, u16 *len);
@@ -208,6 +216,11 @@ const char *api_known_name(int mod, u16 ord);     /* diagnostic names of unimple
 int  api_target(int idx, u16 *seg, u16 *off);     /* far address an import binds to */
 
 /* ---------------------------------------------------------------- runtime (ELKS) */
+#ifndef W16_HOST
+/* medium model: a function's address is a far pointer; these take it apart */
+#define FOFF(f) ((u16)(u32)(f))
+#define FSEG(f) ((u16)((u32)(f) >> 16))
+#endif
 extern struct ne_module *w16_mod;
 extern u16 w16_app_ss, w16_app_sp, w16_ldr_sp;
 extern u16 w16_ret_bx, w16_ret_cx, w16_ret_es;

@@ -7,11 +7,13 @@
 # src/lib/libnano-X.a was built with Makefile.elks.
 
 CC      = ia16-elf-gcc
-CFLAGS  = -mcmodel=small -melks-libc -march=i8086 -mtune=i8086 -Os -Wall -Wno-unused-function \
+# Medium memory model: C functions are far and may fill two code segments (the loader passed 61 KB
+# of the 64 KB small-model limit). MWDIR's src/lib/libnano-X.a must be built with -mcmodel=medium too.
+CFLAGS  = -mcmodel=medium -melks-libc -march=i8086 -mtune=i8086 -Os -Wall -Wno-unused-function \
           -I$(TOPDIR)/include -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include \
           -I$(MWDIR)/src/include -DELKS=1 -DMWCONFIG_FILE='"mwconfig.elks"'
-LDFLAGS = -mcmodel=small -melks-libc -maout-heap=0x1400 -maout-stack=0x1800
-OBJS    = main.o ne.o api.o mem.o kernel.o user.o menu.o gdi.o dlgtmpl.o profile.o thunk.o
+LDFLAGS = -mcmodel=medium -melks-libc -maout-heap=0x1400 -maout-stack=0x1800
+OBJS    = main.o ne.o api.o mem.o kernel.o user.o menu.o cursor.o gdi.o dlgtmpl.o profile.o thunk.o
 
 all: w16
 
