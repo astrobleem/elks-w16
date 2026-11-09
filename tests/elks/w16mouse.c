@@ -11,7 +11,8 @@
  *   home            move to (0,0) with many small left/up moves
  *   move X Y        move to absolute screen position X,Y (after home)
  *   click / dclick  left click / double click
- *   button ID       click the centre of dialog push button ID, as listed by w16 -r in READYFILE
+ *   button ID       click the centre of target ID (dialog push button, menu bar item 1000+n, or menu
+ *                   item), as listed by w16 -r in READYFILE; waits up to 30 s for it to be listed
  *   snap NAME       save meminfo and ps output to /tmp/m_NAME.txt and /tmp/p_NAME.txt
  *   sleep N         wait N seconds
  *   say TEXT        log "@@SAY TEXT"
@@ -115,15 +116,20 @@ static void snap(const char *name)
 
 static void button(const char *ready, int want)
 {
-    FILE *f = fopen(ready, "r");
-    int id, x, y, found = 0;
-    while (f && fgets(line, sizeof(line), f))
-        if (sscanf(line, "button %d %d %d", &id, &x, &y) == 3 && id == want) {
-            found = 1;
-            break;
-        }
-    if (f)
-        fclose(f);
+    FILE *f;
+    int id, x, y, found = 0, tries;
+    for (tries = 0; !found && tries < 30; tries++) {   /* the target may still be on its way: wait up to 30 s */
+        if (tries)
+            sleep(1);
+        f = fopen(ready, "r");
+        while (f && fgets(line, sizeof(line), f))
+            if (sscanf(line, "button %d %d %d", &id, &x, &y) == 3 && id == want) {
+                found = 1;
+                break;
+            }
+        if (f)
+            fclose(f);
+    }
     if (!found) {
         e9("@@SAY w16mouse: button not listed in the ready file, which holds:\n");
         f = fopen(ready, "r");
