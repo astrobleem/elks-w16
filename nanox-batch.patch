@@ -50,7 +50,17 @@
  			if (e == 0)
 --- a/src/nanox/srvmain.c
 +++ b/src/nanox/srvmain.c
-@@ -545,8 +545,21 @@
+@@ -214,6 +214,9 @@
+ 	client->prev = NULL;
+ 	client->waiting_for_event = FALSE;
+ 	client->shm_cmds = 0;
++#if ELKS
++	client->rpos = client->rlen = 0;	/* malloc may return a freed client's memory */
++#endif
+ 
+ 	if(connectcount++ == 0)
+ 		root_client = client;
+@@ -545,8 +548,21 @@
  
  			/* curclient may be freed in GsDropClient*/
  			curclient_next = curclient->next;
