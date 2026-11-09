@@ -64,6 +64,69 @@ def main():
             print('   %d relocation records' % nr)
     print('imports used (%d):' % len(imports))
     for k in sorted(imports): print('  ', k, sorted(set(imports[k])))
+    if '--resources' in sys.argv and rsrcoff != resnoff:
+        dump_resources(b, ne + rsrcoff)
+
+
+RT = {1: 'CURSOR', 2: 'BITMAP', 3: 'ICON', 4: 'MENU', 5: 'DIALOG', 6: 'STRING', 7: 'FONTDIR', 8: 'FONT',
+      9: 'ACCELERATOR', 10: 'RCDATA', 12: 'GROUP_CURSOR', 14: 'GROUP_ICON', 15: 'NAMETABLE', 16: 'VERSION'}
+CLS = {0x80: 'BUTTON', 0x81: 'EDIT', 0x82: 'STATIC', 0x83: 'LISTBOX', 0x84: 'SCROLLBAR', 0x85: 'COMBOBOX'}
+
+
+def rname(b, base, v):
+    if v & 0x8000:
+        return '#%d' % (v & 0x7FFF)
+    n = b[base + v]
+    return b[base + v + 1:base + v + 1 + n].decode('latin1')
+
+
+def cstr(b, p):
+    """Win16 resource string: 0xFF + ordinal, or NUL-terminated text."""
+    if b[p] == 0xFF:
+        return '#%d' % struct.unpack_from('<H', b, p + 1)[0], p + 3
+    e = b.index(b'\0', p)
+    return b[p:e].decode('latin1'), e + 1
+
+
+def dump_dialog(d):
+    style, n, x, y, cx, cy = struct.unpack_from('<IBHHHH', d, 0)
+    p = 13
+    menu, p = cstr(d, p); cls, p = cstr(d, p); cap, p = cstr(d, p)
+    font = ''
+    if style & 0x40:
+        pt = struct.unpack_from('<H', d, p)[0]; face, p = cstr(d, p + 2); font = ' font %d %s' % (pt, face)
+    print('      dialog style %08x at %d,%d %dx%d menu %r class %r caption %r%s, %d items' % (style, x, y, cx, cy, menu, cls, cap, font, n))
+    for i in range(n):
+        ix, iy, icx, icy, iid, ist = struct.unpack_from('<HHHHHI', d, p); p += 14
+        if d[p] & 0x80:
+            c = CLS.get(d[p], '%#x' % d[p]); p += 1
+        else:
+            c, p = cstr(d, p)
+        t, p = cstr(d, p)
+        extra = d[p]; p += 1 + extra
+        print('        item id %5d %-8s style %08x at %d,%d %dx%d text %r' % (iid, c, ist, ix, iy, icx, icy, t))
+
+
+def dump_resources(b, base):
+    shift = struct.unpack_from('<H', b, base)[0]; p = base + 2
+    print('resources (align shift %d):' % shift)
+    while True:
+        t, cnt = struct.unpack_from('<HH', b, p)
+        if t == 0:
+            break
+        tname = RT.get(t & 0x7FFF, '#%d' % (t & 0x7FFF)) if t & 0x8000 else rname(b, base, t)
+        p += 8
+        for i in range(cnt):
+            off, ln, fl, rid = struct.unpack_from('<HHHH', b, p); p += 12
+            data = b[off << shift:(off << shift) + (ln << shift)]
+            print('   %-12s %-10s file %#07x len %5d flags %#06x' % (tname, rname(b, base, rid), off << shift, ln << shift, fl))
+            if tname == 'DIALOG':
+                dump_dialog(data)
+            elif tname == 'GROUP_ICON':
+                n = struct.unpack_from('<H', data, 4)[0]
+                for k in range(n):
+                    w, h, cc, _, planes, bits, size, iid = struct.unpack_from('<BBBBHHIH', data, 6 + 14 * k)
+                    print('        icon %dx%d colours %d bits %d -> ICON #%d' % (w, h, cc, bits * planes, iid))
 
 
 if __name__ == '__main__':

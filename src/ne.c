@@ -64,6 +64,7 @@
 #define RF_ADDITIVE 4
 
 static u16 g16(const u8 *p) { return (u16)(p[0] | (p[1] << 8)); }
+static const struct ne_module *rmod;    /* owner of the cached relocation block (each_reloc) */
 static u32 g32(const u8 *p) { return (u32)g16(p) | ((u32)g16(p + 2) << 16); }
 
 const char *ne_errstr(int e)
@@ -127,6 +128,7 @@ int ne_open(struct ne_module *m, const char *path)
     int e;
 
     memset(m, 0, sizeof(*m));
+    rmod = 0;
     m->path = path;
     m->fd = open(path, O_RDONLY);
     if (m->fd < 0) {
@@ -285,6 +287,36 @@ int ne_open(struct ne_module *m, const char *path)
         wlog("w16: %s: automatic data segment %u is a code segment\n", path, m->autodata);
         return W16_EFORMAT;
     }
+    /* entry point: inside the code that is actually loaded for its segment */
+    if (!m->seg[m->cs - 1].fileoff || (u32)m->ip >= m->seg[m->cs - 1].size) {
+        wlog("w16: %s: entry point %u:%04x is outside the %u bytes of code in segment %u\n", path, m->cs, m->ip,
+             m->seg[m->cs - 1].fileoff ? m->seg[m->cs - 1].size : 0, m->cs);
+        return W16_EFORMAT;
+    }
+    /* automatic data segment: static data, then the stack, then the local heap. Sized in 32 bits and
+     * checked before anything is narrowed to 16 bits or allocated. */
+    {
+        u32 data = m->seg[m->autodata - 1].minalloc;            /* already max(size, minalloc) */
+        u32 hs = (data + m->stack + 1) & ~(u32)1;
+        u32 total = hs + m->heap, sp;
+        if (total > 0xFFF0ul) {
+            wlog("w16: %s: automatic data segment would be %lu bytes (data %lu + stack %u + heap %u), over 64 KB\n",
+                 path, (unsigned long)total, (unsigned long)data, m->stack, m->heap);
+            return W16_ENOMEM;
+        }
+        /* the startup code builds an 18-byte register frame below SP, so SP must leave room for it
+         * above the static data, be even, and lie inside the segment */
+        sp = m->sp ? m->sp : (data + m->stack) & ~(u32)1;
+        if ((sp & 1) || sp < data + 18 || sp > total) {
+            wlog("w16: %s: initial SP %04lx is invalid: it must be even, at least 18 bytes above the %lu bytes "
+                 "of static data, and inside the %lu-byte data segment\n", path, (unsigned long)sp,
+                 (unsigned long)data, (unsigned long)total);
+            return W16_EFORMAT;
+        }
+        m->heap_start = (u16)hs;
+        m->dgroup_size = (u16)total;
+        m->init_sp = (u16)sp;
+    }
 
     /* imported module names */
     for (i = 0; i < m->nmod; i++) {
@@ -312,12 +344,26 @@ int ne_open(struct ne_module *m, const char *path)
         return e;
     m->enttab[m->ent_len] = 0;
 
+    /* resource table: from its offset up to the resident-name table that follows it */
+    if (m->rsrc_off != m->resn_off) {
+        if (m->resn_off < m->rsrc_off || m->resn_off - m->rsrc_off > 4096) {
+            wlog("w16: %s: resource table of %d bytes is invalid or too large\n", path, (int)m->resn_off - (int)m->rsrc_off);
+            return W16_EUNSUPP;
+        }
+        m->rsrc_len = m->resn_off - m->rsrc_off;
+        m->rsrc = malloc(m->rsrc_len);
+        if (!m->rsrc)
+            return W16_ENOMEM;
+        if ((e = rd_at(m, m->ne_off + m->rsrc_off, m->rsrc, m->rsrc_len, "resource table")))
+            return e;
+    }
+
     /* module name (first resident name) */
     if (rd_pstr(m, m->ne_off + m->resn_off, m->name, 8, "module name") < 0)
         strcpy(m->name, "?");
 
     if (m->rsrc_off != m->resn_off)
-        vlog("w16: %s: has a resource table (resources are not loaded by this layer)\n", path);
+        vlog("w16: %s: resource table of %u bytes; resources are read from the file on demand\n", path, m->rsrc_len);
     vlog("w16: %s: module %s, %u segments, entry %u:%04x, autodata %u (heap %u, stack %u), imports from %u modules\n",
           path, m->name, m->nseg, m->cs, m->ip, m->autodata, m->heap, m->stack, m->nmod);
     return W16_OK;
@@ -352,10 +398,17 @@ struct reloc { u8 st, fl; u16 src, t1, t2; };
 
 typedef int (*reloc_cb)(struct ne_module *m, int segi, struct reloc *r, void *ctx);
 
+/* Relocation records are read 128 at a time, and the last block read is kept, so the load pass
+ * reuses what the check pass read (file reads are slow on an 8088: about 0.1 s each here). */
+#define RBLOCK 128
+static u8 rbuf[8 * RBLOCK];
+static u32 rpos;
+static u16 rcnt;
+
 static int each_reloc(struct ne_module *m, int segi, reloc_cb cb, void *ctx)
 {
     struct ne_seg *sp = &m->seg[segi];
-    u8 buf[8 * 32], cnt[2];
+    u8 *buf = rbuf, cnt[2];
     u32 pos;
     u16 n, i, k;
     int e;
@@ -368,9 +421,15 @@ static int each_reloc(struct ne_module *m, int segi, reloc_cb cb, void *ctx)
     n = g16(cnt);
     pos += 2;
     for (i = 0; i < n; i += k) {
-        k = n - i > 32 ? 32 : n - i;
-        if ((e = rd_at(m, pos + 8ul * i, buf, 8 * k, "relocation records")))
-            return e;
+        k = n - i > RBLOCK ? RBLOCK : n - i;
+        if (rmod != m || rpos != pos + 8ul * i || rcnt < k) {
+            rmod = 0;
+            if ((e = rd_at(m, pos + 8ul * i, buf, 8 * k, "relocation records")))
+                return e;
+            rmod = m;
+            rpos = pos + 8ul * i;
+            rcnt = k;
+        }
         {
             u16 j;
             for (j = 0; j < k; j++) {
@@ -587,7 +646,7 @@ static int apply_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
 static int load_segment_data(struct ne_module *m, int i)
 {
     struct ne_seg *sp = &m->seg[i];
-    u8 buf[512];
+    static u8 buf[1024];
     u16 done = 0, n;
     u32 pos = (u32)sp->fileoff << m->align;
     int e;
@@ -643,18 +702,8 @@ int ne_load(struct ne_module *m)
     for (i = 0; i < m->nseg; i++) {
         struct ne_seg *sp = &m->seg[i];
         u32 bytes = sp->minalloc;
-        if (i + 1 == m->autodata) {
-            /* automatic data segment: static data, then the stack, then the local heap */
-            bytes += m->stack;
-            m->heap_start = (u16)((bytes + 1) & ~1ul);
-            bytes = m->heap_start + (u32)m->heap;
-            if (bytes > 0xFFF0ul) {
-                wlog("w16: %s: automatic data segment would be %lu bytes (data %u + stack %u + heap %u), over 64 KB\n",
-                     m->path, (unsigned long)bytes, sp->minalloc, m->stack, m->heap);
-                return W16_ENOMEM;
-            }
-            m->dgroup_size = (u16)bytes;
-        }
+        if (i + 1 == m->autodata)
+            bytes = m->dgroup_size;         /* validated in ne_open: data + stack + heap <= 0xFFF0 */
         sp->paras = (u16)((bytes + 15) >> 4);
         if (seg_alloc(sp->paras, &sp->sel)) {
             wlog("w16: %s: no memory for segment %u (%u bytes)\n", m->path, i + 1, sp->paras << 4);
@@ -669,11 +718,6 @@ int ne_load(struct ne_module *m)
               (sp->flags & NES_RELOC) ? ", has relocations" : "");
     }
     m->dgroup = m->seg[m->autodata - 1].sel;
-    m->init_sp = m->sp ? m->sp : (u16)(m->seg[m->autodata - 1].minalloc + m->stack) & ~1;
-    if (m->init_sp > m->dgroup_size) {
-        wlog("w16: %s: initial SP %04x is outside the %u-byte data segment\n", m->path, m->init_sp, m->dgroup_size);
-        return W16_EFORMAT;
-    }
     for (i = 0; i < m->nseg; i++)
         if ((e = each_reloc(m, i, apply_one, 0)))
             return e;
@@ -694,5 +738,148 @@ void ne_free(struct ne_module *m)
     if (m->psp) { seg_free(m->psp); m->psp = 0; }
     if (m->envseg) { seg_free(m->envseg); m->envseg = 0; }
     if (m->enttab) { free(m->enttab); m->enttab = 0; }
+    if (m->rsrc) { free(m->rsrc); m->rsrc = 0; }
+    if (m->thunkseg) { seg_free(m->thunkseg); m->thunkseg = 0; }
     if (m->fd >= 0) { close(m->fd); m->fd = -1; }
+}
+
+int ne_read(struct ne_module *m, u32 off, void *buf, u16 n)
+{
+    return rd_at(m, off, buf, n, "resource data");
+}
+
+/* ------------------------------------------------------------------ resources */
+static int name_eq(const u8 *p, u8 n, const char *name)
+{
+    u8 i;
+    for (i = 0; i < n; i++) {
+        char a = (char)p[i], b = name[i];
+        if (!b)
+            return 0;
+        if (a >= 'a' && a <= 'z') a -= 32;
+        if (b >= 'a' && b <= 'z') b -= 32;
+        if (a != b)
+            return 0;
+    }
+    return name[n] == 0;
+}
+
+/* scan the resource table; name == 0 matches by id */
+/* traw: the type word as stored (0x8000 | RT_n for numbered types); or 0 and tname for a type stored by name */
+static int res_scan(struct ne_module *m, u16 traw, const char *tname, const char *name, u16 id, u32 *off, u16 *len)
+{
+    const u8 *r = m->rsrc;
+    u16 n = m->rsrc_len, p = 2, shift, k;
+    if (!r || n < 4)
+        return -1;
+    shift = g16(r);
+    if (shift > 15)
+        return -1;
+    while (p + 8 <= n) {
+        u16 t = g16(r + p), cnt = g16(r + p + 2);
+        int tmatch;
+        if (!t)
+            break;
+        p += 8;
+        if ((u32)p + 12ul * cnt > n)
+            return -1;
+        if (traw)
+            tmatch = t == traw;
+        else
+            tmatch = tname && !(t & 0x8000) && t < n && (u32)t + r[t] < n && name_eq(r + t + 1, r[t], tname);
+        for (k = 0; k < cnt; k++, p += 12) {
+            u16 roff = g16(r + p), rlen = g16(r + p + 2), rid = g16(r + p + 6);
+            if (!tmatch)
+                continue;
+            if (name) {
+                if (rid & 0x8000 || rid >= n || r[rid] + rid >= n || !name_eq(r + rid + 1, r[rid], name))
+                    continue;
+            } else if (rid != (0x8000 | id))
+                continue;
+            *off = (u32)roff << shift;
+            *len = (u16)((u32)rlen << shift > 0xFFF0ul ? 0xFFF0u : (u32)rlen << shift);
+            if (*off > m->filesize || *len > m->filesize - *off)
+                return -1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *off, u16 *len)
+{
+    return ne_res_find_t(m, type, 0, name, id, off, len);
+}
+
+/* type is an RT_ number, or tname names the type ("DATA"); name is a string or 0 to use id.
+ * Windows 3.0 replaced names by numbers and recorded them in a NAMETABLE resource whose entries are
+ * {WORD size, WORD type, WORD id, type name\0 (empty for a numbered type), resource name\0}. */
+int ne_res_find_t(struct ne_module *m, u16 type, const char *tname, const char *name, u16 id, u32 *off, u16 *len)
+{
+    u32 noff;
+    u16 nlen, p = 0;
+    u8 buf[512];
+    if (!res_scan(m, tname ? 0 : 0x8000 | type, tname, name, id, off, len))
+        return 0;
+    if ((!name && !tname) || res_scan(m, 0x8000 | RT_NAMETABLE, 0, 0, 1, &noff, &nlen))
+        return -1;
+    if (nlen > sizeof(buf))
+        nlen = sizeof(buf);
+    if (ne_read(m, noff, buf, nlen))
+        return -1;
+    while (p + 8 <= nlen) {
+        u16 sz = g16(buf + p), t = g16(buf + p + 2), ord = g16(buf + p + 4), tl, rl;
+        const char *tn, *rn;
+        if (sz < 8 || p + sz > nlen || buf[p + sz - 1])
+            break;
+        tn = (const char *)buf + p + 6;
+        tl = (u16)strlen(tn);
+        if (6u + tl + 1 >= sz)                       /* no room left for the resource name */
+            break;
+        rn = tn + tl + 1;
+        rl = (u16)strlen(rn);
+        if (tl > 255 || rl > 255) {
+            p += sz;
+            continue;
+        }
+        if (tname ? tl && name_eq((const u8 *)tn, (u8)tl, tname) : !tl && (t & 0x7FFF) == type) {
+            u16 tr = tname ? (u16)(t | 0x8000) : (u16)(0x8000 | type);
+            if (name) {
+                if ((ord & 0x8000) && name_eq((const u8 *)rn, (u8)rl, name))
+                    return res_scan(m, tr, 0, 0, ord & 0x7FFF, off, len);
+            } else if (!res_scan(m, tr, 0, 0, id, off, len))
+                return 0;
+        }
+        p += sz;
+    }
+    return -1;
+}
+
+/* STRINGTABLE: block (id / 16) + 1 holds 16 strings of {BYTE length, text}. Returns the length copied
+ * (truncated to max - 1), or -1 if the string does not exist. */
+int ne_load_string(struct ne_module *m, u16 id, char *out, u16 max)
+{
+    u8 buf[512];
+    u32 off;
+    u16 len, p = 0, k;
+    if (!max)
+        return -1;
+    out[0] = 0;
+    if (ne_res_find(m, RT_STRING, 0, (u16)((id >> 4) + 1), &off, &len))
+        return -1;
+    if (len > sizeof(buf))
+        len = sizeof(buf);
+    if (ne_read(m, off, buf, len))
+        return -1;
+    for (k = 0; k < (id & 15); k++) {
+        if (p >= len)
+            return -1;
+        p += 1 + buf[p];
+    }
+    if (p >= len || !buf[p] || p + 1u + buf[p] > len)
+        return -1;
+    k = buf[p] < max - 1 ? buf[p] : (u16)(max - 1);
+    memcpy(out, buf + p + 1, k);
+    out[k] = 0;
+    return k;
 }

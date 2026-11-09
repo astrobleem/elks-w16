@@ -1,0 +1,75 @@
+--- a/src/nanox/serv.h
++++ b/src/nanox/serv.h
+@@ -216,6 +216,12 @@
+ 	int		shm_cmds_size;
+ 	int		shm_cmds_shmid;
+ 	int		processid;	/* client process id*/
++#if ELKS
++	/* bytes read from the client's socket and not yet handled: on ELKS each system call is
++	 * expensive, so requests are read in blocks and handled without a select() each */
++	unsigned char	rbuf[256];
++	int		rpos, rlen;
++#endif
+ };
+ 
+ /*
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -2182,10 +2182,32 @@
+ GsRead(int fd, void *buf, int c)
+ {
+ 	int e, n;
++#if ELKS
++	GR_CLIENT *cl = GsFindClient(fd);
++#endif
+ 
+ 	n = 0;
+ 
+ 	while(n < c) {
++#if ELKS
++		if (cl) {
++			if (cl->rpos < cl->rlen) {	/* take what was read already */
++				int k = cl->rlen - cl->rpos;
++				if (k > c - n)
++					k = c - n;
++				memcpy(((char *)buf) + n, cl->rbuf + cl->rpos, k);
++				cl->rpos += k;
++				n += k;
++				continue;
++			}
++			e = read(fd, cl->rbuf, sizeof(cl->rbuf));	/* whatever is there, up to 256 */
++			if (e > 0) {
++				cl->rpos = 0;
++				cl->rlen = e;
++				continue;
++			}
++		} else
++#endif
+ 		e = read(fd, ((char *)buf) + n, c - n);
+ 		if(e <= 0) {
+ 			if (e == 0)
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -545,8 +545,21 @@
+ 
+ 			/* curclient may be freed in GsDropClient*/
+ 			curclient_next = curclient->next;
+-			if(FD_ISSET(curclient->id, &rfds))
++			if(FD_ISSET(curclient->id, &rfds)) {
++#if ELKS
++				int fd = curclient->id;
++				GR_CLIENT *cl;
++				GsHandleClient(fd);
++				/* handle every request already read, without another select() */
++				/* (a client's requests can drop only that client, so curclient_next stays valid) */
++				while ((cl = GsFindClient(fd)) != NULL && cl->rpos < cl->rlen) {
++					curclient = cl;
++					GsHandleClient(fd);
++				}
++#else
+ 				GsHandleClient(curclient->id);
++#endif
++			}
+ 			curclient = curclient_next;
+ 		}
+ #endif /* NONETWORK */

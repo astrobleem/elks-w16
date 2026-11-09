@@ -2,11 +2,12 @@
 # Build a 20 MB ELKS test disk (615 cylinders x 4 heads x 17 sectors, MBR + MINIX partition) with the
 # Nano-X colour server, w16, HELLO16.EXE, malformed test files and the boot-time autotest.
 #
-#   ELKS_ROOT=/path/to/elks MWDIR=/path/to/microwindows tests/mkimage.sh OUT_NAME [kbd]
+#   ELKS_ROOT=/path/to/elks MWDIR=/path/to/microwindows [W16_EXTRA="/path/WINVER.EXE /path/CLOCK.EXE"] \
+#       tests/mkimage.sh OUT_NAME [FLAG...]
 #
 # ELKS_ROOT: built tandy-video-v0.9.2 tree (its cross/bin and elks/tools/bin provide ia16-elf-gcc, mfs,
 # setboot). MWDIR: Microwindows built with Makefile.elks SCREEN_TANDY=y. Run from packages/win16 after
-# "make -C src" and building test/hello16/HELLO16.EXE. "kbd" makes a keyboard-only image (no mouse helper).
+# "make -C src" and building test/hello16/HELLO16.EXE. Flags are listed below ("kbd": keyboard only).
 set -e
 NAME=${1:?output name}
 W=$(pwd)
@@ -40,14 +41,26 @@ mfs $IMG cp $MWDIR/vidreset /bin/vidreset
 mfs $IMG cp $W/src/w16 /bin/w16
 for f in e9 w16mouse tvprobe; do mfs $IMG cp $T/$f /bin/$f; done
 mfs $IMG cp $W/test/hello16/HELLO16.EXE /root/hello16.exe
+mfs $IMG cp $W/test/dlgtest/DLGTEST.EXE /root/dlgtest.exe
+# W16_EXTRA: your own copies of other programs to test (for example Windows 3.0 WINVER.EXE as winver.exe)
+for f in $W16_EXTRA; do n=$(basename $f | tr A-Z a-z); mfs $IMG cp $f /root/$n; done
 mfs $IMG mkdir /root/bad
-for f in notmz.exe pe.exe dll.exe i286.exe msgbox.exe badmod.exe chainloop.exe truncseg.exe bigdata.exe; do
+for f in notmz.exe pe.exe dll.exe i286.exe tickcount.exe badmod.exe chainloop.exe truncseg.exe bigdata.exe; do
     mfs $IMG cp $T/badall/$f /root/bad/$f
 done
-[ "$2" = "kbd" ] && { echo kbd > $T/flag; mfs $IMG cp $T/flag /root/kbdmode; }
+# flags for the autotest: kbd (keyboard only), quiet (measure CLOCK without log and frame dumps),
+# nocache (W16_NOCACHE=1), skipneg, skiphello16, skipdlgtest, skipwinver, skipclock
+for f in "${@:2}"; do
+    case $f in
+    kbd) fl=kbdmode;;
+    quiet|nocache|skipneg|skiphello16|skipdlgtest|skipwinver|skipclock) fl=$f;;
+    *) echo "unknown flag $f"; exit 2;;
+    esac
+    echo $f > $T/flag; mfs $IMG cp $T/flag /root/$fl
+done
 mfs $IMG cp $W/tests/elks/autotest.sh /root/autotest.sh
 mfs $IMG extract /etc/rc.sys $T/rc.sys
-printf '\nif test -f /root/autotest.sh; then sh /root/autotest.sh; fi\n' >> $T/rc.sys
+printf '\nif test -f /root/autotest.sh; then exec sh /root/autotest.sh; fi\n' >> $T/rc.sys
 mfs $IMG rm /etc/rc.sys && mfs $IMG cp $T/rc.sys /etc/rc.sys
 mfs $IMG extract /bootopts $T/bootopts
 grep -q '^tandyvideo=1' $T/bootopts || printf 'tandyvideo=1\n' >> $T/bootopts

@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "w16.h"
 
@@ -16,25 +17,60 @@ static u16 host_next = 0x1000;          /* first simulated paragraph handed out 
 int host_fail_after = -1;               /* tests: make the Nth allocation fail */
 int host_live;                          /* allocations not yet freed */
 
+struct halloc { u16 seg; u32 bytes; u8 live; };
+static struct halloc allocs[512];
+static int nallocs;
+
+static void violation(const char *what, u16 seg, u16 off, u16 n)
+{
+    fprintf(stderr, "HOST BOUNDS VIOLATION: %s at %04x:%04x (+%u)\n", what, seg, off, n);
+    abort();
+}
+
 int seg_alloc(u16 paras, u16 *seg)
 {
     if (host_fail_after == 0)
         return -1;
     if (host_fail_after > 0)
         host_fail_after--;
-    if ((u32)host_next + paras > 0xA000)
+    if ((u32)host_next + paras + 1 > 0xA000 || nallocs == (int)(sizeof(allocs) / sizeof(allocs[0])))
         return -1;
     *seg = host_next;
     memset(host_mem + ((u32)host_next << 4), 0xCC, (u32)paras << 4);   /* poison: loader must clear */
-    host_next += paras;
+    allocs[nallocs].seg = host_next;
+    allocs[nallocs].bytes = (u32)paras << 4;
+    allocs[nallocs].live = 1;
+    nallocs++;
+    host_next += paras + 1;                 /* one guard paragraph between blocks */
     host_live++;
     return 0;
 }
 
 void seg_free(u16 seg)
 {
-    (void)seg;
+    int i;
+    for (i = nallocs - 1; i >= 0 && allocs[i].seg != seg; i--)
+        ;
+    if (i < 0 || !allocs[i].live)
+        violation(i < 0 ? "free of a segment that was never allocated" : "double free", seg, 0, 0);
+    allocs[i].live = 0;
+    memset(host_mem + ((u32)seg << 4), 0xDD, allocs[i].bytes);
     host_live--;
+}
+
+/* every guest access goes through here: it must lie inside the live allocation based at seg */
+u8 *host_ptr(u16 seg, u16 off, u16 n)
+{
+    int i;
+    for (i = nallocs - 1; i >= 0 && allocs[i].seg != seg; i--)
+        ;
+    if (i < 0)
+        violation("access through a segment that is not an allocation", seg, off, n);
+    if (!allocs[i].live)
+        violation("access to a freed segment", seg, off, n);
+    if ((u32)off + n > allocs[i].bytes)
+        violation("access outside its allocation", seg, off, n);
+    return &host_mem[LIN(seg, off)];
 }
 
 void fcopy_in(void *dst, u16 seg, u16 off, u16 n) { u16 i; for (i = 0; i < n; i++) ((u8 *)dst)[i] = rd8(seg, (u16)(off + i)); }
@@ -85,10 +121,42 @@ u16 fstrncpy_in(char *dst, u16 seg, u16 off, u16 max)
     return i;
 }
 
+/* resource name from the program: MAKEINTRESOURCE (segment 0) or a string, "#n" meaning ordinal n.
+ * name must hold 34 bytes; on return either name[0] is set or *id is the ordinal. */
+void res_name(u16 off, u16 seg, char *name, u16 *id)
+{
+    *id = 0;
+    name[0] = 0;
+    if (!seg) {
+        *id = off;
+        return;
+    }
+    fstrncpy_in(name, seg, off, 33);
+    if (name[0] == '#') {
+        *id = (u16)atoi(name + 1);
+        name[0] = 0;
+    }
+}
+
 static char logbuf[256];
+
+#ifndef W16_HOST
+extern int opt_metrics;
+extern u32 w16_t0;
+u32 now_ms(void);
+#endif
 
 static void emit(void)
 {
+#ifndef W16_HOST
+    if (opt_metrics) {                  /* -m: every log line carries its time since w16 started */
+        char t[12];
+        sprintf(t, "+%lu ", (unsigned long)(now_ms() - w16_t0));
+        write(2, t, strlen(t));
+        if (opt_debugport)
+            e9puts(t);
+    }
+#endif
     write(2, logbuf, strlen(logbuf));
     if (opt_debugport)
         e9puts(logbuf);

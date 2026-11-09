@@ -10,8 +10,8 @@ CC      = ia16-elf-gcc
 CFLAGS  = -mcmodel=small -melks-libc -march=i8086 -mtune=i8086 -Os -Wall -Wno-unused-function \
           -I$(TOPDIR)/include -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include \
           -I$(MWDIR)/src/include -DELKS=1 -DMWCONFIG_FILE='"mwconfig.elks"'
-LDFLAGS = -mcmodel=small -melks-libc -maout-heap=0x1000 -maout-stack=0x2000
-OBJS    = main.o ne.o api.o mem.o kernel.o user.o gdi.o thunk.o
+LDFLAGS = -mcmodel=small -melks-libc -maout-heap=0x1400 -maout-stack=0x1800
+OBJS    = main.o ne.o api.o mem.o kernel.o user.o menu.o gdi.o dlgtmpl.o profile.o thunk.o
 
 all: w16
 
@@ -30,8 +30,8 @@ HOSTCFLAGS = -DW16_HOST -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-missing-
 
 host: w16host
 
-w16host: main.c ne.c api.c mem.c w16.h
-	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c
+w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h
+	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
 	rm -f *.o w16 w16host

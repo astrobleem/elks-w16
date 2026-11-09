@@ -13,21 +13,33 @@
 #ifndef W16_H
 #define W16_H
 
+#ifdef W16_HOST
+#include <stdint.h>
+typedef uint8_t        u8;     /* host build: the exact widths of the ia16 types, so 32-bit arithmetic */
+typedef uint16_t       u16;    /* wraps as it does on the target (host unsigned long is 64 bits) */
+typedef uint32_t       u32;
+typedef int16_t        i16;
+typedef int32_t        i32;
+#else
 typedef unsigned char  u8;
 typedef unsigned short u16;
 typedef unsigned long  u32;
 typedef short          i16;
 typedef long           i32;
+#endif
 
 #define MAXSEG   32          /* NE segments per module */
 #define MAXMOD   8           /* imported module names */
 
 /* ---------------------------------------------------------------- far memory */
 #ifdef W16_HOST
+/* Host tests: guest segments live in one array, so every access is checked against the allocation
+ * whose base is the segment used; anything outside it (or in a freed block) aborts the test. */
 extern u8 host_mem[0x110000];
 #define LIN(s, o)   ((((u32)(u16)(s)) << 4) + (u16)(o))
-#define rd8(s, o)       (host_mem[LIN(s, o)])
-#define wr8(s, o, v)    (host_mem[LIN(s, o)] = (u8)(v))
+u8 *host_ptr(u16 seg, u16 off, u16 n);
+#define rd8(s, o)       (*host_ptr((u16)(s), (u16)(o), 1))
+#define wr8(s, o, v)    (*host_ptr((u16)(s), (u16)(o), 1) = (u8)(v))
 #define rd16(s, o)      ((u16)(rd8(s, o) | (rd8(s, (u16)((o) + 1)) << 8)))
 #define wr16(s, o, v)   do { u16 _v = (v); wr8(s, o, _v); wr8(s, (u16)((o) + 1), _v >> 8); } while (0)
 #else
@@ -44,6 +56,7 @@ void fcopy_in(void *dst, u16 seg, u16 off, u16 n);         /* far -> near */
 void fcopy_out(u16 seg, u16 off, const void *src, u16 n);  /* near -> far */
 void fzero(u16 seg, u16 off, u16 n);
 u16  fstrncpy_in(char *dst, u16 seg, u16 off, u16 max);    /* NUL-terminated copy, returns length */
+void res_name(u16 off, u16 seg, char *name, u16 *id);     /* resource name or ordinal; name[34] */
 
 /* segment allocation: whole paragraphs, owned by this process */
 int  seg_alloc(u16 paras, u16 *seg);
@@ -79,7 +92,10 @@ struct ne_module {
     char modname[MAXMOD][9];
     int  modid[MAXMOD];         /* index into the provided-module table, -1 if unknown */
     u8  *enttab;                /* copy of the entry table */
+    u8  *rsrc;                  /* copy of the resource table, or 0 */
+    u16  rsrc_len;
     char name[9];               /* module name from the resident-name table */
+    u16  thunkseg;              /* MakeProcInstance thunks (runtime) */
     /* runtime */
     u16  dgroup;                /* automatic data segment = hInstance */
     u16  dgroup_size;           /* bytes, including stack and local heap */
@@ -107,6 +123,61 @@ int  ne_load(struct ne_module *m);                     /* allocate, read, reloca
 void ne_free(struct ne_module *m);
 int  ne_entry(struct ne_module *m, u16 ord, u16 *seg, u16 *off);
 const char *ne_errstr(int e);
+int  ne_read(struct ne_module *m, u32 off, void *buf, u16 n);
+
+/* resources: type is the RT_ number; name is a string (case-insensitive) or 0 to use id.
+ * Names may also resolve through a Windows 3.0 NAMETABLE (type 15). Returns 0 and the file range. */
+#define RT_ICON       3
+#define RT_MENU       4
+#define RT_DIALOG     5
+#define RT_STRING     6
+#define RT_GROUP_ICON 14
+#define RT_NAMETABLE  15
+int  ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *off, u16 *len);
+int  ne_load_string(struct ne_module *m, u16 id, char *out, u16 max);   /* STRINGTABLE; -1 if absent */
+int  ne_res_find_t(struct ne_module *m, u16 type, const char *tname, const char *name, u16 id, u32 *off, u16 *len);
+
+/* dialog templates (Windows 3.x DLGTEMPLATE) */
+#define DLG_MAXITEMS 24
+struct dlg_item {
+    i16  x, y, cx, cy;
+    u16  id;
+    u32  style;
+    u8   cls;                   /* 0x80 BUTTON, 0x81 EDIT, 0x82 STATIC, 0x83 LISTBOX, 0x84 SCROLLBAR, 0x85 COMBOBOX; 0 named */
+    char clsname[16];
+    char text[48];
+};
+struct dlg_tmpl {
+    u32  style;
+    i16  x, y, cx, cy;
+    u8   nitems;
+    char menu[16], clsname[16], caption[48], face[24];
+    u16  pointsize;
+    struct dlg_item item[DLG_MAXITEMS];
+};
+int  dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t);   /* 0 ok, -1 malformed or too many items */
+
+/* menu templates (Windows 3.x MENUITEMTEMPLATE) */
+#define MF_GRAYED     0x0001
+#define MF_DISABLED   0x0002
+#define MF_CHECKED    0x0008
+#define MF_POPUP      0x0010
+#define MF_END        0x0080
+#define MF_BYPOSITION 0x0400
+#define MF_SEPARATOR  0x0800
+#define MENU_MAXITEMS 24
+struct menu_item {
+    u16  flags, id;
+    u8   parent;                /* index of the popup item it belongs to, 0xFF on the menu bar */
+    char text[28];
+};
+struct menu_tmpl { u8 n; struct menu_item it[MENU_MAXITEMS]; };
+int  menu_parse(const u8 *d, u16 len, struct menu_tmpl *t);  /* 0 ok, -1 malformed or too many items */
+
+/* ---------------------------------------------------------------- WIN.INI (profile.c, portable) */
+const char *prof_path(void);                                 /* $W16INI, else win.ini in the current directory */
+int  prof_get(const char *path, const char *app, const char *key, char *out, int size);   /* length, or -1 if absent */
+int  prof_put(const char *path, const char *app, const char *key, const char *val);       /* val 0 deletes; 0 ok */
 
 /* ---------------------------------------------------------------- imports */
 #define MOD_KERNEL 0

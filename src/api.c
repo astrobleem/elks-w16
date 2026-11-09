@@ -24,6 +24,20 @@ u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
+u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
+u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
+u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16);
+u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
+u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
+u32 k_GetProfileString(u16, u16), k_WriteProfileString(u16, u16), k_FindResource(u16, u16), k_LoadResource(u16, u16);
+u32 k_FreeResource(u16, u16), k_lstrcpy(u16, u16), k_lstrcat(u16, u16), k_lstrlen(u16, u16);
+u32 u_MessageBox(u16, u16), u_SetTimer(u16, u16), u_KillTimer(u16, u16), u_GetDC(u16, u16), u_ReleaseDC(u16, u16);
+u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_FillRect(u16, u16);
+u32 u_CheckMenuItem(u16, u16), u_EnableMenuItem(u16, u16), u_GetMenu(u16, u16), u_GetSubMenu(u16, u16);
+u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
+u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g_DeleteDC(u16, u16);
+u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
+u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
 #endif
 
 #define K MOD_KERNEL
@@ -32,10 +46,33 @@ u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16
 const struct api api_table[] = {
     /* KERNEL */
     { K,   3, "GetVersion",        0, 0, H(k_GetVersion) },
+    { K,   5, "LocalAlloc",        4, 0, H(k_LocalAlloc) },
+    { K,   7, "LocalFree",         2, 0, H(k_LocalFree) },
+    { K,   8, "LocalLock",         2, 0, H(k_LocalLock) },
+    { K,   9, "LocalUnlock",       2, 0, H(k_LocalUnlock) },
+    { K,  10, "LocalSize",         2, 0, H(k_LocalSize) },
+    { K,  18, "GlobalLock",        2, 0, H(k_GlobalLock) },
+    { K,  19, "GlobalUnlock",      2, 0, H(k_GlobalUnlock) },
+    { K,  54, "GetInstanceData",   6, 0, H(k_GetInstanceData) },
+    { K,  57, "GetProfileInt",    10, 0, H(k_GetProfileInt) },
+    { K,  58, "GetProfileString", 18, 0, H(k_GetProfileString) },
+    { K,  59, "WriteProfileString", 12, 0, H(k_WriteProfileString) },
+    { K,  60, "FindResource",     10, 0, H(k_FindResource) },
+    { K,  61, "LoadResource",      4, 0, H(k_LoadResource) },
+    { K,  62, "LockResource",      2, 0, H(k_GlobalLock) },
+    { K,  63, "FreeResource",      2, 0, H(k_FreeResource) },
+    { K,  88, "lstrcpy",           8, 0, H(k_lstrcpy) },
+    { K,  89, "lstrcat",           8, 0, H(k_lstrcat) },
+    { K,  90, "lstrlen",           4, 0, H(k_lstrlen) },
     { K,  30, "WaitEvent",         2, 0, H(k_WaitEvent) },
     { K,  49, "GetModuleFileName", 8, 0, H(k_GetModuleFileName) },
+    { K,  23, "LockSegment",       2, 0, H(k_LockSegment) },
+    { K,  24, "UnlockSegment",     2, 0, H(k_UnlockSegment) },
+    { K,  51, "MakeProcInstance",  6, 0, H(k_MakeProcInstance) },
+    { K,  52, "FreeProcInstance",  4, 0, H(k_FreeProcInstance) },
     { K,  91, "InitTask",          0, 0, H(k_InitTask) },
     { K, 102, "DOS3Call",          0, API_RAW, 0 },
+    { K, 132, "GetWinFlags",       0, 0, H(k_GetWinFlags) },
     { K, 113, "__AHSHIFT",         0, API_CONST, 0, 12 },
     { K, 114, "__AHINCR",          0, API_CONST, 0, 0x1000 },
     { K, 174, "__A000H",           0, API_CONST, 0, 0xA000 },
@@ -49,7 +86,10 @@ const struct api api_table[] = {
     { K, 194, "__F000H",           0, API_CONST, 0, 0xF000 },
     { K, 195, "__C000H",           0, API_CONST, 0, 0xC000 },
     /* USER */
+    { U,   1, "MessageBox",       12, 0, H(u_MessageBox) },
     { U,   5, "InitApp",           2, 0, H(u_InitApp) },
+    { U,  10, "SetTimer",         10, 0, H(u_SetTimer) },
+    { U,  12, "KillTimer",         4, 0, H(u_KillTimer) },
     { U,   6, "PostQuitMessage",   2, 0, H(u_PostQuitMessage) },
     { U,  33, "GetClientRect",     6, 0, H(u_GetClientRect) },
     { U,  39, "BeginPaint",        6, 0, H(u_BeginPaint) },
@@ -58,18 +98,37 @@ const struct api api_table[] = {
     { U,  42, "ShowWindow",        4, 0, H(u_ShowWindow) },
     { U,  53, "DestroyWindow",     2, 0, H(u_DestroyWindow) },
     { U,  57, "RegisterClass",     4, 0, H(u_RegisterClass) },
+    { U,  66, "GetDC",             2, 0, H(u_GetDC) },
+    { U,  68, "ReleaseDC",         4, 0, H(u_ReleaseDC) },
+    { U,  72, "SetRect",          12, 0, H(u_SetRect) },
+    { U,  77, "OffsetRect",        8, 0, H(u_OffsetRect) },
+    { U,  78, "InflateRect",       8, 0, H(u_InflateRect) },
+    { U,  81, "FillRect",          8, 0, H(u_FillRect) },
+    { U,  87, "DialogBox",        12, 0, H(u_DialogBox) },
+    { U,  88, "EndDialog",         4, 0, H(u_EndDialog) },
+    { U,  91, "GetDlgItem",        4, 0, H(u_GetDlgItem) },
+    { U,  92, "SetDlgItemText",    8, 0, H(u_SetDlgItemText) },
     { U, 107, "DefWindowProc",    10, 0, H(u_DefWindowProc) },
     { U, 108, "GetMessage",       10, 0, H(u_GetMessage) },
     { U, 113, "TranslateMessage",  4, 0, H(u_TranslateMessage) },
     { U, 114, "DispatchMessage",   4, 0, H(u_DispatchMessage) },
     { U, 124, "UpdateWindow",      2, 0, H(u_UpdateWindow) },
     { U, 125, "InvalidateRect",    8, 0, H(u_InvalidateRect) },
+    { U, 154, "CheckMenuItem",     6, 0, H(u_CheckMenuItem) },
+    { U, 155, "EnableMenuItem",    6, 0, H(u_EnableMenuItem) },
+    { U, 157, "GetMenu",           2, 0, H(u_GetMenu) },
+    { U, 159, "GetSubMenu",        4, 0, H(u_GetSubMenu) },
+    { U, 160, "DrawMenuBar",       2, 0, H(u_DrawMenuBar) },
     { U, 173, "LoadCursor",        6, 0, H(u_LoadCursor) },
     { U, 174, "LoadIcon",          6, 0, H(u_LoadIcon) },
+    { U, 176, "LoadString",       10, 0, H(u_LoadString) },
+    { U, 179, "GetSystemMetrics",  2, 0, H(u_GetSystemMetrics) },
+    { U, 180, "GetSysColor",       2, 0, H(u_GetSysColor) },
     { U, 420, "wsprintf",          0, API_CDECL, H(u_wsprintf) },
     /* GDI */
     { G,   1, "SetBkColor",        6, 0, H(g_SetBkColor) },
     { G,   2, "SetBkMode",         4, 0, H(g_SetBkMode) },
+    { G,   4, "SetROP2",           4, 0, H(g_SetROP2) },
     { G,   9, "SetTextColor",      6, 0, H(g_SetTextColor) },
     { G,  19, "LineTo",            6, 0, H(g_LineTo) },
     { G,  20, "MoveTo",            6, 0, H(g_MoveTo) },
@@ -77,41 +136,51 @@ const struct api api_table[] = {
     { G,  27, "Rectangle",        10, 0, H(g_Rectangle) },
     { G,  33, "TextOut",          12, 0, H(g_TextOut) },
     { G,  45, "SelectObject",      4, 0, H(g_SelectObject) },
+    { G,  53, "CreateDC",         16, 0, H(g_CreateDC) },
+    { G,  57, "CreateFontIndirect", 4, 0, H(g_CreateFontIndirect) },
     { G,  61, "CreatePen",         8, 0, H(g_CreatePen) },
     { G,  66, "CreateSolidBrush",  4, 0, H(g_CreateSolidBrush) },
+    { G,  68, "DeleteDC",          2, 0, H(g_DeleteDC) },
     { G,  69, "DeleteObject",      2, 0, H(g_DeleteObject) },
+    { G,  80, "GetDeviceCaps",     4, 0, H(g_GetDeviceCaps) },
     { G,  87, "GetStockObject",    2, 0, H(g_GetStockObject) },
+    { G,  93, "GetTextMetrics",    6, 0, H(g_GetTextMetrics) },
+    { G, 119, "AddFontResource",   4, 0, H(g_AddFontResource) },
+    { G, 136, "RemoveFontResource", 4, 0, H(g_RemoveFontResource) },
+    { G, 154, "GetNearestColor",   6, 0, H(g_GetNearestColor) },
+    { G, 346, "SetTextAlign",      4, 0, H(g_SetTextAlign) },
+    { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 
 /* Names of common Windows 3.0 entry points this layer does NOT implement, for diagnostics only. */
 struct known { u8 mod; u16 ord; const char *name; };
 static const struct known known_names[] = {
-    { K, 1, "FatalExit" }, { K, 4, "LocalInit" }, { K, 5, "LocalAlloc" }, { K, 6, "LocalReAlloc" },
-    { K, 7, "LocalFree" }, { K, 8, "LocalLock" }, { K, 9, "LocalUnlock" }, { K, 10, "LocalSize" },
-    { K, 15, "GlobalAlloc" }, { K, 16, "GlobalReAlloc" }, { K, 17, "GlobalFree" }, { K, 18, "GlobalLock" },
-    { K, 19, "GlobalUnlock" }, { K, 20, "GlobalSize" }, { K, 23, "LockSegment" }, { K, 24, "UnlockSegment" },
+    { K, 1, "FatalExit" }, { K, 4, "LocalInit" }, { K, 6, "LocalReAlloc" },
+    
+    { K, 15, "GlobalAlloc" }, { K, 16, "GlobalReAlloc" }, { K, 17, "GlobalFree" }, 
+    { K, 20, "GlobalSize" }, 
     { K, 36, "GetCurrentTask" }, { K, 47, "GetModuleHandle" }, { K, 48, "GetModuleUsage" },
-    { K, 50, "GetProcAddress" }, { K, 51, "MakeProcInstance" }, { K, 52, "FreeProcInstance" },
-    { K, 60, "FindResource" }, { K, 61, "LoadResource" }, { K, 62, "LockResource" }, { K, 74, "OpenFile" },
+    { K, 50, "GetProcAddress" }, 
+    { K, 74, "OpenFile" },
     { K, 81, "_lclose" }, { K, 82, "_lread" }, { K, 83, "_lcreat" }, { K, 84, "_llseek" }, { K, 85, "_lopen" },
-    { K, 86, "_lwrite" }, { K, 88, "lstrcpy" }, { K, 89, "lstrcat" }, { K, 90, "lstrlen" },
+    { K, 86, "_lwrite" }, 
     { K, 95, "LoadLibrary" }, { K, 96, "FreeLibrary" }, { K, 131, "GetDOSEnvironment" }, { K, 137, "FatalAppExit" },
-    { U, 1, "MessageBox" }, { U, 10, "SetTimer" }, { U, 12, "KillTimer" }, { U, 13, "GetTickCount" },
+    { U, 13, "GetTickCount" },
     { U, 15, "GetCurrentTime" }, { U, 17, "GetCursorPos" }, { U, 18, "SetCapture" }, { U, 19, "ReleaseCapture" },
     { U, 22, "SetFocus" }, { U, 23, "GetFocus" }, { U, 32, "GetWindowRect" }, { U, 34, "EnableWindow" },
     { U, 36, "GetWindowText" }, { U, 37, "SetWindowText" }, { U, 46, "GetParent" }, { U, 56, "MoveWindow" },
-    { U, 66, "GetDC" }, { U, 68, "ReleaseDC" }, { U, 81, "FillRect" }, { U, 85, "DrawText" },
-    { U, 87, "DialogBox" }, { U, 88, "EndDialog" }, { U, 89, "CreateDialog" }, { U, 104, "MessageBeep" },
+    { U, 85, "DrawText" },
+    { U, 89, "CreateDialog" }, { U, 104, "MessageBeep" },
     { U, 106, "GetKeyState" }, { U, 109, "PeekMessage" }, { U, 110, "PostMessage" }, { U, 111, "SendMessage" },
-    { U, 150, "LoadMenu" }, { U, 175, "LoadBitmap" }, { U, 176, "LoadString" }, { U, 177, "LoadAccelerators" },
-    { U, 178, "TranslateAccelerator" }, { U, 179, "GetSystemMetrics" }, { U, 421, "wvsprintf" },
-    { G, 3, "SetMapMode" }, { G, 4, "SetROP2" }, { G, 11, "SetWindowOrg" }, { G, 13, "SetViewportOrg" },
+    { U, 150, "LoadMenu" }, { U, 175, "LoadBitmap" }, { U, 177, "LoadAccelerators" },
+    { U, 178, "TranslateAccelerator" }, { U, 421, "wvsprintf" },
+    { G, 3, "SetMapMode" }, { G, 11, "SetWindowOrg" }, { G, 13, "SetViewportOrg" },
     { G, 28, "RoundRect" }, { G, 29, "PatBlt" }, { G, 30, "SaveDC" }, { G, 31, "SetPixel" }, { G, 34, "BitBlt" },
     { G, 35, "StretchBlt" }, { G, 36, "Polygon" }, { G, 37, "Polyline" }, { G, 39, "RestoreDC" },
     { G, 48, "CreateBitmap" }, { G, 50, "CreateBrushIndirect" }, { G, 52, "CreateCompatibleDC" },
-    { G, 53, "CreateDC" }, { G, 56, "CreateFont" }, { G, 57, "CreateFontIndirect" }, { G, 58, "CreateHatchBrush" },
-    { G, 68, "DeleteDC" }, { G, 80, "GetDeviceCaps" }, { G, 91, "GetTextExtent" }, { G, 93, "GetTextMetrics" },
+    { G, 56, "CreateFont" }, { G, 58, "CreateHatchBrush" },
+    { G, 91, "GetTextExtent" }, 
 };
 
 int api_find_ord(int mod, u16 ord)

@@ -170,7 +170,7 @@ w16_outb:
 	.global w16_stubs
 w16_stubs:
 	.set	w16_i, 0
-	.rept	64
+	.rept	128
 	.balign	8, 0x90
 	mov	$w16_i, %ax
 	jmp	api_common

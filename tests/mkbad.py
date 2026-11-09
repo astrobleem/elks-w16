@@ -66,13 +66,27 @@ case('noseg.exe', patched(ne + 0x1C, '<H', 0), 11, '0 segments')
 case('manyseg.exe', patched(ne + 0x1C, '<H', 40), 12, '40 segments')
 case('autods.exe', patched(ne + 0x0E, '<H', 9), 11, 'out of range')
 case('bigdata.exe', patched(ne + 0x10, '<H', 0xF800), 14, 'over 64 KB')
+# regression (review): DGROUP of 61440 data bytes with minalloc 65520 used to wrap to a 5104-byte allocation
+autod = u16(good, ne + 0x0E)
+b = bytearray(good)
+while len(b) % (1 << align):
+    b.append(0)
+dg_sector = len(b) >> align
+b += bytes((i * 7) & 0xFF for i in range(61440))
+struct.pack_into('<HHHH', b, ne + segtab + 8 * (autod - 1), dg_sector, 61440, segs[autod - 1][2], 0xFFF0)
+case('dgwrap.exe', b, 14, 'over 64 KB')
+# regression (review): initial SP and entry IP must lie inside their segments
+case('sp1.exe', patched(ne + 0x18, '<H', 1), 11, 'initial SP 0001 is invalid')
+case('spodd.exe', patched(ne + 0x18, '<H', 0x0FFF), 11, 'is invalid')
+case('spdata.exe', patched(ne + 0x18, '<H', 0x0010), 11, 'is invalid')
+case('ipffff.exe', patched(ne + 0x14, '<H', 0xFFFF), 11, 'entry point')
 # imports
 mo = u16(good, ne + modref + 2 * 1)          # second module name (GDI in HELLO16)
 b = bytearray(good); n = b[ne + impn + mo]; nm = b[ne + impn + mo + 1: ne + impn + mo + 1 + n]
 b[ne + impn + mo + n] = ord('X'); case('badmod.exe', b, 13, 'which this layer does not provide')
 s, rec = first_import('USER', 420)
 case('badord.exe', patched(rec[0] + 6, '<H', 999), 13, 'unsupported import USER.999')
-case('msgbox.exe', patched(rec[0] + 6, '<H', 1), 13, 'USER.1 (MessageBox)')
+case('tickcount.exe', patched(rec[0] + 6, '<H', 13), 13, 'USER.13 (GetTickCount)')
 case('osfix.exe', patched(rec[0] + 1, '<B', 3), 15, 'OS fixup')
 # relocation range and chain errors
 case('reloob.exe', patched(rec[0] + 2, '<H', 0xFFF0), 15, 'outside the segment data')
