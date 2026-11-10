@@ -109,9 +109,15 @@ rev3="$rev3 button 1002 sleep 5 button 30 sleep 20 say help button 1 sleep 10 bu
 rev4="button 999 sleep 10 say sysmenu-by-mouse button 999 sleep 8 snap reversi4"
 revkeys=""
 revend="button 1000 sleep 5 button 52 sleep 5"
+# second pass with the keyboard pty: Alt+F4 while a menu is open closes the program (CLOCK with its
+# Settings popup open, REVERSI with its system menu open); without the pty, as in the first pass
+clockend2="$clockend"
+revend2="button 61536 sleep 5"
 if test -n "$KBDPTY"; then
     revkeys="key bs sleep 12 say hint-by-key key f1 sleep 15 say help-by-key button 1 sleep 10"
     revend="key alt-space sleep 10 say sysmenu-by-key key c sleep 5"
+    clockend2="key f10 sleep 6 say menu-open key alt-f4"
+    revend2="key alt-f4 sleep 5"
 fi
 # second pass (/root/repeat): open, one action, close
 passes=1
@@ -130,8 +136,8 @@ for prog in hello16 dlgtest mbtest winver clock reversi; do
         case $prog in
         hello16) steps="snap $tag home sleep 2 move 219 130 sleep 2 click sleep 12 say clicked-again move 26 22 sleep 2 dclick";;
         mbtest)  steps="snap $tag home sleep 3 $mbsteps";;
-        clock)   steps="snap $tag home sleep 15 say ticking-again button 1000 sleep 5 button 2 sleep 10 button 1000 sleep 5 button 1 sleep 10 $clockend";;
-        reversi) steps="snap $tag home sleep 5 move 105 95 sleep 1 click sleep 25 say moved-again button 999 sleep 10 say sysmenu-again button 61536 sleep 5";;
+        clock)   steps="snap $tag home sleep 15 say ticking-again button 1000 sleep 5 button 2 sleep 10 button 1000 sleep 5 button 1 sleep 10 $clockend2";;
+        reversi) steps="snap $tag home sleep 5 move 105 95 sleep 1 click sleep 25 say moved-again button 999 sleep 10 say sysmenu-again $revend2";;
         *)       steps="snap $tag home sleep 3 say dialog-again button 1";;
         esac
     else

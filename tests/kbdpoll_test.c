@@ -3,26 +3,76 @@
  * expanded-PCjr kernel) with elks-graphics-keys.patch: the real kbd_timer() is compiled against stub
  * kernel headers and fed INT 16h results (scan code in AH, character in AL) and BIOS shift flags; what
  * it sends to the console and whether it switches consoles is checked with and without a graphics
- * program holding the console. Build: see wslscripts/kbdpoll.sh.
+ * program holding the console. The BIOS key buffer (BDA 41Eh-43Dh, head 41Ah, tail 41Ch) is emulated
+ * too, so keys can wait in it while Alt changes: the driver must take Alt+Space's Alt state when the
+ * key entered the buffer, not when it reads it. Build: tests/kbdtest.sh.
  */
 #include <stdio.h>
 #include <string.h>
 
-static unsigned feed;
-static unsigned char shiftflags;
+static unsigned feed;                   /* a key returned without the buffer (the plain cases) */
+static unsigned char bda[256];          /* segment 40h: shift flags at 17h, the key buffer */
+#define shiftflags bda[0x17]
 static char out[16];
 static int nout, vc_switched, graphics;
 
 void Console_conin(unsigned char k) { if (nout < 15) out[nout++] = (char)k; out[nout] = 0; }
 void Console_set_vc(int n) { if (!graphics) vc_switched = n; }   /* the real one refuses under the lock */
 int Console_graphics(void) { return graphics; }
-int conio_poll(void) { unsigned v = feed; feed = 0; return (int)v; }
+static unsigned bdaw(unsigned off) { return bda[off] | bda[off + 1] << 8; }
+static void setw(unsigned off, unsigned v) { bda[off] = v & 0xFF; bda[off + 1] = v >> 8; }
+/* INT 16h AH=01h then AH=00h: the key at the head, which then moves on */
+int conio_poll(void)
+{
+    unsigned v = feed, h = bdaw(0x1A);
+    if (v) {
+        feed = 0;
+        return (int)v;
+    }
+    if (h == bdaw(0x1C))
+        return 0;
+    v = bdaw(h);
+    setw(0x1A, h + 2 >= 0x3E ? 0x1E : h + 2);
+    return (int)v;
+}
+/* the BIOS keyboard interrupt puts a key in the buffer */
+static void bios_key(unsigned ax)
+{
+    unsigned tl = bdaw(0x1C);
+    setw(tl, ax);
+    setw(0x1C, tl + 2 >= 0x3E ? 0x1E : tl + 2);
+}
 void conio_init(void) { }
-unsigned char peekb(unsigned off, unsigned seg) { return off == 0x17 && seg == 0x40 ? shiftflags : 0; }
+unsigned char peekb(unsigned off, unsigned seg) { return seg == 0x40 && off < 256 ? bda[off] : 0; }
+unsigned short peekw(unsigned short off, unsigned short seg) { return seg == 0x40 && off < 255 ? bdaw(off) : 0; }
 
 #include KBD_C
 
 static int failures, tests;
+
+/* one timer run with the buffer: what it sent */
+static void tick(int g, const char *what, const char *want)
+{
+    int i;
+    graphics = g; nout = 0; out[0] = 0; vc_switched = -1;
+    kbd_timer(0);
+    tests++;
+    if (nout != (int)strlen(want) || memcmp(out, want, nout)) {
+        failures++;
+        printf("FAIL %-48s sent %d bytes", what, nout);
+        for (i = 0; i < nout; i++)
+            printf(" %02x", (unsigned char)out[i]);
+        printf("\n");
+    } else
+        printf("ok   %s\n", what);
+}
+static void expect(int cond, const char *what)
+{
+    tests++;
+    if (!cond)
+        failures++;
+    printf("%s %s\n", cond ? "ok  " : "FAIL", what);
+}
 
 static void key(int g, const char *what, unsigned ax, unsigned char flags, const char *want, int want_vc)
 {
@@ -43,6 +93,7 @@ static void key(int g, const char *what, unsigned ax, unsigned char flags, const
 
 int main(void)
 {
+    setw(0x1A, 0x1E); setw(0x1C, 0x1E);    /* empty buffer */
     /* text mode: unchanged */
     key(0, "F1 switches to console 1", 0x3B00, 0, "", 0);
     key(0, "Alt+F2 switches to console 2", 0x6900, 0x08, "", 1);
@@ -65,6 +116,30 @@ int main(void)
     key(1, "a", 0x1E61, 0, "a", -1);
     key(1, "Up is ESC [ A", 0x4800, 0, "\033[A", -1);
     key(1, "Enter", 0x1C0D, 0, "\r", -1);
+    /* Alt+Space timing: keys wait in the BIOS buffer while Alt changes (graphics mode) */
+    shiftflags = 0x08;                  /* Alt down: x, then Alt+Space, typed before the next run */
+    bios_key(0x2D78); bios_key(0x3920);
+    tick(1, "x read first (Alt still down)", "x");
+    shiftflags = 0;                     /* Alt released before Alt+Space is read */
+    tick(1, "Alt+Space read after Alt was released", "\033 ");
+    tick(1, "nothing left", "");
+    bios_key(0x2D78); bios_key(0x3920); /* x, then a plain Space, typed before the next run */
+    tick(1, "x read first", "x");
+    shiftflags = 0x08;                  /* Alt pressed before the Space is read */
+    tick(1, "a Space read after Alt went down is a space", " ");
+    shiftflags = 0;
+    bios_key(0x3920);
+    tick(1, "Space entered and read on one run, Alt up", " ");
+    shiftflags = 0x08;
+    bios_key(0x3920);
+    tick(1, "Alt+Space entered and read on one run", "\033 ");
+    /* text mode: Alt+Space stays a space whatever Alt did */
+    bios_key(0x2D78); bios_key(0x3920); tick(0, "text mode: x", "x");
+    shiftflags = 0; tick(0, "text mode: Alt+Space is a space", " ");
+    /* the poll interval: every tick under graphics (to see keys as they arrive), 80 ms otherwise */
+    jiffies = 1000;
+    graphics = 1; kbd_timer(0); expect(timer_due == 1001, "graphics: the driver runs again on the next tick");
+    graphics = 0; kbd_timer(0); expect(timer_due == 1008, "text mode: the driver runs again after 8 ticks");
     printf("== kbd-poll: %d passed, %d failed\n", tests - failures, failures);
     return failures != 0;
 }

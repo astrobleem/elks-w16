@@ -126,18 +126,28 @@ then rebuild the server:
     cd src && make -f Makefile.elks clean && make -f Makefile.elks SCREEN_TANDY=y
 
 Optional, for Alt+F4 and Alt+Space: `elks-graphics-keys.patch` changes the ELKS kernel's keyboard
-drivers (four files, 43 lines). While a graphics program holds the console (DCGET_GRAPH) the kernel
+drivers (five files, 96 lines). While a graphics program holds the console (DCGET_GRAPH) the kernel
 refuses console switches, and the scancode driver used to drop Alt+F1..F8 entirely and send Alt+F9,
 Alt+F10 and Alt+Space without their Alt; with the patch those keys reach the program as ESC m..v and
 ESC space, which the patched Nano-X keyboard driver turns into Alt+F1..F10 and Alt+Space. The BIOS
 keyboard driver (`kbd-poll.c`, used by the PCjr kernel) swallowed F1-F4, dropped Alt+letter and sent
 the other F-keys as `ESC [ x`, which Nano-X ignores; under graphics it now sends the same sequences
-(F1..F10 as ESC a..j, Alt+letter as ESC A..Z, Alt+F1..F10, Alt+Space). In text mode nothing
+(F1..F10 as ESC a..j, Alt+letter as ESC A..Z, Alt+F1..F10, Alt+Space). INT 16h returns the same
+3920h for Space and Alt+Space, so that driver tells them apart by the BIOS shift flags; read when the
+key is read, those could be wrong (the key waits in the BIOS buffer until after Alt is released, or
+Alt goes down for the next key first), so under graphics the driver now runs every tick instead of
+every 80 ms and takes each key's Alt state when it first sees the key in the BIOS buffer. That is
+the best the buffered interface allows: a key that arrives and is read within one tick, or on a BIOS
+whose buffer is not at 41Eh, still uses the flags at read time, and the PCjr kernel's tick is the
+BIOS's 55 ms. The headless console builds `kbd-poll.c` without `console.c`, so the patch gives it a
+`Console_graphics` that returns 0 (without it a headless kernel does not link). In text mode nothing
 changes: Alt+F1..F8 and Alt+1..8 still switch consoles, so leaving the graphics program (closing it,
 or Alt+F4) is the deliberate way back to the other consoles, as before. `tests/kbdscan_test.c`
 compiles the kernel's own keyboard handler on the host and feeds it scancodes (18 cases; the
 unpatched driver fails 4 of them); `tests/kbdpoll_test.c` does the same for the BIOS driver with
-emulated INT 16h (20 cases; the unpatched driver fails 9). Rebuild the kernel after applying it:
+emulated INT 16h and BIOS key buffer, including keys that wait there while Alt changes (31 cases;
+the unpatched driver fails 12, the previous version of the patch 3). Rebuild the kernel after
+applying it:
 
     cd $TOPDIR && patch -p1 < /path/to/packages/win16/elks-graphics-keys.patch && make -C elks
 
@@ -214,7 +224,7 @@ Every window with a system-menu box has a system menu: click the box, press Alt+
 window without a menu bar. It holds only Close (the other Windows 3.0 commands, Restore, Move, Size,
 Minimize, Maximize and Switch To, are left out because this layer cannot carry them out); Left and
 Right move between it and the menu bar; a double-click on the box closes the window, as does Alt+F4
-with the kernel patch above. Message boxes have one too when closing them means something (a
+with the kernel patch above, also while a menu or the system menu is open. Message boxes have one too when closing them means something (a
 Cancel button, or a lone OK). While a dialog or message box is up, the program's other windows get
 no mouse or keyboard input, as in Windows. Message boxes draw the four Windows 3.0 icons (stop,
 question, exclamation, information) from ellipses and one character, without bitmaps in w16; push
@@ -249,6 +259,16 @@ Exit status: the program's own exit code, or 10 unreadable/truncated, 11 not a v
   replacement that cannot be written (the original stays). Set `W16_PRIVATE` to a folder holding
   your own WINVER.EXE, CLOCK.EXE and REVERSI.EXE to include their NAMETABLEs, menus, cursors,
   accelerators and string tables in the checks.
+* Optional host sections: with `ELKS_TOPDIR` set to a patched ELKS tree, `tests/kbdtest.sh` runs
+  the two keyboard-driver tests above and `tests/headless_build.sh`, which builds a headless-console
+  kernel from that tree's drivers in a temporary worktree (unpatched it links; with the earlier patch
+  it failed on `Console_graphics`); with `MWDIR` set (for `nano-X.h`), `tests/menukey_test.c`
+  compiles the real `menu.c` against stubbed Nano-X and USER and checks that Alt+F4 with a menu bar
+  popup or the system menu open closes the popup and sends the owner `WM_SYSCOMMAND SC_CLOSE` (12
+  cases; the previous `menu.c` fails 5: the key belonged to the destroyed popup and reached no
+  window). Without those variables their sections say "skipped" and the script still prints its
+  totals and succeeds, which section 11 checks by running it with them unset (run without `ELKS_TOPDIR`,
+  `kbdtest.sh` and `headless_build.sh` print their usage and exit 2).
 * `tests/elks/autotest.sh`: runs inside ELKS at boot (hooked from `/etc/rc.sys` in a test image),
   logging to port 0xE9. `tests/elks/w16mouse.c` drives Nano-X's serial-mouse driver through a
   pseudo-tty (Microsoft mouse packets), so mouse input reaches the program through the normal
@@ -262,7 +282,9 @@ Exit status: the program's own exit code, or 10 unreadable/truncated, 11 not a v
   before every move: a program can move the pointer itself, as REVERSI's hint does. The REVERSI
   steps play one move by mouse at a square that is legal at the start and three by Hint followed by
   a click where the hint put the pointer, then use the menus, the About box, a Help item, the Skill
-  popup (closed with Esc), the Backspace and F1 accelerators and Game > Exit.
+  popup (closed with Esc), the Backspace and F1 accelerators and Game > Exit. With the keyboard pty
+  the second pass closes CLOCK by Alt+F4 with its Settings popup open and REVERSI by Alt+F4 with its
+  system menu open.
   `tests/elks/nxstress.c` stresses the Nano-X server before the programs run: request headers
   split across writes with pauses, disconnects in the middle of a request, 25 connect/draw/
   disconnect cycles and two clients drawing at once; the programs then have to work as before.

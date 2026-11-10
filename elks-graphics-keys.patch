@@ -1,3 +1,20 @@
+diff --git a/elks/arch/i86/drivers/char/console-headless.c b/elks/arch/i86/drivers/char/console-headless.c
+index 9152cc5e..901ca426 100644
+--- a/elks/arch/i86/drivers/char/console-headless.c
++++ b/elks/arch/i86/drivers/char/console-headless.c
+@@ -29,6 +29,12 @@ void Console_conin(unsigned char Key)
+ 	chq_addch(&ttyp->inq, Key);
+ }
+ 
++/* no graphics console here: the keyboard drivers never see a graphics program */
++int Console_graphics(void)
++{
++    return 0;
++}
++
+ void Console_conout(dev_t dev, int Ch)
+ {
+     if (Ch == '\n')
 diff --git a/elks/arch/i86/drivers/char/console.c b/elks/arch/i86/drivers/char/console.c
 index 21250853..a4dcc7e3 100644
 --- a/elks/arch/i86/drivers/char/console.c
@@ -25,10 +42,10 @@ index 64c21b3d..9604656f 100644
  void Console_set_vc(int N);
 +int Console_graphics(void);
 diff --git a/elks/arch/i86/drivers/char/kbd-poll.c b/elks/arch/i86/drivers/char/kbd-poll.c
-index 6c8bcc1a..de20ffe4 100644
+index 6c8bcc1a..b83bf31b 100644
 --- a/elks/arch/i86/drivers/char/kbd-poll.c
 +++ b/elks/arch/i86/drivers/char/kbd-poll.c
-@@ -9,6 +9,7 @@
+@@ -9,20 +9,86 @@
  #include <linuxmt/sched.h>
  #include "console.h"
  #include "conio.h"
@@ -36,17 +53,69 @@ index 6c8bcc1a..de20ffe4 100644
  
  char kbd_name[] = "polling";
  
-@@ -23,6 +24,27 @@ static void kbd_timer(int data)
-     int dav, extra = 0;
+ static void restart_timer(void);
  
++/*
++ * INT 16h gives 3920h for Space and Alt+Space alike, so Alt+Space is told from Space by the BIOS
++ * shift flags. Read when the key is read, they can be wrong: the key may wait in the BIOS buffer
++ * until after Alt is released, or Alt may go down for the next key before it is read. While a
++ * graphics program holds the console the driver runs every tick and notes the Alt state of each key
++ * when it first sees it in the buffer (BDA 41Eh-43Dh, head 41Ah, tail 41Ch); keys it did not see
++ * arrive, or a BIOS with its buffer elsewhere, fall back to the flags at read time.
++ */
++#define KB_HEAD	0x1A
++#define KB_TAIL	0x1C
++#define KB_BUF	0x1E
++#define KB_END	0x3E
++static unsigned char key_alt[16], key_seen[16];
++static unsigned int last_tail;
++
++static int kb_slot(unsigned int off)
++{
++    return off >= KB_BUF && off < KB_END && !(off & 1) ? (off - KB_BUF) >> 1 : -1;
++}
++
++static void alt_sample(void)
++{
++    unsigned int tail = peekw(KB_TAIL, 0x40), t = last_tail;
++    unsigned char alt = peekb(0x17, 0x40) & 0x08;
++    int n = 16;
++
++    if (kb_slot(tail) >= 0 && kb_slot(t) >= 0) {
++	while (t != tail && n--) {
++	    key_alt[kb_slot(t)] = alt;
++	    key_seen[kb_slot(t)] = 1;
++	    if ((t += 2) >= KB_END)
++		t = KB_BUF;
++	}
++    }
++    last_tail = tail;
++}
++
+ /*
+  * Poll for keyboard character
+  * Decodes non-zero high byte into arrow/fn keys
+  */
+ static void kbd_timer(int data)
+ {
+-    int dav, extra = 0;
++    int dav, extra = 0, graphics = Console_graphics(), slot = -1, alt = 0;
+ 
++    if (graphics) {
++	alt_sample();
++	slot = kb_slot(peekw(KB_HEAD, 0x40));	/* the key conio_poll reads next */
++	alt = slot >= 0 && key_seen[slot] ? key_alt[slot] : peekb(0x17, 0x40) & 0x08;
++    }
      if ((dav = conio_poll())) {
 +	/* while a graphics program holds the console no switch is possible: the keys
 +	 * that would switch reach it, and so do Alt+letter and Alt+Space */
-+	if (Console_graphics()) {
++	if (graphics) {
 +	    /* scan codes of the letter keys 10h..32h, as the scancode driver's ESC A..Z */
 +	    static const char alpha[] = "QWERTYUIOP\0\0\0\0ASDFGHJKL\0\0\0\0\0ZXCVBNM";
 +	    int sc = (dav >> 8) & 0xFF;
-+	    if ((dav & 0xFF) == ' ' && (peekb(0x17, 0x40) & 0x08))	/* BIOS shift flags: Alt */
++	    if (slot >= 0)
++		key_seen[slot] = 0;
++	    if ((dav & 0xFF) == ' ' && alt)			/* Alt+Space */
 +		extra = ' ';
 +	    else if (!(dav & 0xFF) && sc >= 0x10 && sc <= 0x32 && alpha[sc - 0x10])
 +		extra = alpha[sc - 0x10];			/* Alt+letter */
@@ -64,6 +133,16 @@ index 6c8bcc1a..de20ffe4 100644
  	if (dav & 0xFF)
  	    Console_conin(dav & 0x7F);
  	else {
+@@ -73,7 +139,8 @@ static void restart_timer(void)
+ {
+     static struct timer_list timer;
+ 
+-    timer.tl_expires = jiffies + (8 * HZ/100);	/* every 8/100 second*/
++    /* every 8/100 second; every tick under graphics, to see each key as it arrives */
++    timer.tl_expires = jiffies + (Console_graphics() ? 1 : 8 * HZ/100);
+     timer.tl_function = kbd_timer;
+     add_timer(&timer);
+ }
 diff --git a/elks/arch/i86/drivers/char/kbd-scancode.c b/elks/arch/i86/drivers/char/kbd-scancode.c
 index 13352468..e88882a0 100644
 --- a/elks/arch/i86/drivers/char/kbd-scancode.c

@@ -7,7 +7,9 @@
 #  5-6. resource lookup and dialog templates match an independent Python decoder; mutations are safe
 #  7. menus, string tables, resource types given by name, and the WIN.INI reader/writer
 #  8. mutated menu templates are safe
-# Usage: hosttest.sh   (run from the win16 directory after "make -C src host");
+#  9. (ELKS_TOPDIR) the ELKS keyboard drivers with the patch, and a headless-console kernel build; 10. (MWDIR) Alt+F4 with a menu open;
+#  11. with those settings unset, their sections are skipped and the script still succeeds
+# Usage: [ELKS_TOPDIR=DIR] [MWDIR=DIR] hosttest.sh   (run from the win16 directory after "make -C src host");
 #        W16_PRIVATE=DIR adds checks of Windows 3.0 WINVER.EXE and CLOCK.EXE kept in DIR (never shipped)
 set -u
 cd "$(dirname "$0")/.."
@@ -17,6 +19,8 @@ T=$(mktemp -d)
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "PASS $*"; }
 bad() { fail=$((fail+1)); echo "FAIL $*"; }
+
+if [ "${HOSTTEST_ONLY:-}" != optional ]; then   # HOSTTEST_ONLY=optional: sections 9-10 only (used by 11)
 
 echo "== 1. load HELLO16 and compare with the model"
 mkdir -p $T/load
@@ -187,11 +191,45 @@ for f in $T/mfuzz/*.exe; do
 done
 [ $crash -eq 0 ] && ok "600 menu mutations: no crash, sanitizer report or leak" || bad "$crash menu fuzz failures"
 
+fi   # end of the sections that need only the host build
+
 echo "== 9. ELKS keyboard drivers with elks-graphics-keys.patch (set ELKS_TOPDIR)"
-if [ -n "$ELKS_TOPDIR" ]; then
+if [ -n "${ELKS_TOPDIR:-}" ]; then
     if bash tests/kbdtest.sh > $T/kbd.txt 2>&1; then ok "$(grep '^==' $T/kbd.txt | tr '\n' ' ')"; else bad "keyboard drivers"; grep -v '^ok' $T/kbd.txt; fi
+    if bash tests/headless_build.sh > $T/headless.txt 2>&1; then ok "$(sed 's/^ok *//' $T/headless.txt)"; else bad "headless build"; cat $T/headless.txt; fi
 else
     echo "skipped: ELKS_TOPDIR is not set"
+fi
+
+echo "== 10. menus: Alt+F4 with a menu bar popup or the system menu open (set MWDIR)"
+if [ -n "${MWDIR:-}" ]; then
+    if gcc -DW16_HOST -Wall -Wno-unused-parameter -fsanitize=address,undefined -I"$MWDIR/src/include" -Isrc \
+           -o $T/menukey tests/menukey_test.c src/dlgtmpl.c > $T/menukey.txt 2>&1 && $T/menukey >> $T/menukey.txt 2>&1; then
+        ok "$(grep '^==' $T/menukey.txt)"
+    else
+        bad "menus"; grep -v '^ok' $T/menukey.txt
+    fi
+else
+    echo "skipped: MWDIR is not set"
+fi
+
+if [ "${HOSTTEST_ONLY:-}" != optional ]; then
+echo "== 11. optional settings unset: the sections above are skipped, not failed"
+if env -u ELKS_TOPDIR -u MWDIR -u W16_PRIVATE HOSTTEST_ONLY=optional bash tests/hosttest.sh > $T/unset.txt 2>&1 &&
+   grep -q "skipped: ELKS_TOPDIR is not set" $T/unset.txt && grep -q "skipped: MWDIR is not set" $T/unset.txt &&
+   grep -q "== host tests: 0 passed, 0 failed" $T/unset.txt; then
+    ok "hosttest.sh with ELKS_TOPDIR, MWDIR and W16_PRIVATE unset skips their sections and exits 0"
+else
+    bad "hosttest.sh with the optional settings unset"; cat $T/unset.txt
+fi
+for s in kbdtest.sh headless_build.sh; do
+    env -u ELKS_TOPDIR bash tests/$s > $T/unset.txt 2>&1; rc=$?
+    if [ $rc -eq 2 ] && grep -q "usage: ELKS_TOPDIR=" $T/unset.txt; then
+        ok "$s without ELKS_TOPDIR prints its usage and exits 2"
+    else
+        bad "$s without ELKS_TOPDIR: rc $rc"; cat $T/unset.txt
+    fi
+done
 fi
 
 echo "== host tests: $pass passed, $fail failed"

@@ -574,8 +574,13 @@ int menu_event(GR_EVENT *ev)
         GR_KEY ch = ev->keystroke.ch;
         int n = pop.rows, i;
         if (ch == MWKEY_F4 && (ev->keystroke.modifiers & MWKMOD_ALT)) {
-            close_popup(1);                 /* Alt+F4 still closes the window */
-            return 0;
+            /* Alt+F4 still closes the window. The key event belongs to the popup, which is gone once
+             * closed, so passing it on would reach no window: send the owner SC_CLOSE here. */
+            u16 owner = mn->hwnd;
+            close_popup(1);
+            vlog("w16: Alt+F4 with a menu open -> WM_SYSCOMMAND SC_CLOSE to %04x\n", owner);
+            w16_post(owner, WM_SYSCOMMAND, SC_CLOSE, 0);
+            return 1;
         }
         if (ch == 27 || ch == MWKEY_F10)
             close_popup(1);
