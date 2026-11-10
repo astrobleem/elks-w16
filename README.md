@@ -125,6 +125,22 @@ then rebuild the server:
     patch -p1 < /path/to/packages/win16/nanox-tandyfast.patch
     cd src && make -f Makefile.elks clean && make -f Makefile.elks SCREEN_TANDY=y
 
+Optional, for Alt+F4 and Alt+Space: `elks-graphics-keys.patch` changes the ELKS kernel's keyboard
+drivers (four files, 43 lines). While a graphics program holds the console (DCGET_GRAPH) the kernel
+refuses console switches, and the scancode driver used to drop Alt+F1..F8 entirely and send Alt+F9,
+Alt+F10 and Alt+Space without their Alt; with the patch those keys reach the program as ESC m..v and
+ESC space, which the patched Nano-X keyboard driver turns into Alt+F1..F10 and Alt+Space. The BIOS
+keyboard driver (`kbd-poll.c`, used by the PCjr kernel) swallowed F1-F4, dropped Alt+letter and sent
+the other F-keys as `ESC [ x`, which Nano-X ignores; under graphics it now sends the same sequences
+(F1..F10 as ESC a..j, Alt+letter as ESC A..Z, Alt+F1..F10, Alt+Space). In text mode nothing
+changes: Alt+F1..F8 and Alt+1..8 still switch consoles, so leaving the graphics program (closing it,
+or Alt+F4) is the deliberate way back to the other consoles, as before. `tests/kbdscan_test.c`
+compiles the kernel's own keyboard handler on the host and feeds it scancodes (18 cases; the
+unpatched driver fails 4 of them); `tests/kbdpoll_test.c` does the same for the BIOS driver with
+emulated INT 16h (20 cases; the unpatched driver fails 9). Rebuild the kernel after applying it:
+
+    cd $TOPDIR && patch -p1 < /path/to/packages/win16/elks-graphics-keys.patch && make -C elks
+
 Measured (emulated, not real hardware: 86Box Tandy 1000 HX, 8088 at 7.16 MHz, `w16 -r -m` with
 no logging, stock Tandy driver -> patched driver, medians): CLOCK start to first paint 4.26 -> 4.17 s,
 Settings menu open 0.85 -> 0.79 s, switch to digital 1.56 -> 1.43 s, to analog 1.89 -> 1.73 s, About
@@ -137,6 +153,35 @@ the engine fix removes. MartyPC's cycle-accurate 8088 runs the same images about
 5.3-6.1 s, the same sequence passing), so the 86Box figures are the optimistic end for a real
 Tandy 1000. Memory while REVERSI runs beside the server and the test driver: 404 of 448 KB
 in use (w16 69,216 + 45,936 bytes; nano-color 50,544 + 38,432 with the patches), all freed at exit.
+
+Text extents are computed in w16 from the server font's width table, fetched once with
+`GrGetFontInfo` (`-v` logs a check against the server's own measure: 176x13 base 11 both ways), and a
+program's paint waits for the server only when `-m`, `-d` or `-r` needs it. Same binary and 86Box
+8088 configuration, `W16_SERVERTEXT=1` (each extent asked of the server) -> local, one run each:
+REVERSI first paint 5.50 -> 4.06 s, click to repaint 1.91-2.82 (mean 2.56) -> 1.88-2.61 (mean 2.28) s;
+CLOCK under `-m` unchanged within noise (start 3.63 -> 3.68 s, About 3.11 -> 3.27 s, tick 90 -> 82 ms),
+since CLOCK measures little text and `-m` keeps its syncs. Server profile of the whole suite:
+`GrGetGCTextSize` 357 -> 4 requests, handler time 103.0 -> 94.2 s. Cost: about 340 bytes of code and
+520 bytes of data in w16. The next largest cost the profile shows is `GrDestroyWindow` (370-605 ms
+when a dialog or popup closes, the server's expose and region work), not changed here.
+
+PCjr: the expanded-PCjr kernel (branch `pcjr-video-v0.9.2`, `pcjr-640.config`) needs
+`elks-pcjr.patch` (two files, 53 lines) besides `elks-graphics-keys.patch`. Its kernel sits at 2400h
+to stay clear of the video RAM at 18000h-1FFFFh, and the RAM below it, which held only boot
+staging, was never given to main memory: the patch adds 0330h-1800h and 2000h-2400h at the end of
+init (main memory 355K -> 454K; the full suite needs 408K at its peak, so it does not run without
+this). Its timer runs from the BIOS INT 1Ch callout at 18.2 Hz but counted one jiffy per call at
+HZ 100, so kernel time ran 5.5 times slow (a `sleep 5` took 27 s); the patch adds 5.4925 jiffies per
+call (a 16-bit fraction), and guest time then matches the host's. Tested only in DOSBox-X
+(`machine=pcjr`, 640 KB, 8086 core at a fixed 8000 cycles, DOSBox-X's own PCjr BIOS), roughly ten
+times an 8088's speed, so its timings say nothing about a real PCjr, and there is no physical PCjr
+result: the full suite, both passes, gives the same exit codes as on the Tandy, the census is clean,
+the stress test has no failures, peak 408 of 455 KB, 283K free again once the server stops (as at
+boot), and the display is back in mode 03 after each exit. The frame dumps are identical to
+MartyPC's except the clock face and two REVERSI frames that MartyPC dumped while a dialog was still
+being drawn; a BIOS-keyboard run drives CLOCK by F10 menus through `kbd-poll.c`.
+
+    cd /path/to/elks-pcjr && patch -p1 < /path/to/packages/win16/elks-pcjr.patch && make kernel
 
 The test program needs only Open Watcom v2 (open source; no Windows SDK, DDK or media):
 
@@ -165,8 +210,18 @@ as the system menu would (keyboard-only tests), `-m` measure: time-stamped log, 
 input-to-screen latency, timer message cost, and a count of windows, DCs, GDI objects, timers,
 menus, local heap and loaded resources after each menu command and dialog (leak checks).
 
+Every window with a system-menu box has a system menu: click the box, press Alt+Space, or F10 in a
+window without a menu bar. It holds only Close (the other Windows 3.0 commands, Restore, Move, Size,
+Minimize, Maximize and Switch To, are left out because this layer cannot carry them out); Left and
+Right move between it and the menu bar; a double-click on the box closes the window, as does Alt+F4
+with the kernel patch above. Message boxes have one too when closing them means something (a
+Cancel button, or a lone OK). While a dialog or message box is up, the program's other windows get
+no mouse or keyboard input, as in Windows. Message boxes draw the four Windows 3.0 icons (stop,
+question, exclamation, information) from ellipses and one character, without bitmaps in w16; push
+buttons answer to their underlined letter (Y, N, R...).
+
 Windows 3.0 CLOCK.EXE (your own copy): `W16INI=/root/win.ini w16 clock.exe`. Click Settings to
-switch between Analog and Digital or open About; double-click the system-menu box to close.
+switch between Analog and Digital or open About; close it from the system menu or with Alt+F4.
 REVERSI.EXE: `w16 reversi.exe`; play with the mouse (the cursor is a cross on the squares you may
 take), Game > Hint or Backspace (the game moves the pointer to the square it suggests, with
 SetCursorPos, and retitles itself a practice game), Skill, Help > About; Help items other than
@@ -242,7 +297,8 @@ INT 21h: 00h, 19h, 25h/35h (virtual vectors), 2Ah, 2Ch, 30h, 40h to stdout/stder
 
 DLLs and `LoadLibrary`; bitmaps from resources (`LoadBitmap`, `BitBlt`) and `LoadIcon` from the
 program's own resources (the frame icon stands in); colour cursors; menus from `LoadMenu`/`SetMenu`
-(class menus only), nested popups, the system menu itself; modeless dialogs (`CreateDialog`) and
+(class menus only), nested popups, the system menu commands other than Close (and
+`GetSystemMenu`); modeless dialogs (`CreateDialog`) and
 `DialogBoxParam`; `SendMessage` and `PostMessage` to all windows;
 check boxes, radio buttons, group boxes, EDIT, LISTBOX, COMBOBOX and SCROLLBAR controls (drawn
 as empty boxes); keyboard focus moves between controls; child windows outside dialogs; the
@@ -253,6 +309,13 @@ self-loading, protected-mode-only and 80286-flagged executables; 64 KB segments;
 Win16 program at a time (the loader keeps its data segment in its own code segment).
 Keyboard: without `nanox-w16.patch` the Nano-X tty keyboard driver decodes only three-byte
 `ESC [` sequences, so the ELKS console's F1-F12 and Alt+letter never arrive and menus need the
-mouse. Alt+F1..F8 switch ELKS consoles in the kernel and never reach a program, so Alt+F4 does
-not close a window here; the system-menu box (double-click) or the program's own Exit does.
+mouse. Without `elks-graphics-keys.patch` the kernel drops Alt+F1..F8 while Nano-X runs, so
+Alt+F4 does nothing; the system menu or the program's own Exit still closes it. The same patch is
+needed on the expanded-PCjr kernel (BIOS keyboard), which otherwise delivers no Alt+letter, Alt+F4 or
+F1-F4 to Nano-X.
+`LoadString` of an ID that is empty or absent in the program's string table returns 0 and an empty
+string, as Windows 3.x does; Windows 3.0's CLOCK (IDs 24, 25: the AM/PM defaults it passes to
+`GetProfileString` for `s1159`/`s2359`) and REVERSI (11, 12: text it appends after "You Won by N" and
+"You Lost by N") ask for such IDs, whose entries are empty in those programs, so AM/PM appear only
+when WIN.INI's `[intl]` section sets them, as on Windows.
 Memory is never discarded or moved, so the whole program must fit in conventional memory.

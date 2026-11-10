@@ -31,8 +31,7 @@ static u32 keyup_lp;
 static int keyup_pending, saw_real_keyup;
 static int npaints;
 int font_h = 13;
-static int sysclick_armed;
-static u32 sysclick_ms;
+static u16 modal_hwnd;                  /* the modal dialog running, or 0: other windows get no input */
 char opt_dump[40];
 int  opt_ready;
 static char readyfile[40] = "/tmp/w16.ready";
@@ -111,6 +110,21 @@ static int border_of(u32 style)
     return (style & WS_THICKFRAME) ? 3 : (style & (WS_BORDER | WS_CAPTION)) ? 1 : 0;
 }
 
+/* the system menu box at the left of the caption; drawn inverted while its menu is open */
+void nc_sysbox(struct wnd *w, int open)
+{
+    GR_WINDOW_ID f = w->frame;
+    int b = border_of(w->style);
+    if (!(w->style & WS_SYSMENU) || (w->style & WS_CAPTION) != WS_CAPTION)
+        return;
+    gdi_fill(f, open ? GR_RGB(0, 0, 0) : GR_RGB(170, 170, 170), b, b, CAPH, CAPH);
+    gdi_fill(f, GR_RGB(255, 255, 255), b + 3, b + CAPH / 2 - 1, CAPH - 6, 2);
+    gdi_fg(GR_RGB(0, 0, 0));
+    if (!open)
+        GrLine(f, gdi_gc, b + 4, b + CAPH / 2 + 1, b + CAPH - 3, b + CAPH / 2 + 1);
+    GrLine(f, gdi_gc, b + CAPH, b, b + CAPH, b + CAPH - 1);
+}
+
 /* Windows 3.0 style non-client area: frame, caption, system menu and min/max boxes */
 static void draw_nc(struct wnd *w)
 {
@@ -137,11 +151,7 @@ static void draw_nc(struct wnd *w)
         int x0 = b, x1 = W - b, y = b;
         gdi_fill(f, GR_RGB(0, 0, 170), x0, y, x1 - x0, CAPH);
         if (w->style & WS_SYSMENU) {
-            gdi_fill(f, gray, x0, y, CAPH, CAPH);
-            gdi_fill(f, white, x0 + 3, y + CAPH / 2 - 1, CAPH - 6, 2);
-            gdi_fg(black);
-            GrLine(f, gc, x0 + 4, y + CAPH / 2 + 1, x0 + CAPH - 3, y + CAPH / 2 + 1);
-            GrLine(f, gc, x0 + CAPH, y, x0 + CAPH, y + CAPH - 1);
+            nc_sysbox(w, 0);
             x0 += CAPH + 1;
         }
         if (w->style & WS_MAXIMIZEBOX) {
@@ -162,7 +172,7 @@ static void draw_nc(struct wnd *w)
                 GrLine(f, gc, bx + CAPH / 2 - k, y + CAPH - 5 - k, bx + CAPH / 2 + k, y + CAPH - 5 - k);
             x1 = bx - 1;
         }
-        GrGetGCTextSize(gc, w->title, n, GR_TFASCII, &tw, &th, &tb);
+        gdi_text_size(w->title, n, &tw, &th, &tb);
         gdi_fg(white);
         gdi_usebg(0);
         GrText(f, gc, x0 + ((x1 - x0) - tw) / 2 > x0 ? x0 + ((x1 - x0) - tw) / 2 : x0, y + 1, w->title, n,
@@ -388,9 +398,15 @@ static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x
              msg == WM_LBUTTONDOWN ? "WM_LBUTTONDOWN" : msg == WM_LBUTTONUP ? "WM_LBUTTONUP" : "right button");
 }
 
+/* a modal dialog is up and w is not part of it (Windows disables the dialog's owner) */
+static int blocked(struct wnd *w)
+{
+    return modal_hwnd && (w->ctl ? w->parent : w->hwnd) != modal_hwnd;
+}
+
 static void translate_event(GR_EVENT *ev)
 {
-    struct wnd *w;
+    struct wnd *w, *top;
     int isclient = 0;
 
     if (ev->type == GR_EVENT_TYPE_BUTTON_DOWN)
@@ -419,8 +435,17 @@ static void translate_event(GR_EVENT *ev)
         u32 lp = 1ul | ((u32)(ev->keystroke.scancode & 0xFF) << 16);
         key_mods = ev->keystroke.modifiers;
         w = win_by_nx(ev->keystroke.wid, &isclient);
+        if (w && blocked(w))
+            break;
+        top = w && w->ctl ? win_get(w->parent) : w;
+        if (top && ev->keystroke.ch == ' ' && (ev->keystroke.modifiers & MWKMOD_ALT)) {
+            menu_sys_open(top, 1, 0);      /* Alt+Space: the system menu */
+            break;
+        }
         if (w && !w->ctl && w->hmenu && menu_key(w, ev->keystroke.ch, ev->keystroke.modifiers))
             break;
+        if (top && ev->keystroke.ch == MWKEY_F10 && !top->hmenu && menu_sys_open(top, 1, 0))
+            break;                          /* F10 without a menu bar: the system menu, as in Windows */
         if (w && ev->keystroke.ch == MWKEY_F4 && (ev->keystroke.modifiers & MWKMOD_ALT)) {
             post(w->ctl ? w->parent : w->hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, 0, 0);
             break;
@@ -441,6 +466,8 @@ static void translate_event(GR_EVENT *ev)
         u8 ascii;
         u16 vk = vk_from_key(ev->keystroke.ch, &ascii);
         w = win_by_nx(ev->keystroke.wid, &isclient);
+        if (w && blocked(w))
+            break;
         saw_real_keyup = 1;
         keyup_pending = 0;
         if (w && vk)
@@ -461,7 +488,7 @@ static void translate_event(GR_EVENT *ev)
                 break;
             }
         }
-        if (!w)
+        if (!w || blocked(w))
             break;
         if (w->ctl) {                   /* built-in control: push buttons notify their dialog */
             if (w->ctl == CTL_BUTTON && (ev->button.changebuttons & MWBUTTON_L)) {
@@ -482,18 +509,8 @@ static void translate_event(GR_EVENT *ev)
             ;                               /* the menu bar opened or chose an item */
         } else if (down && (w->style & WS_SYSMENU)) {
             int b = border_of(w->style);
-            if (ev->button.x >= b && ev->button.x < b + CAPH && ev->button.y >= b && ev->button.y < b + CAPH) {
-                u32 t = now_ms();
-                if (sysclick_armed && t - sysclick_ms < 800) {
-                    sysclick_armed = 0;
-                    vlog("w16: system menu double-click -> WM_SYSCOMMAND SC_CLOSE\n");
-                    post(w->hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, ev->button.rootx, ev->button.rooty);
-                } else {
-                    sysclick_armed = 1;
-                    sysclick_ms = t;
-                    vlog("w16: system menu click (the menu itself is not implemented; double-click closes)\n");
-                }
-            }
+            if (ev->button.x >= b && ev->button.x < b + CAPH && ev->button.y >= b && ev->button.y < b + CAPH)
+                menu_sys_open(w, 0, ev->button.time ? ev->button.time : 1);   /* a second click closes */
         }
         break;
     }
@@ -506,7 +523,7 @@ static void translate_event(GR_EVENT *ev)
         if (capture_hwnd && (t = win_get(capture_hwnd)) != 0) {
             x = ev->mouse.rootx - (t->x + t->cx);
             y = ev->mouse.rooty - (t->y + t->cy);
-        } else if (!w || !isclient || w->ctl)
+        } else if (!w || !isclient || w->ctl || blocked(w))
             break;
         else
             t = w;
@@ -1236,7 +1253,8 @@ u32 u_LoadString(u16 ss, u16 ap)
         return 0;
     n = ne_load_string(w16_mod, id, s, sizeof(s));
     if (n < 0) {
-        vlog("w16: LoadString %u: no such string\n", id);
+        /* an empty or absent entry: like Windows 3.x, 0 and an empty string */
+        vlog("w16: LoadString %u: empty or absent in the program's string table -> \"\"\n", id);
         wr8(seg, off, 0);
         return 0;
     }
@@ -1388,6 +1406,34 @@ static struct wnd *find_ctl(u16 hdlg, u16 id)
     return 0;
 }
 
+/* MB_ICONHAND, MB_ICONQUESTION, MB_ICONEXCLAMATION, MB_ICONASTERISK in the style of Windows 3.0:
+ * a red sign with a white bar, and white, yellow and white discs carrying ?, ! and i */
+static void draw_std_icon(GR_WINDOW_ID f, int n, int W, int H)
+{
+    static const u8 disc[4] = { 4, 15, 14, 15 };            /* CGA colours: red, white, yellow, white */
+    static const char glyph[4] = { 0, '?', '!', 'i' };
+    static const u8 cga[16][3] = { {0,0,0}, {0,0,170}, {0,170,0}, {0,170,170}, {170,0,0}, {170,0,170},
+        {170,85,0}, {170,170,170}, {85,85,85}, {85,85,255}, {85,255,85}, {85,255,255}, {255,85,85},
+        {255,85,255}, {255,255,85}, {255,255,255} };
+    int cx = W / 2, cy = H / 2, rx = W / 2 - 1, ry = H / 2 - 1;
+    const u8 *c = cga[disc[n - 1]];
+    gdi_fg(GR_RGB(c[0], c[1], c[2]));
+    GrFillEllipse(f, gdi_gc, cx, cy, rx, ry);
+    gdi_fg(GR_RGB(0, 0, 0));
+    GrEllipse(f, gdi_gc, cx, cy, rx, ry);
+    if (n == 1)
+        gdi_fill(f, GR_RGB(255, 255, 255), cx - rx + 5, cy - 2, 2 * rx - 9, 5);
+    else {
+        GR_SIZE tw, th, tb;
+        char g = glyph[n - 1];
+        gdi_text_size(&g, 1, &tw, &th, &tb);
+        gdi_fg(n == 3 ? GR_RGB(0, 0, 0) : GR_RGB(0, 0, 170));
+        gdi_usebg(0);
+        GrText(f, gdi_gc, cx - tw / 2, cy - th / 2, &g, 1, GR_TFASCII | GR_TFTOP);
+        GrText(f, gdi_gc, cx - tw / 2 + 1, cy - th / 2, &g, 1, GR_TFASCII | GR_TFTOP);    /* bold */
+    }
+}
+
 static void paint_control(struct wnd *w)
 {
     GR_GC_ID gc = gdi_gc;
@@ -1407,7 +1453,7 @@ static void paint_control(struct wnd *w)
     }
     txt[n] = 0;
     if (n)
-        GrGetGCTextSize(gc, txt, n, GR_TFASCII, &tw, &th, &tb);
+        gdi_text_size(txt, n, &tw, &th, &tb);
     gdi_usebg(0);
     switch (w->ctl) {
     case CTL_STATIC:
@@ -1415,6 +1461,8 @@ static void paint_control(struct wnd *w)
         if (kind == 3) {                        /* SS_ICON: drawn at the control's top-left */
             if (w->icon)
                 gdi_draw_icon(f, 0, 0, w->icon, w->iconlen);
+            else if (w->stdicon)
+                draw_std_icon(f, w->stdicon, w->w, w->h);
             break;
         }
         gdi_fg(black);
@@ -1426,7 +1474,7 @@ static void paint_control(struct wnd *w)
                 for (j = st; j <= n; j++) {
                     if (j < n && txt[j] != ' ')
                         continue;
-                    GrGetGCTextSize(gc, txt + st, j - st, GR_TFASCII, &lw, &th, &tb);
+                    gdi_text_size(txt + st, j - st, &lw, &th, &tb);
                     if (lw > w->w && brk >= 0)
                         break;
                     brk = j;
@@ -1434,7 +1482,7 @@ static void paint_control(struct wnd *w)
                         break;
                 }
                 end = brk > st ? brk : n;
-                GrGetGCTextSize(gc, txt + st, end - st, GR_TFASCII, &lw, &th, &tb);
+                gdi_text_size(txt + st, end - st, &lw, &th, &tb);
                 x = kind == 1 ? (w->w - lw) / 2 : kind == 2 ? w->w - lw : 0;
                 GrText(f, gc, x < 0 ? 0 : x, row * font_h, txt + st, end - st, GR_TFASCII | GR_TFTOP);
                 for (st = end; st < n && txt[st] == ' '; st++)
@@ -1499,7 +1547,9 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
     if (w->w < 1) w->w = 1;
     if (w->h < 1) w->h = 1;
     w->cw = w->w; w->ch = w->h;
-    if (w->ctl == CTL_STATIC && (it->style & 0xF) == 3) {
+    if (w->ctl == CTL_STATIC && (it->style & 0xF) == 3 && !it->text[0] && it->id >= 0xFFF1 && it->id <= 0xFFF4)
+        w->stdicon = (u8)(it->id - 0xFFF0);
+    else if (w->ctl == CTL_STATIC && (it->style & 0xF) == 3) {
         u16 id = 0;
         const char *nm = it->text;
         if (nm[0] == '#') {
@@ -1527,6 +1577,22 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
         w->visible = 1;
     }
     return w;
+}
+
+/* the push button of dialog d whose mnemonic ("&N") is key vk, or 0 */
+static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
+{
+    int i;
+    for (i = 0; i < MAXWIN; i++) {
+        const char *a;
+        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || wins[i].parent != d->hwnd || !wins[i].visible)
+            continue;
+        for (a = wins[i].title; (a = strchr(a, '&')) != 0 && a[1] == '&'; a += 2)
+            ;
+        if (a && a[1] && (u16)(a[1] >= 'a' && a[1] <= 'z' ? a[1] - 32 : a[1]) == vk)
+            return &wins[i];
+    }
+    return 0;
 }
 
 static void dlg_command(struct wnd *d, u16 id)
@@ -1588,28 +1654,40 @@ u16 message_box(const char *text, const char *caption, u16 type)
     static const u8 nbtn[6] = { 1, 2, 3, 3, 2, 2 };
     static const u16 btn[6][3] = { { 1 }, { 1, 2 }, { 3, 4, 5 }, { 6, 7, 2 }, { 6, 7 }, { 4, 2 } };
     static const char *const bname[8] = { "", "OK", "Cancel", "&Abort", "&Retry", "&Ignore", "&Yes", "&No" };
-    u16 kind = type & 0xF, k, r;
+    u16 kind = type & 0xF, icon = (type & 0xF0) >> 4, k, r;
     GR_SIZE tw, th, tb;
-    int maxw = scr_w - 32, textw, lines, nb, bw = 44, bh = font_h + 8, gap = 8, W, H, bx;
+    int textw, lines, nb, bw = 44, bh = font_h + 8, gap = 8, W, H, bx, iw, ih = 28, tx, th2;
+    int maxw;
     if (kind > 5)
         kind = 0;
+    if (icon > 4) {
+        vlog("w16: MessageBox icon style %02x is not one of Windows 3.0's four; none drawn\n", type & 0xF0);
+        icon = 0;
+    }
+    iw = icon ? 32 : 0;                     /* 32 wide, 28 high: round on the 320x200 screen */
+    tx = gap + (icon ? iw + gap : 0);
+    maxw = scr_w - 32 - (tx - gap);
     nb = nbtn[kind];
     memset(&dtmpl, 0, sizeof(dtmpl));
     strncpy(dtmpl.caption, caption, sizeof(dtmpl.caption) - 1);
-    GrGetGCTextSize(gdi_gc, (void *)text, strlen(text), GR_TFASCII, &tw, &th, &tb);
+    gdi_text_size((void *)text, strlen(text), &tw, &th, &tb);
     textw = tw <= maxw ? tw : maxw;
     lines = tw <= maxw ? 1 : (tw + maxw - 1) / maxw + 1;      /* room for word wrap */
-    W = textw + 2 * gap;
+    W = tx + textw + gap;
     if (W < nb * (bw + gap) + gap)
         W = nb * (bw + gap) + gap;
-    H = gap + lines * font_h + gap + bh + gap;
-    dtmpl.style = WS_POPUP | WS_CAPTION | DS_MODALFRAME | WS_VISIBLE;
+    th2 = lines * font_h;
+    H = gap + (icon && ih > th2 ? ih : th2) + gap + bh + gap;
+    /* a system menu (Close) only where closing works: a Cancel button, or a lone OK */
+    dtmpl.style = WS_POPUP | WS_CAPTION | DS_MODALFRAME | WS_VISIBLE | (kind == 2 || kind == 4 ? 0 : WS_SYSMENU);
     dtmpl.cx = W; dtmpl.cy = H;
     dtmpl.x = (scr_w - W - 6) / 2; dtmpl.y = (scr_h - H - 6 - CAPH) / 2;
     dtmpl.nitems = 1 + nb;
     dtmpl.item[0].cls = 0x82;
-    dtmpl.item[0].style = WS_CHILD | WS_VISIBLE | (lines == 1 ? 1 : 0);    /* SS_CENTER or SS_LEFT */
-    dtmpl.item[0].x = gap; dtmpl.item[0].y = gap; dtmpl.item[0].cx = W - 2 * gap; dtmpl.item[0].cy = lines * font_h;
+    /* centred alone, left-aligned beside an icon or when wrapped (SS_CENTER or SS_LEFT) */
+    dtmpl.item[0].style = WS_CHILD | WS_VISIBLE | (lines == 1 && !icon ? 1 : 0);
+    dtmpl.item[0].x = tx; dtmpl.item[0].cx = W - tx - gap; dtmpl.item[0].cy = th2;
+    dtmpl.item[0].y = gap + (icon && ih > th2 ? (ih - th2) / 2 : 0);
     dtmpl.item[0].id = 0xFFFF;
     bx = (W - nb * bw - (nb - 1) * gap) / 2;
     for (k = 0; k < nb; k++) {
@@ -1620,8 +1698,14 @@ u16 message_box(const char *text, const char *caption, u16 type)
         it->id = btn[kind][k];
         strcpy(it->text, bname[it->id]);
     }
-    if (type & 0xF0)
-        vlog("w16: MessageBox icon style %02x is not drawn\n", type & 0xF0);
+    if (icon) {                             /* drawn by its static control: see draw_std_icon */
+        struct dlg_item *it = &dtmpl.item[dtmpl.nitems++];
+        it->cls = 0x82;
+        it->style = WS_CHILD | WS_VISIBLE | 3;      /* SS_ICON */
+        it->x = gap; it->y = gap; it->cx = iw; it->cy = ih;
+        it->id = 0xFFF0 + icon;
+        vlog("w16: MessageBox icon %u\n", icon);
+    }
     r = run_dialog("MessageBox", 0, 0, w16_mod->dgroup, 1, text);
     vlog("w16: MessageBox \"%s\" -> %u\n", text, r);
     return r;
@@ -1643,7 +1727,7 @@ u32 u_MessageBox(u16 ss, u16 ap)
  * text0, if given, replaces the text of the first control (message boxes have long texts). */
 static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0)
 {
-    u16 hfocus = 0, k;
+    u16 hfocus = 0, k, prev_modal;
     struct wnd *d, *w;
     struct qmsg m;
     int b, cap, W, H, x, y;
@@ -1651,7 +1735,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     u32 r;
 
     /* dialog units: base units from the Nano-X system font, shrunk if the dialog would not fit */
-    GrGetGCTextSize(gdi_gc, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, GR_TFASCII, &tw, &th, &tb);
+    gdi_text_size("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, &tw, &th, &tb);
     dbx_num = tw; dbx_den = 52 * 4; dby_num = font_h; dby_den = 8;
     if (pixels)
         dbx_num = dbx_den = dby_num = dby_den = 1;
@@ -1700,6 +1784,8 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
 
     r = win_send(d, WM_INITDIALOG, hfocus, 0);
     (void)r;
+    prev_modal = modal_hwnd;
+    modal_hwnd = d->hwnd;
     GrMapWindow(d->client);
     GrMapWindow(d->frame);
     GrSetFocus(d->client);
@@ -1726,6 +1812,8 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
                     dlg_command(d, d->defid);
                 else if (m.wp == 0x1B)
                     dlg_command(d, IDCANCEL);
+                else if ((w = mnemonic_button(d, m.wp)) != 0)    /* a button's underlined letter */
+                    dlg_command(d, w->id);
                 break;
             case WM_CHAR:
             case WM_KEYUP:
@@ -1759,6 +1847,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
             dispatch(m.hwnd, m.msg, m.wp, m.lp);    /* other windows of the program keep running */
     }
     r = d->result;
+    modal_hwnd = prev_modal;
     vlog("w16: dialog ended with result %u\n", (u16)r);
     win_send(d, WM_DESTROY, 0, 0);
     GrDestroyWindow(d->frame);
@@ -1844,7 +1933,10 @@ void paint_done(struct wnd *w)
     u32 t;
     npaints++;
     GrFlush();
-    GrGetScreenInfo(&si);               /* round trip: the server has drawn everything before this */
+    /* round trip so the server has drawn everything: only for measurements, frame dumps and the ready
+     * file (tests); a program in normal use never waits for its paint to reach the screen */
+    if (opt_metrics || opt_dump[0] || (opt_ready && !w->readied))
+        GrGetScreenInfo(&si);
     t = now_ms();                       /* measurements first: the log and frame dump below take time */
     lat_shown("paint", 1);
     if (npaints == 1 && opt_metrics) {
@@ -1884,6 +1976,13 @@ void ready_write(void)
         if (d && d->isdialog && n < 600 - 40)
             n += sprintf(buf + n, "button %u %d %d\n", c->id, d->x + d->cx + c->x + c->w / 2,
                          d->y + d->cy + c->y + c->h / 2);
+    }
+    for (i = 0; i < MAXWIN; i++) {          /* system menu boxes: "button 999" */
+        struct wnd *c = &wins[i];
+        int b = border_of(c->style);
+        if (c->used && c->visible && !c->ctl && (!modal_hwnd || c->hwnd == modal_hwnd) && (c->style & WS_SYSMENU) &&
+            (c->style & WS_CAPTION) == WS_CAPTION && n < 600 - 40)
+            n += sprintf(buf + n, "button 999 %d %d\n", c->x + b + CAPH / 2, c->y + b + CAPH / 2);
     }
     n += menu_ready_lines(buf + n, 600 - n);
     fd = open(readyfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1944,7 +2043,7 @@ int user_init(void)
     memset(classes, 0, sizeof(classes));
     if (gdi_init())
         return -1;
-    GrGetGCTextSize(gdi_gc, "Ag", 2, GR_TFASCII, &w, &h, &b);
+    gdi_text_size("Ag", 2, &w, &h, &b);
     if (h > 6 && h < 20)
         font_h = h;
     return 0;

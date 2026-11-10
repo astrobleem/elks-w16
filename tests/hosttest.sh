@@ -187,6 +187,13 @@ for f in $T/mfuzz/*.exe; do
 done
 [ $crash -eq 0 ] && ok "600 menu mutations: no crash, sanitizer report or leak" || bad "$crash menu fuzz failures"
 
+echo "== 9. ELKS keyboard drivers with elks-graphics-keys.patch (set ELKS_TOPDIR)"
+if [ -n "$ELKS_TOPDIR" ]; then
+    if bash tests/kbdtest.sh > $T/kbd.txt 2>&1; then ok "$(grep '^==' $T/kbd.txt | tr '\n' ' ')"; else bad "keyboard drivers"; grep -v '^ok' $T/kbd.txt; fi
+else
+    echo "skipped: ELKS_TOPDIR is not set"
+fi
+
 echo "== host tests: $pass passed, $fail failed"
 rm -rf $T
 [ $fail -eq 0 ]

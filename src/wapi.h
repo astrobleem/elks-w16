@@ -107,6 +107,7 @@ struct wnd {
     u16  iconlen;
     u16  hmenu;                 /* menu bar, or 0 */
     u8   readied;               /* test hook: ready file written after its first paint */
+    u8   stdicon;               /* SS_ICON of a message box: 1 hand, 2 question, 3 exclamation, 4 asterisk */
 };
 
 struct dc {
@@ -154,6 +155,7 @@ struct dc *dc_get(u16 hdc);
 void      gdi_fill(GR_WINDOW_ID wid, GR_COLOR c, int x, int y, int w, int h);
 void      gdi_fg(GR_COLOR c);           /* scratch GC colour, sent only when it changes */
 void      gdi_usebg(int on);
+void      gdi_text_size(const char *s, int n, GR_SIZE *w, GR_SIZE *h, GR_SIZE *base);  /* no round trip */
 int       gdi_draw_icon(GR_WINDOW_ID wid, int x, int y, const u8 *dib, u16 len);
 extern GR_GC_ID gdi_gc;     /* scratch GC for USER drawing */
 
@@ -180,6 +182,8 @@ int       menu_event(GR_EVENT *ev);                            /* events while a
 int       menu_key(struct wnd *w, GR_KEY ch, u32 modifiers);   /* F10 / Alt+letter; 1 if taken */
 int       menu_ready_lines(char *buf, int size);                /* "button" lines for the open popup */
 void      menu_close_for(u16 hwnd);
+int       menu_sys_open(struct wnd *w, int sel_first, u32 click_time);   /* 0 if w has no system menu box */
+void      nc_sysbox(struct wnd *w, int open);  /* the caption's system menu box, highlighted while open */
 void      menu_census(u16 *nmenus);
 
 /* frame dumps / readiness */

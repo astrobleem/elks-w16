@@ -59,7 +59,8 @@ u16  fstrncpy_in(char *dst, u16 seg, u16 off, u16 max);    /* NUL-terminated cop
 void res_name(u16 off, u16 seg, char *name, u16 *id);     /* resource name or ordinal; name[34] */
 
 /* one 2 KB scratch area shared by code that never runs at the same time: segment loading (ne.c),
- * WIN.INI (profile.c), pattern fills and the ready file (gdi.c, user.c), menu templates (menu.c) */
+ * WIN.INI (profile.c), pattern fills, the font query at start and the ready file (gdi.c, user.c), menu
+ * templates (menu.c) */
 #define W16_SCRATCH 2049
 extern u8 w16_scratch[W16_SCRATCH];
 

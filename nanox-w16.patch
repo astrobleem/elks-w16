@@ -138,14 +138,15 @@
  
  	cc = read(fd, buf + buflen, 1);
  	if ((cc < 0) && (errno != EINTR) && (errno != EAGAIN)) {
-@@ -167,6 +172,34 @@
+@@ -167,6 +172,45 @@
  	if (mwkey == 27) {
  		mwkey = 0;
  		buflen += cc;
 +#if ELKS
 +		/* The ELKS console sends two-byte sequences: ESC a..l for F1..F12 and ESC A..Z for
-+		 * Alt+letter (cursor keys are ESC [ x). Read the second byte alone, so the key that
-+		 * follows is never swallowed, and decode the two-byte forms here. */
++		 * Alt+letter (cursor keys are ESC [ x); while a graphics program holds it, also
++		 * ESC m..v for Alt+F1..F10 and ESC space for Alt+Space. Read the second byte alone,
++		 * so the key that follows is never swallowed, and decode the two-byte forms here. */
 +		if (buflen == 1) {
 +			cc = read(fd, buf + 1, 1);
 +			if (cc <= 0) {			/* nothing follows: a lone ESC */
@@ -162,6 +163,16 @@
 +				mwkey = MWKEY_F1 + (c - 'a');
 +				goto out;
 +			}
++			if (c >= 'm' && c <= 'v') {
++				mwkey = MWKEY_F1 + (c - 'm');
++				altmod = MWKMOD_LALT;
++				goto out;
++			}
++			if (c == ' ') {
++				mwkey = ' ';
++				altmod = MWKMOD_LALT;
++				goto out;
++			}
 +			if (c >= 'A' && c <= 'Z') {
 +				mwkey = c - 'A' + 'a';
 +				altmod = MWKMOD_LALT;
@@ -173,7 +184,7 @@
  		if (buflen < 3) {
  			/* Need more characters - escape sequences are 3+ chars */
  			do {
-@@ -370,7 +403,12 @@
+@@ -370,7 +414,12 @@
  #endif
  out:
  	*kbuf = mwkey;		/* no translation*/

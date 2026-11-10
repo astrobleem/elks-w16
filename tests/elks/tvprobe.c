@@ -1,5 +1,6 @@
 /* tvprobe - emulator diagnostics for the Tandy mode 09h frame buffer (test helper, not part of w16).
- *   tvprobe info        print BIOS video state and the kernel reservation to port 0xE9
+ *   tvprobe info        print BIOS video state and the kernel reservation (Tandy, PCjr) to port 0xE9
+ *                       and stdout
  *   tvprobe band SEG    XOR the first 8 rows of a 32 KB mode-09h buffer at SEG:0000 (run twice to undo)
  * Only touch 9800h (the kernel-reserved video RAM) or B800h (the CPU video window). */
 #include <fcntl.h>
@@ -10,6 +11,9 @@
 #include <sys/ioctl.h>
 #include <linuxmt/mem.h>
 
+#ifndef MEM_GETPCJR
+#define MEM_GETPCJR 15
+#endif
 #define FP(s, o) ((unsigned char __far *)((((unsigned long)(s)) << 16) | (unsigned)(o)))
 
 static void e9(const char *s)
@@ -24,13 +28,18 @@ int main(int argc, char **argv)
 {
     char line[120];
     if (argc > 1 && !strcmp(argv[1], "info")) {
-        unsigned r = 0;
+        unsigned r = 0, j = 0;
         int k = open("/dev/kmem", O_RDONLY);
-        if (k >= 0) { if (ioctl(k, MEM_GETTANDY, &r) < 0) r = 0; close(k); }
-        sprintf(line, "@@TV mode %02x cols %u pagesize %u pageoff %u bios_kb %u tandy_reserved %04x\n",
+        if (k >= 0) {
+            if (ioctl(k, MEM_GETTANDY, &r) < 0) r = 0;
+            if (ioctl(k, MEM_GETPCJR, &j) < 0) j = 0;
+            close(k);
+        }
+        sprintf(line, "@@TV mode %02x cols %u pagesize %u pageoff %u bios_kb %u tandy_reserved %04x pcjr_reserved %04x\n",
                 *FP(0x40, 0x49), *(unsigned __far *)FP(0x40, 0x4A), *(unsigned __far *)FP(0x40, 0x4C),
-                *(unsigned __far *)FP(0x40, 0x4E), *(unsigned __far *)FP(0x40, 0x13), r);
+                *(unsigned __far *)FP(0x40, 0x4E), *(unsigned __far *)FP(0x40, 0x13), r, j);
         e9(line);
+        fputs(line, stdout);
         sprintf(line, "@@TV bda 8a..8f %02x %02x %02x %02x %02x %02x\n", *FP(0x40, 0x8A), *FP(0x40, 0x8B),
                 *FP(0x40, 0x8C), *FP(0x40, 0x8D), *FP(0x40, 0x8E), *FP(0x40, 0x8F));
         e9(line);

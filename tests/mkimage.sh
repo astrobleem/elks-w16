@@ -44,6 +44,7 @@ mfs $IMG cp $W/src/w16 /bin/w16
 for f in e9 w16mouse tvprobe nxstress; do mfs $IMG cp $T/$f /bin/$f; done
 mfs $IMG cp $W/test/hello16/HELLO16.EXE /root/hello16.exe
 mfs $IMG cp $W/test/dlgtest/DLGTEST.EXE /root/dlgtest.exe
+mfs $IMG cp $W/test/mbtest/MBTEST.EXE /root/mbtest.exe
 # W16_EXTRA: your own copies of other programs to test (for example Windows 3.0 WINVER.EXE as winver.exe)
 for f in $W16_EXTRA; do n=$(basename $f | tr A-Z a-z); mfs $IMG cp $f /root/$n; done
 mfs $IMG mkdir /root/bad
@@ -52,12 +53,13 @@ for f in notmz.exe pe.exe dll.exe i286.exe tickcount.exe badmod.exe chainloop.ex
 done
 for f in $T/badres/*.exe; do mfs $IMG cp $f /root/bad/$(basename $f); done
 # flags for the autotest: kbd (keyboard only), quiet (measure CLOCK without log and frame dumps),
-# nocache (W16_NOCACHE=1), ptykbd (Nano-X reads its keyboard from a pty the test driver writes),
-# skipneg, skiphello16, skipdlgtest, skipwinver, skipclock, skipreversi
+# nocache (W16_NOCACHE=1), ptykbd (Nano-X reads its keyboard from a pty the test driver writes), repeat
+# (every program a second time),
+# skipneg, skiphello16, skipdlgtest, skipmbtest, skipwinver, skipclock, skipreversi
 for f in "${@:2}"; do
     case $f in
     kbd) fl=kbdmode;;
-    quiet|nocache|ptykbd|skipneg|skiphello16|skipdlgtest|skipwinver|skipclock|skipreversi) fl=$f;;
+    quiet|nocache|servertext|beat|ptykbd|repeat|skipneg|skiphello16|skipdlgtest|skipmbtest|skipwinver|skipclock|skipreversi) fl=$f;;
     *) echo "unknown flag $f"; exit 2;;
     esac
     echo $f > $T/flag; mfs $IMG cp $T/flag /root/$fl

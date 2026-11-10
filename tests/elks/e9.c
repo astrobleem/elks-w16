@@ -4,6 +4,9 @@
  * Test helper only: on real hardware port 0xE9 is normally unused. */
 #include <unistd.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 static void out(const char *s, int n)
 {
@@ -17,6 +20,14 @@ int main(int argc, char **argv)
 {
     char buf[128];
     int i, n;
+    if (argc == 3 && !strcmp(argv[1], "-beat")) {     /* heartbeat: shows whether sleeping tasks still wake */
+        unsigned long k = 0;
+        for (;;) {
+            n = sprintf(buf, "@@BEAT %lu %ld\n", ++k, (long)time(NULL));
+            out(buf, n);
+            sleep(atoi(argv[2]));
+        }
+    }
     if (argc > 1) {
         for (i = 1; i < argc; i++) {
             if (i > 1)

@@ -1,0 +1,99 @@
+diff --git a/elks/arch/i86/drivers/char/console.c b/elks/arch/i86/drivers/char/console.c
+index 21250853..a4dcc7e3 100644
+--- a/elks/arch/i86/drivers/char/console.c
++++ b/elks/arch/i86/drivers/char/console.c
+@@ -29,6 +29,12 @@ void Console_conin(unsigned char Key)
+         chq_addch(&ttyp->inq, Key);
+ }
+ 
++/* a graphics program holds the console (DCGET_GRAPH): consoles cannot be switched */
++int Console_graphics(void)
++{
++    return glock != 0;
++}
++
+ #ifdef CONFIG_EMUL_ANSI
+ static void Console_gotoxy(Console * C, int x, int y)
+ {
+diff --git a/elks/arch/i86/drivers/char/console.h b/elks/arch/i86/drivers/char/console.h
+index 64c21b3d..9604656f 100644
+--- a/elks/arch/i86/drivers/char/console.h
++++ b/elks/arch/i86/drivers/char/console.h
+@@ -12,3 +12,4 @@ void bell(void);
+ 
+ /* for direct and bios consoles only*/
+ void Console_set_vc(int N);
++int Console_graphics(void);
+diff --git a/elks/arch/i86/drivers/char/kbd-poll.c b/elks/arch/i86/drivers/char/kbd-poll.c
+index 6c8bcc1a..de20ffe4 100644
+--- a/elks/arch/i86/drivers/char/kbd-poll.c
++++ b/elks/arch/i86/drivers/char/kbd-poll.c
+@@ -9,6 +9,7 @@
+ #include <linuxmt/sched.h>
+ #include "console.h"
+ #include "conio.h"
++#include <linuxmt/memory.h>
+ 
+ char kbd_name[] = "polling";
+ 
+@@ -23,6 +24,27 @@ static void kbd_timer(int data)
+     int dav, extra = 0;
+ 
+     if ((dav = conio_poll())) {
++	/* while a graphics program holds the console no switch is possible: the keys
++	 * that would switch reach it, and so do Alt+letter and Alt+Space */
++	if (Console_graphics()) {
++	    /* scan codes of the letter keys 10h..32h, as the scancode driver's ESC A..Z */
++	    static const char alpha[] = "QWERTYUIOP\0\0\0\0ASDFGHJKL\0\0\0\0\0ZXCVBNM";
++	    int sc = (dav >> 8) & 0xFF;
++	    if ((dav & 0xFF) == ' ' && (peekb(0x17, 0x40) & 0x08))	/* BIOS shift flags: Alt */
++		extra = ' ';
++	    else if (!(dav & 0xFF) && sc >= 0x10 && sc <= 0x32 && alpha[sc - 0x10])
++		extra = alpha[sc - 0x10];			/* Alt+letter */
++	    else if (!(dav & 0xFF) && sc >= 0x68 && sc <= 0x71)
++		extra = 'm' + sc - 0x68;			/* Alt+F1..F10 */
++	    else if (!(dav & 0xFF) && sc >= 0x3B && sc <= 0x44)
++		extra = 'a' + sc - 0x3B;			/* F1..F10, as ESC a..j */
++	    if (extra) {
++		Console_conin(033);
++		Console_conin(extra);
++		restart_timer();
++		return;
++	    }
++	}
+ 	if (dav & 0xFF)
+ 	    Console_conin(dav & 0x7F);
+ 	else {
+diff --git a/elks/arch/i86/drivers/char/kbd-scancode.c b/elks/arch/i86/drivers/char/kbd-scancode.c
+index 13352468..e88882a0 100644
+--- a/elks/arch/i86/drivers/char/kbd-scancode.c
++++ b/elks/arch/i86/drivers/char/kbd-scancode.c
+@@ -278,7 +278,14 @@ static void keyboard_irq(int irq, struct pt_regs *regs)
+     /* function keys are not posix standard here */
+     
+ 	/* AltF1-F8 are console switch (downstream Console_set_vc validates
+-	 * against NumConsoles, so unwired keys are silently ignored).*/
++	 * against NumConsoles, so unwired keys are silently ignored).
++	 * While a graphics program holds the console no switch is possible,
++	 * so Alt+F1..F10 reach it as ESC m..v (after F1..F12 = ESC a..l).*/
++	if ((ModeState & ALT) && Console_graphics() && code - SCAN_F1 < 10) {
++	    Console_conin(ESC);
++	    Console_conin('m' + code - SCAN_F1);
++	    return;
++	}
+ 	if ((ModeState & ALT) && code <= SCAN_F1+7) {
+ 	    Console_set_vc(code - SCAN_F1);
+ 	    return;
+@@ -357,6 +364,12 @@ static void keyboard_irq(int irq, struct pt_regs *regs)
+ 
+         /* Step 6: Modify keyboard character based on some special states*/
+ 	if ((ModeState & (CTRL|ALT)) == ALT) {
++	    /* in graphics mode Alt-Space reaches the program as ESC space */
++	    if (key == ' ' && Console_graphics()) {
++		Console_conin(ESC);
++		Console_conin(' ');
++		return;
++	    }
+ 	    /* Alt-1 - Alt-8 are also console switch (for systems w/no fnkeys)*/
+ 	    if (key >= '1' && key <= '8') {
+ 		Console_set_vc(key - '1');

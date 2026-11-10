@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linuxmt/mem.h>
+#ifndef MEM_GETPCJR
+#define MEM_GETPCJR 15          /* expanded-PCjr kernels (pcjr-video-v0.9.2); the Tandy headers lack it */
+#endif
 #include "wapi.h"
 
 #define OBJ_PEN   1
@@ -93,7 +96,7 @@ struct gcstate { GR_GC_ID gc; u8 known, usebg; int mode; GR_COLOR fg, bg; };
 #define K_BG    4
 #define K_USEBG 8
 static struct gcstate gcs[MAXDC + 1];
-static u8 nocache;
+static u8 nocache, servertext;   /* W16_NOCACHE, W16_SERVERTEXT: before/after measurements */
 #define GS(d) (&gcs[((d)->hdc - HDC_BASE) >> 1])
 
 static u8 srv_exclend;                  /* the server implements GR_MODE_EXCLUDEENDPOINT */
@@ -180,16 +183,20 @@ int gdi_init(void)
         nocache = e && *e == '1';
         if (nocache)
             wlog("w16: W16_NOCACHE: every GC state change is sent and every DC gets a new GC\n");
+        e = getenv("W16_SERVERTEXT");
+        servertext = e && *e == '1';
+        if (servertext)
+            wlog("w16: W16_SERVERTEXT: text is measured by the server (GrGetGCTextSize), not locally\n");
     }
     {
         GR_SIZE w, h, b;
-        GrGetGCTextSize(gdi_gc, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, GR_TFASCII, &w, &h, &b);
+        gdi_text_size("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, &w, &h, &b);
         if (h > 4 && h < 40) {
             fm_h = h;
             fm_asc = b;
             fm_avg = (w + 26) / 52;
         }
-        GrGetGCTextSize(gdi_gc, "W", 1, GR_TFASCII, &w, &h, &b);
+        gdi_text_size("W", 1, &w, &h, &b);
         if (w > 0)
             fm_max = w;
     }
@@ -674,7 +681,7 @@ u32 g_GetTextExtent(u16 ss, u16 ap)
     if (n > (int)sizeof(buf))
         n = sizeof(buf);
     fcopy_in(buf, AW(4), AW(2), (u16)n);
-    GrGetGCTextSize(d->gc, buf, n, GR_TFASCII, &w, &h, &b);
+    gdi_text_size(buf, n, &w, &h, &b);
     return ((u32)(u16)h << 16) | (u16)w;
 }
 
@@ -706,7 +713,7 @@ static void text_out(struct dc *d, int x, int y, u16 seg, u16 off, int n, u16 op
     if (!n)
         return;
     if (d->textalign & (TA_CENTER | TA_UPDATECP))
-        GrGetGCTextSize(d->gc, buf, n, GR_TFASCII, &tw, &th, &tb);
+        gdi_text_size(buf, n, &tw, &th, &tb);
     if (d->textalign & TA_UPDATECP) {
         x = d->curx;
         y = d->cury;
@@ -953,6 +960,55 @@ int gdi_draw_icon(GR_WINDOW_ID wid, int x0, int y0, const u8 *d, u16 len)
     return 0;
 }
 
+/* ---------------------------------------------------------------- text extents
+ * Every GC here draws with the server's standard font (w16 never sets another), whose text size is the
+ * sum of its character widths, with characters outside the font measured as its first one (Nano-X
+ * gen_gettextsize). The width table comes once from GrGetFontInfo, so measuring text needs no round
+ * trip: the profile showed GrGetGCTextSize at 20-25 ms of server time each, plus the client's wait. */
+static struct { u8 ok, fixed, first, last; i16 height, base, maxw; u8 w[256]; } fm;
+
+void gdi_text_size(const char *s, int n, GR_SIZE *pw, GR_SIZE *ph, GR_SIZE *pb)
+{
+    int x = 0;
+    if (servertext) {
+        GrGetGCTextSize(gdi_gc, (void *)s, n, GR_TFASCII, pw, ph, pb);
+        return;
+    }
+    if (!fm.ok) {
+        /* the font info (about 290 bytes) goes in the shared scratch: the first call is from gdi_init */
+        GR_FONT_INFO *f = (GR_FONT_INFO *)w16_scratch;
+        int i;
+        GrGetFontInfo(0, f);
+        fm.ok = 1;
+        fm.fixed = f->fixed != 0;
+        fm.first = (u8)f->firstchar;
+        fm.last = (u8)(f->lastchar > 255 ? 255 : f->lastchar);
+        fm.height = (i16)f->height;
+        fm.base = (i16)f->baseline;
+        fm.maxw = (i16)f->maxwidth;
+        for (i = 0; i < 256; i++)
+            fm.w[i] = f->widths[i];
+        if (opt_verbose) {              /* the log shows the table agrees with the server's own measure */
+            static const char sample[] = "About Clock... Reversi 0123 &Wjy~\x7f\xe9";
+            GR_SIZE sw, sh, sb, lw, lh, lb;
+            GrGetGCTextSize(gdi_gc, (void *)sample, sizeof(sample) - 1, GR_TFASCII, &sw, &sh, &sb);
+            gdi_text_size(sample, sizeof(sample) - 1, &lw, &lh, &lb);
+            wlog("w16: text extents from the font's width table: %dx%d base %d, server %dx%d base %d%s\n",
+                 lw, lh, lb, sw, sh, sb, lw == sw && lh == sh && lb == sb ? "" : " (MISMATCH)");
+        }
+    }
+    if (fm.fixed)
+        x = n * fm.maxw;
+    else
+        while (n-- > 0) {
+            u8 c = (u8)*s++;
+            x += fm.w[c < fm.first || c > fm.last ? fm.first : c];
+        }
+    *pw = x;
+    *ph = fm.height;
+    *pb = fm.base;
+}
+
 /* ---------------------------------------------------------------- frame buffer dump (-d) */
 int w16_dump_frame(const char *tag)
 {
@@ -963,9 +1019,12 @@ int w16_dump_frame(const char *tag)
     if (!seg) {
         int k = open("/dev/kmem", O_RDONLY);
         unsigned r = 0;
-        if (k >= 0) {
-            if (ioctl(k, MEM_GETTANDY, &r) < 0)
+        if (k >= 0) {           /* the screen driver's test: Tandy 9800h, else expanded PCjr 1800h */
+            if (ioctl(k, MEM_GETTANDY, &r) < 0 || r != 0x9800) {
                 r = 0;
+                if (ioctl(k, MEM_GETPCJR, &r) < 0 || r != 0x1800)
+                    r = 0;
+            }
             close(k);
         }
         seg = r ? r : 0xB800;

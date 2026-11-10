@@ -267,6 +267,6 @@ u32 u_WinHelp(u16 ss, u16 ap)
     else
         strcpy(file, "(none)");
     wlog("w16: WinHelp(\"%s\", command %u): no help viewer is available\n", file, cmd);
-    message_box("Help is not available under w16.", "Help", 0);
+    message_box("Help is not available under w16.", "Help", 0x40);     /* MB_ICONASTERISK */
     return 0;
 }

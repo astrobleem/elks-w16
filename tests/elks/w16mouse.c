@@ -19,7 +19,9 @@
  *   sleep N         wait N seconds
  *   say TEXT        log "@@SAY TEXT"
  *   key K[,K...]    type keys into the keyboard pty as the ELKS console would send them: a character,
- *                   enter, esc, tab, bs, space, up, down, left, right, f1..f12, alt-X (ESC X)
+ *                   enter, esc, tab, bs, space, up, down, left, right, f1..f12, alt-X (ESC X), and
+ *                   alt-space, alt-f1..alt-f10 (ESC space, ESC m..v: what the patched console sends
+ *                   for them while Nano-X holds it)
  * Progress goes to port 0xE9 (emulator debug console) and to /tmp/mouse.log.
  * Packets are 3-byte Microsoft serial mouse reports; each move is at most 4 pixels so the driver's
  * acceleration (threshold 5) never applies and positions stay exact. This injects input at the
@@ -111,6 +113,7 @@ static void click(void)
 static void snap(const char *name)
 {
     static const char *const cmd[2] = { "/bin/meminfo", "/bin/ps" };
+    char msg[80];
     int k;
     for (k = 0; k < 2; k++) {
         int pid, st, o;
@@ -122,8 +125,11 @@ static void snap(const char *name)
             execl(cmd[k], cmd[k] + 5, (char *)0);
             _exit(127);
         }
+        st = -1;
         if (pid > 0)
             waitpid(pid, &st, 0);
+        sprintf(msg, "@@MOUSE snap %s %s pid %d status %d\n", name, cmd[k] + 5, pid, st);
+        e9(msg);
     }
     sync();
 }
@@ -180,6 +186,8 @@ static void key(const char *name)
     else if (!strcmp(name, "right")) { b[n++] = 27; b[n++] = '['; b[n++] = 'C'; }
     else if (!strcmp(name, "left")) { b[n++] = 27; b[n++] = '['; b[n++] = 'D'; }
     else if (name[0] == 'f' && name[1] >= '1' && name[1] <= '9') { b[n++] = 27; b[n++] = (unsigned char)('a' + atoi(name + 1) - 1); }
+    else if (!strcmp(name, "alt-space")) { b[n++] = 27; b[n++] = ' '; }
+    else if (!strncmp(name, "alt-f", 5) && name[5] >= '1' && name[5] <= '9') { b[n++] = 27; b[n++] = (unsigned char)('m' + atoi(name + 5) - 1); }
     else if (!strncmp(name, "alt-", 4) && name[4]) { b[n++] = 27; b[n++] = (unsigned char)(name[4] >= 'a' && name[4] <= 'z' ? name[4] - 32 : name[4]); }
     else b[n++] = (unsigned char)name[0];
     write(kfd, b, n);
@@ -240,6 +248,32 @@ static int wait_for(const char *a, const char *b, int present)
     return -1;
 }
 
+/* the steps file's text; autotest.sh removes the ready file before it writes the next program's steps */
+static int read_steps(const char *name, char *buf, int size)
+{
+    int f = open(name, O_RDONLY), len = f >= 0 ? read(f, buf, size - 1) : 0;
+    if (f >= 0)
+        close(f);
+    buf[len > 0 ? len : 0] = 0;
+    return len > 0 ? len : 0;
+}
+
+/* After a program's steps: wait for the next program's steps (or the stop file). Waiting for the ready
+ * file to disappear instead misses the gap when the next program paints within the one-second poll. */
+static int wait_new_steps(const char *steps, const char *stop, const char *last, char *buf, int size)
+{
+    int n;
+    for (n = 0; n < 1800; n++) {
+        if (access(stop, F_OK) == 0)
+            return 1;
+        read_steps(steps, buf, size);
+        if (strcmp(buf, last))
+            return 0;
+        sleep(1);
+    }
+    return -1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) {
@@ -253,7 +287,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (!strcmp(argv[2], "-serve") && argc >= 6) {
-        static char buf[1200];
+        static char buf[1200], last[1200];
         static char *tok[240];
         if (argc >= 7) {
             kfd = open(argv[6], O_RDWR | O_NONBLOCK);
@@ -261,20 +295,18 @@ int main(int argc, char **argv)
                 perror(argv[6]);
         }
         for (;;) {
-            int r = wait_for(argv[3], argv[5], 1), n = 0, f, len;
+            int r = wait_for(argv[3], argv[5], 1), n = 0;
             char *p;
             if (r)
                 break;
-            f = open(argv[4], O_RDONLY);
-            len = f >= 0 ? read(f, buf, sizeof(buf) - 1) : 0;
-            if (f >= 0)
-                close(f);
-            buf[len > 0 ? len : 0] = 0;
+            e9("@@MOUSE ready file seen\n");
+            read_steps(argv[4], buf, sizeof(buf));
+            strcpy(last, buf);
             for (p = strtok(buf, " \t\r\n"); p && n < 240; p = strtok(0, " \t\r\n"))
                 tok[n++] = p;
             run_steps(n, tok, argv[3]);
             e9("@@MOUSE steps done\n");
-            if (wait_for(argv[3], argv[5], 0))
+            if (wait_new_steps(argv[4], argv[5], last, buf, sizeof(buf)))
                 break;
         }
     } else {

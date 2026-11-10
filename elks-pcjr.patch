@@ -1,0 +1,53 @@
+diff --git a/elks/arch/i86/kernel/timer.c b/elks/arch/i86/kernel/timer.c
+index 2fb37da7..b4de250f 100644
+--- a/elks/arch/i86/kernel/timer.c
++++ b/elks/arch/i86/kernel/timer.c
+@@ -55,9 +55,28 @@ static void FARPROC calc_cpu_usage(void)
+ }
+ #endif
+ 
++#ifdef CONFIG_TIMER_INT1C
++/* The BIOS INT 1Ch callout runs at 1193182/65536 = 18.2065 Hz, not HZ: each call is
++ * 100 * 65536 / 1193182 = 5.492540 jiffies = 5 + 32279/65536, kept with a 16-bit fraction. */
++#if HZ != 100
++#error INT1C_WHOLE and INT1C_FRAC assume HZ 100
++#endif
++#define INT1C_WHOLE 5
++#define INT1C_FRAC  32279U
++static unsigned int int1c_frac;
++#endif
++
+ void timer_tick(int irq, struct pt_regs *regs)
+ {
++#ifdef CONFIG_TIMER_INT1C
++    unsigned int f = int1c_frac;
++    jiffies += INT1C_WHOLE;
++    int1c_frac = f + INT1C_FRAC;
++    if (int1c_frac < f)                 /* the fraction carried */
++        jiffies++;
++#else
+     jiffies++;
++#endif
+ 
+ #ifdef CHECK_ISTACK
+     delaytick++;
+diff --git a/elks/init/main.c b/elks/init/main.c
+index e1df8fc9..0d235f02 100644
+--- a/elks/init/main.c
++++ b/elks/init/main.c
+@@ -379,6 +379,15 @@ static void INITPROC do_init_task(void)
+     } else  /* fall through */
+ #endif
+     seg_add(SEG_OPTSEG, SEG_DMASEG);    /* SEG_OPTSEG through SEG_INITSEG */
++#ifdef CONFIG_HW_PCJR
++    /* pcjr_lowmem: the kernel starts at SEG_SYSSEG to stay clear of the video RAM at 18000h-1FFFFh;
++     * the RAM below it held only boot staging, so it joins main memory now. 1800h-2000h stays out
++     * (video RAM, and the BIOS display pages when the video check fails). */
++    if (DMASEGEND < 0x1800)
++        seg_add(DMASEGEND, 0x1800);
++    if (SEG_SYSSEG > 0x2000)
++        seg_add(0x2000, SEG_SYSSEG);
++#endif
+ 
+     /* run /bin/init or init= command w/argc/argv/env, normally no return*/
+     run_init_process_sptr(init_command, (char *)argv_init, argv_slen);
