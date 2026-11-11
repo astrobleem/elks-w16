@@ -42,6 +42,7 @@ jobs:
         run: |
           git clone --depth 1 --branch tandy-video-v0.9.2 https://github.com/astrobleem/elks.git "$RUNNER_TEMP/elks"
           git -C "$RUNNER_TEMP/elks" apply "$GITHUB_WORKSPACE/elks-graphics-keys.patch"
+          (cd "$RUNNER_TEMP/elks/elks/arch/i86/drivers/char/KeyMaps" && ./mkcfg)
           git init "$RUNNER_TEMP/microwindows"
           git -C "$RUNNER_TEMP/microwindows" remote add origin https://github.com/ghaerr/microwindows.git
           git -C "$RUNNER_TEMP/microwindows" fetch --depth 1 origin ac1063aec73d341db04d5f08aa8eb601215a69bc
