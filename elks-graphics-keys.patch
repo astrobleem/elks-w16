@@ -42,10 +42,10 @@ index 64c21b3d..9604656f 100644
  void Console_set_vc(int N);
 +int Console_graphics(void);
 diff --git a/elks/arch/i86/drivers/char/kbd-poll.c b/elks/arch/i86/drivers/char/kbd-poll.c
-index 6c8bcc1a..b83bf31b 100644
+index 6c8bcc1a..9670bd6c 100644
 --- a/elks/arch/i86/drivers/char/kbd-poll.c
 +++ b/elks/arch/i86/drivers/char/kbd-poll.c
-@@ -9,20 +9,86 @@
+@@ -9,20 +9,96 @@
  #include <linuxmt/sched.h>
  #include "console.h"
  #include "conio.h"
@@ -105,6 +105,16 @@ index 6c8bcc1a..b83bf31b 100644
 +	alt_sample();
 +	slot = kb_slot(peekw(KB_HEAD, 0x40));	/* the key conio_poll reads next */
 +	alt = slot >= 0 && key_seen[slot] ? key_alt[slot] : peekb(0x17, 0x40) & 0x08;
++    } else {
++	int i;
++
++	/* Text mode consumes and reuses BIOS slots without sampling them. Discard
++	 * the old graphics session, even on an empty poll: the tail can wrap back
++	 * to last_tail before graphics resumes. Do not read the BDA in text mode
++	 * (the headless console also uses this driver). */
++	for (i = 0; i < 16; i++)
++	    key_seen[i] = 0;
++	last_tail = 0;
 +    }
      if ((dav = conio_poll())) {
 +	/* while a graphics program holds the console no switch is possible: the keys
@@ -133,7 +143,7 @@ index 6c8bcc1a..b83bf31b 100644
  	if (dav & 0xFF)
  	    Console_conin(dav & 0x7F);
  	else {
-@@ -73,7 +139,8 @@ static void restart_timer(void)
+@@ -73,7 +149,8 @@ static void restart_timer(void)
  {
      static struct timer_list timer;
  

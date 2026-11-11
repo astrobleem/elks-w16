@@ -126,7 +126,7 @@ then rebuild the server:
     cd src && make -f Makefile.elks clean && make -f Makefile.elks SCREEN_TANDY=y
 
 Optional, for Alt+F4 and Alt+Space: `elks-graphics-keys.patch` changes the ELKS kernel's keyboard
-drivers (five files, 96 lines). While a graphics program holds the console (DCGET_GRAPH) the kernel
+drivers (five files, 106 added lines). While a graphics program holds the console (DCGET_GRAPH) the kernel
 refuses console switches, and the scancode driver used to drop Alt+F1..F8 entirely and send Alt+F9,
 Alt+F10 and Alt+Space without their Alt; with the patch those keys reach the program as ESC m..v and
 ESC space, which the patched Nano-X keyboard driver turns into Alt+F1..F10 and Alt+Space. The BIOS
@@ -139,14 +139,19 @@ Alt goes down for the next key first), so under graphics the driver now runs eve
 every 80 ms and takes each key's Alt state when it first sees the key in the BIOS buffer. That is
 the best the buffered interface allows: a key that arrives and is read within one tick, or on a BIOS
 whose buffer is not at 41Eh, still uses the flags at read time, and the PCjr kernel's tick is the
-BIOS's 55 ms. The headless console builds `kbd-poll.c` without `console.c`, so the patch gives it a
-`Console_graphics` that returns 0 (without it a headless kernel does not link). In text mode nothing
+BIOS's 55 ms. Every text-mode poll discards the previous graphics session's Alt cache and tail
+position, so text input can wrap and reuse BIOS slots without carrying stale Alt into the
+next graphics session. Keys already buffered on entry use the read-time flags fallback; their
+press-time state cannot be recovered. The headless console builds `kbd-poll.c` without `console.c`,
+so the patch gives it a `Console_graphics` that returns 0 (without it a headless kernel does not link). In text mode nothing
 changes: Alt+F1..F8 and Alt+1..8 still switch consoles, so leaving the graphics program (closing it,
 or Alt+F4) is the deliberate way back to the other consoles, as before. `tests/kbdscan_test.c`
 compiles the kernel's own keyboard handler on the host and feeds it scancodes (18 cases; the
 unpatched driver fails 4 of them); `tests/kbdpoll_test.c` does the same for the BIOS driver with
-emulated INT 16h and BIOS key buffer, including keys that wait there while Alt changes (31 cases;
-the unpatched driver fails 12, the previous version of the patch 3). Rebuild the kernel after
+emulated INT 16h and BIOS key buffer, including keys that wait there while Alt changes and
+graphics/text transitions with repeated buffer wrap (163 cases). The 128 transition cases cover
+every buffer slot, both Alt-state directions, and no wrap or one to three full wraps; the previous
+cache implementation fails 96 of these cases. Rebuild the kernel after
 applying it:
 
     cd $TOPDIR && patch -p1 < /path/to/packages/win16/elks-graphics-keys.patch && make -C elks

@@ -219,3 +219,16 @@
  }
  
  /**
+diff --git a/src/nanox/client.c b/src/nanox/client.c
+index de5d02a..cd5d5b0 100644
+--- a/src/nanox/client.c
++++ b/src/nanox/client.c
+@@ -445,7 +445,7 @@ GrClose(void)
+ 
+ #if GR_CLOSE_FIX
+ 	/* allow 1 second to flush*/
+-	void * oldSignalHandler = signal(SIGALRM, mySignalhandler);
++	void (*oldSignalHandler)(int) = signal(SIGALRM, mySignalhandler);
+ 	alarm(1);
+ #endif
+ 	LOCK(&nxGlobalLock);
