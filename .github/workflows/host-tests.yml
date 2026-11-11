@@ -1,0 +1,59 @@
+name: Host checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Loader, dialogs and keyboard regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Open Watcom sample compiler
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/open-watcom/open-watcom-v2/releases/download/2026-11-01-Build/open-watcom-2_0-c-linux-x64 \
+            -o "$RUNNER_TEMP/open-watcom"
+          export WATCOM="$RUNNER_TEMP/watcom"
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+          root = pathlib.Path(os.environ['WATCOM'])
+          with zipfile.ZipFile(pathlib.Path(os.environ['RUNNER_TEMP']) / 'open-watcom') as archive:
+              for name in archive.namelist():
+                  if name.startswith(('binl64/', 'binl/', 'h/', 'lib286/')):
+                      archive.extract(name, root)
+          for folder in ('binl64', 'binl'):
+              for tool in (root / folder).iterdir():
+                  if tool.is_file():
+                      tool.chmod(0o755)
+          PY
+          echo "WATCOM=$WATCOM" >> "$GITHUB_ENV"
+      - name: Build samples and run sanitizer suite
+        run: make test
+      - name: Fetch public dependency source for focused input tests
+        shell: bash
+        run: |
+          git clone --depth 1 --branch tandy-video-v0.9.2 https://github.com/astrobleem/elks.git "$RUNNER_TEMP/elks"
+          git -C "$RUNNER_TEMP/elks" apply "$GITHUB_WORKSPACE/elks-graphics-keys.patch"
+          git init "$RUNNER_TEMP/microwindows"
+          git -C "$RUNNER_TEMP/microwindows" remote add origin https://github.com/ghaerr/microwindows.git
+          git -C "$RUNNER_TEMP/microwindows" fetch --depth 1 origin ac1063aec73d341db04d5f08aa8eb601215a69bc
+          git -C "$RUNNER_TEMP/microwindows" checkout --detach FETCH_HEAD
+          for patch in dependencies/microwindows-tandy-pcjr.patch nanox-w16.patch nanox-tandyfast.patch; do
+            git -C "$RUNNER_TEMP/microwindows" apply "$GITHUB_WORKSPACE/$patch"
+          done
+      - name: Run scancode, BIOS buffer and menu-key regressions
+        shell: bash
+        run: |
+          ELKS_TOPDIR="$RUNNER_TEMP/elks" bash tests/kbdtest.sh
+          gcc -DW16_HOST -Wall -Wno-unused-parameter -fsanitize=address,undefined \
+            -fno-pie -no-pie -I"$RUNNER_TEMP/microwindows/src/include" -Isrc \
+            -o "$RUNNER_TEMP/menukey" tests/menukey_test.c src/dlgtmpl.c
+          "$RUNNER_TEMP/menukey"

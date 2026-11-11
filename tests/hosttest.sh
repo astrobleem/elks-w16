@@ -203,7 +203,7 @@ fi
 
 echo "== 10. menus: Alt+F4 with a menu bar popup or the system menu open (set MWDIR)"
 if [ -n "${MWDIR:-}" ]; then
-    if gcc -DW16_HOST -Wall -Wno-unused-parameter -fsanitize=address,undefined -I"$MWDIR/src/include" -Isrc \
+    if gcc -DW16_HOST -Wall -Wno-unused-parameter -fsanitize=address,undefined -fno-pie -no-pie -I"$MWDIR/src/include" -Isrc \
            -o $T/menukey tests/menukey_test.c src/dlgtmpl.c > $T/menukey.txt 2>&1 && $T/menukey >> $T/menukey.txt 2>&1; then
         ok "$(grep '^==' $T/menukey.txt)"
     else

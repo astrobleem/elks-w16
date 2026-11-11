@@ -1,0 +1,543 @@
+--- a/src/Makefile.elks
++++ b/src/Makefile.elks
+@@ -53,7 +53,10 @@
+ DRIVERS += drivers/mou_ser.o drivers/kbd_tty.o
+ DRIVERS += drivers/vgaplan4_asm.o
+ 
+-ifeq ($(SCREEN_CGA), y)
++ifeq ($(SCREEN_TANDY), y)
++CFLAGS += -DUSE_SMALL_CURSOR=1 -DSCREEN_TANDY=1
++DRIVERS += drivers/scr_tandy.o drivers/tandy4.o
++else ifeq ($(SCREEN_CGA), y)
+ CFLAGS += -DUSE_SMALL_CURSOR=1
+ DRIVERS += drivers/scr_cga.o drivers/vgaplan4_cga.o drivers/vgaplan4_mem.o
+ #DRIVERS += drivers/ramfont.o
+--- a/src/drivers/fb.c
++++ b/src/drivers/fb.c
+@@ -110,6 +110,10 @@
+ #endif
+ 
+ #if ELKS
++#if SCREEN_TANDY
++	if (psd->planes != 1 || psd->bpp != 4 || psd->data_format != MWIF_PAL4)
++		return NULL;
++#endif
+ 	pdriver = memplan4;
+ #elif SWIEROS
+ 	pdriver = fblinear32rgba;
+--- a/src/drivers/genmem.c
++++ b/src/drivers/genmem.c
+@@ -96,6 +96,11 @@
+ 		return NULL;	/* fail*/
+ 	}
+ 
++#if SCREEN_TANDY
++	if (planes != 1 || bpp != 4 || data_format != MWIF_PAL4 || palsize < 0 || palsize > 16)
++		return NULL;
++#endif
++
+ 	/*
+ 	 * Allocate offscreen drawing surface.  If screen driver doesn't
+ 	 * support blitting, this will fail.  Use root window screen
+@@ -105,7 +110,8 @@
+ 	if (!pmd)
+ 		return NULL;
+ 
+-	GdCalcMemGCAlloc(pmd, width, height, planes, bpp, &size, &pitch);
++	if (!GdCalcMemGCAlloc(pmd, width, height, planes, bpp, &size, &pitch))
++		goto err;
+ 
+ 	/* Allocate space for pixel values */
+ 	if (!pixels) {
+@@ -118,12 +124,15 @@
+ 		return NULL;
+ 	}
+  
++	pmd->addr = pixels; /* cleanup owns allocation even if mapping fails */
++
+ 	/* allocate palette*/
+ 	if (palsize && (pmd->palette = calloc(palsize*sizeof(MWPALENTRY), 1)) == NULL)
+ 		goto err;
+ 	pmd->palsize = palsize;
+  
+-	pmd->MapMemGC(pmd, width, height, planes, bpp, data_format, pitch, size, pixels);
++	if (!pmd->MapMemGC(pmd, width, height, planes, bpp, data_format, pitch, size, pixels))
++		goto err;
+ 	pmd->pixtype = pixtype;		/* save pixtype for proper colorval creation*/
+ 	pmd->ncolors = (pmd->bpp >= 24)? (1L << 24): (1 << pmd->bpp);
+ 
+@@ -228,7 +237,15 @@
+ GdCalcMemGCAlloc(PSD psd, int width, int height, int planes, int bpp,
+ 	unsigned int *psize, unsigned *ppitch)
+ {
+-	unsigned int pitch;
++	unsigned long pitch, limit;
++
++	*ppitch = *psize = 0;
++	if (width <= 0 || height <= 0) return 0;
++#if ELKS
++	limit = 32767UL; /* MapMemGC size and near allocation are 16-bit */
++#else
++	limit = (unsigned int)-1;
++#endif
+ 
+ 	if(!planes)
+ 		planes = psd->planes;
+@@ -253,26 +270,26 @@
+ 	/* compute pitch: bytes per line*/
+ 	switch(bpp) {
+ 	case 1:
+-		pitch = (width+7)/8;
++		pitch = ((unsigned long)width+7)/8;
+ 		break;
+ 	case 2:
+-		pitch = (width+3)/4;
++		pitch = ((unsigned long)width+3)/4;
+ 		break;
+ 	case 4:
+-		pitch = (width+1)/2;
++		pitch = ((unsigned long)width+1)/2;
+ 		break;
+ 	case 8:
+ 		pitch = width;
+ 		break;
+ 	case 16:
+-		pitch = width * 2;
++		pitch = (unsigned long)width * 2;
+ 		break;
+ 	case 18:
+ 	case 24:
+-		pitch = width * 3;
++		pitch = (unsigned long)width * 3;
+ 		break;
+ 	case 32:
+-		pitch = width * 4;
++		pitch = (unsigned long)width * 4;
+ 		break;
+ 	default:
+ 		*ppitch = *psize = 0;
+@@ -280,7 +297,9 @@
+ 	}
+ 
+ 	/* right align pitch to DWORD boundary*/
+-	pitch = (pitch + 3) & ~3;
++	pitch = (pitch + 3) & ~3UL;
++	if (pitch > limit || (unsigned long)height > limit / pitch)
++		return 0;
+ 
+ 	*psize = pitch * height;
+ 	*ppitch = pitch;
+--- /dev/null
++++ b/src/drivers/scr_tandy.c
+@@ -0,0 +1,165 @@
++/*
++ * TANDY Screen Driver for ELKS
++ * 	For TANDY, 16 color, 320x200 resolution
++ * 	This driver uses bios for graphical setting.
++ *
++ *      This driver is created and modifed, based on EGA/VGA driver.
++ * 	This file itself doesn't know about any planar or packed arrangement, relying
++ * 	on routines in tandy4.c for drawing.
++ *
++ *      Copyright (c) 1999 Greg Haerr <greg@censoft.com>
++ *
++ * T. Yamada 2024
++ */
++
++#include <linuxmt/ntty.h>
++#include <linuxmt/mem.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include "device.h"
++#include "vgaplan4.h"
++#include "genmem.h"
++#if ROMFONT
++#include "romfont.h"
++#else
++#include "genfont.h"
++#endif
++
++#define _MK_FP(seg,off) ((void __far *)((((unsigned long)(seg)) << 16) | (off)))
++
++/* TANDY driver entry points*/
++static PSD  TANDY_open(PSD psd);
++static void TANDY_close(PSD psd);
++static void TANDY_getscreeninfo(PSD psd, PMWSCREENINFO psi);;
++static void TANDY_setpalette(PSD psd,int first,int count, MWPALENTRY *pal);
++
++SCREENDEVICE	scrdev = {
++    0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0, 0, 0,
++#if ROMFONT
++        pcrom_fonts,
++#else
++        gen_fonts,
++#endif
++        TANDY_open,
++        TANDY_close,
++        TANDY_setpalette,
++        TANDY_getscreeninfo,
++        gen_allocatememgc,
++        gen_mapmemgc,
++        gen_freememgc,
++        0,                      /* gen_setportrait*/
++        NULL,                   /* PreSelect*/
++};
++
++/* operating mode*/
++static int console_fd = -1;
++unsigned int tandy_screen_segment;
++
++/* int10 functions*/
++#define FNGR320x200	0x0009	/* function for graphics mode 320x200x16*/
++#define FNTEXT		0x0003	/* function for 80x25 text mode*/
++
++static PSD
++TANDY_open(PSD psd)
++{
++	extern PSUBDRIVER tandyplan4[4];
++	extern int tandy_init(PSD);
++	char *console;
++
++	/* Require kernel evidence, never an environment-variable assertion. */
++	{
++		unsigned int reserved = 0;
++		int fd = open("/dev/kmem", O_RDONLY);
++		if (fd >= 0) {
++            if (ioctl(fd, MEM_GETTANDY, &reserved) < 0 || reserved != 0x9800) {
++                reserved = 0;
++                if (ioctl(fd, MEM_GETPCJR, &reserved) < 0 || reserved != 0x1800)
++                    reserved = 0;
++            }
++        }
++        if (!reserved) {
++			if (fd >= 0) close(fd);
++			fprintf(stderr, "Tandy/PCjr: supporting kernel video reservation required\n");
++			return NULL;
++		}
++		tandy_screen_segment = reserved;
++		close(fd);
++	}
++
++	/* The text console shares TANDY video RAM. Keep console writes and
++	 * virtual-console switches out of the framebuffer until text mode
++	 * is restored. Do not use stderr: applications may redirect it. */
++	/* Match kbd_tty exactly, including when the caller uses another tty. */
++	console = getenv("CONSOLE");
++	console_fd = open(console ? console : "/dev/tty1", O_WRONLY | O_NONBLOCK);
++
++	if (console_fd < 0)
++		return NULL;
++	if (ioctl(console_fd, DCGET_GRAPH, 0) < 0) {
++		close(console_fd);
++		console_fd = -1;
++		return NULL;
++	}
++
++	int10(FNGR320x200, 0);
++	if ((GETBYTE_FP(MK_FP(0x0040, 0x0049)) & 0x7f) != 9) {
++		TANDY_close(psd);
++		fprintf(stderr, "Tandy: BIOS did not enter mode 09h\n");
++		return NULL;
++	}
++
++	/* init driver variables depending on tandy mode*/
++	psd->xres = psd->xvirtres = 320;
++	psd->yres = psd->yvirtres = 200;
++	psd->planes = 1;
++	psd->pixtype = MWPF_PALETTE;
++	psd->flags = PSF_SCREEN;
++	psd->bpp = 4;
++	psd->ncolors = 16;
++    psd->data_format = MWIF_PAL4;
++    set_subdriver(psd, tandyplan4[0]);
++
++	tandy_init(psd);              /* init planes driver (sets psd->linelen)*/
++
++#if ROMFONT
++	pcrom_init(psd);            /* init pc rom font routines*/
++#endif
++	return psd;
++}
++
++static void
++TANDY_close(PSD psd)
++{
++	int10(FNTEXT, 0);           /* restore text before releasing ownership */
++	if (console_fd >= 0) {
++		ioctl(console_fd, DCREL_GRAPH, 0);
++		close(console_fd);
++		console_fd = -1;
++	}
++}
++
++static void
++TANDY_getscreeninfo(PSD psd, PMWSCREENINFO psi)
++{
++	psi->rows = psd->yvirtres;
++	psi->cols = psd->xvirtres;
++	psi->planes = psd->planes;
++	psi->bpp = psd->bpp;
++    psi->data_format = psd->data_format;
++	psi->ncolors = psd->ncolors;
++	psi->pixtype = psd->pixtype;
++	psi->fonts = NUMBER_FONTS;
++
++	/* 320x200 */
++	psi->xdpcm = 13;	/* assumes screen width of 24 cm*/
++	psi->ydpcm = 11;	/* assumes screen height of 18 cm*/
++}
++
++static void
++TANDY_setpalette(PSD psd,int first,int count, MWPALENTRY *pal)
++{
++	/* not yet implemented, std 16 color palette assumed*/
++}
+--- /dev/null
++++ b/src/drivers/tandy4.c
+@@ -0,0 +1,81 @@
++/* Tandy 320x200x16 mode 09h. Four 8K banks, high nibble first.
++ * Memory surfaces use the same packed pixels without scanline interleaving.
++ * Screen writes use the physical segment certified by the cooperating kernel
++ * (9800h on original Tandy, 1800h on expanded PCjr).
++ * Deliberately does not program page registers or claim conventional RAM.
++ */
++#include "device.h"
++#include "vgaplan4.h"
++#include "fb.h"
++#include "genmem.h"
++DEFINE_applyOpR
++
++extern unsigned int tandy_screen_segment;
++
++static FARADDR pixeladdr(PSD p, MWCOORD x, MWCOORD y)
++{
++    if (p->flags & PSF_SCREEN)
++        return MK_FP(tandy_screen_segment, ((unsigned)(y & 3) << 13) +
++                     (unsigned)(y >> 2) * 160 + (x >> 1));
++    return (FARADDR)(p->addr + (unsigned)y * p->pitch + (x >> 1));
++}
++static MWPIXELVAL readpixel(PSD p, MWCOORD x, MWCOORD y)
++{
++    return (*pixeladdr(p,x,y) >> ((1-(x&1))*4)) & 15;
++}
++static void putpixel(PSD p, MWCOORD x, MWCOORD y, MWPIXELVAL c, int op)
++{
++    FARADDR a = pixeladdr(p,x,y);
++    unsigned shift = (1-(x&1))*4;
++    unsigned char old = *a;
++    unsigned value = op == MWROP_COPY ? c : applyOpR(op,c,(old>>shift)&15);
++    *a = (old & ~(15<<shift)) | ((value & 15)<<shift);
++}
++static void drawpixel(PSD p, MWCOORD x, MWCOORD y, MWPIXELVAL c)
++{
++    putpixel(p,x,y,c,gr_mode);
++}
++static void hline(PSD p, MWCOORD x, MWCOORD end, MWCOORD y, MWPIXELVAL c)
++{
++    FARADDR a;
++    if (gr_mode == MWROP_COPY) {
++        if ((x&1) && x<=end) putpixel(p,x++,y,c,MWROP_COPY);
++        a = pixeladdr(p,x,y);
++        while (x<end) { *a++ = (c&15)*17; x+=2; }
++        if (x<=end) putpixel(p,x,y,c,MWROP_COPY);
++    } else while (x<=end) putpixel(p,x++,y,c,gr_mode);
++}
++static void vline(PSD p, MWCOORD x, MWCOORD y, MWCOORD end, MWPIXELVAL c)
++{
++    while (y<=end) putpixel(p,x,y++,c,gr_mode);
++}
++static void blit(PSD d, MWCOORD dx, MWCOORD dy, MWCOORD w, MWCOORD h,
++                 PSD s, MWCOORD sx, MWCOORD sy, int op)
++{
++    MWCOORD i,j,x,y;
++    MWPIXELVAL c;
++    int transparent = op == MWROP_SRCTRANSCOPY;
++    int backward = d==s && (dy>sy || (dy==sy && dx>sx));
++    if (op>MWROP_SIMPLE_MAX) op=MWROP_COPY;
++    for (j=0;j<h;++j) {
++        y=backward ? h-1-j : j;
++        for (i=0;i<w;++i) {
++            x=backward ? w-1-i : i;
++            c = readpixel(s,sx+x,sy+y);
++            if (!transparent || c != s->transcolor)
++                putpixel(d,dx+x,dy+y,c,op);
++        }
++    }
++}
++static SUBDRIVER packed4 = {
++    drawpixel, readpixel, hline, vline, gen_fillrect, blit
++};
++PSUBDRIVER tandyplan4[4] = { &packed4 };
++PSUBDRIVER memplan4[4] = { &packed4 };
++int tandy_init(PSD p)
++{
++    p->pitch=160;
++    p->addr=0;
++    p->size=0;
++    return 1;
++}
+--- /dev/null
++++ b/nxcolor.c
+@@ -0,0 +1,90 @@
++/* Explicit color launcher. Keeps the installed monochrome server unchanged.
++ * Owns both children, restores console/termios after normal exit or crash. */
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <signal.h>
++#include <errno.h>
++#include <sys/wait.h>
++#include <sys/ioctl.h>
++#include <termios.h>
++#include <linuxmt/mem.h>
++#include <linuxmt/ntty.h>
++#include "nano-X.h"
++extern void int10(int ax,int bx);
++static volatile int stopped;
++static void stop(int sig) { (void)sig; stopped=1; }
++static int finished(pid_t child) {
++    int status;
++    pid_t result=waitpid(child,&status,WNOHANG);
++    return result==child || (result==(pid_t)-1 && errno==ECHILD);
++}
++static int stop_child(pid_t child) {
++    int n;
++    kill(child,SIGTERM);
++    for(n=0;n<20;n++) { if(finished(child)) return 1; usleep(50000UL); }
++    kill(child,SIGKILL);
++    for(n=0;n<20;n++) { if(finished(child)) return 1; usleep(50000UL); }
++    return 0; /* Never restore video while a child may still be running. */
++}
++int main(void)
++{
++    int fd,k,n,ready=0,serverdone=0,appdone=0;
++    unsigned reserved=0;
++    pid_t server,app;
++    struct termios saved;
++    char *console=getenv("CONSOLE");
++    k=open("/dev/kmem",O_RDONLY);
++    if (k>=0) {
++        if (ioctl(k,MEM_GETTANDY,&reserved)<0 || reserved!=0x9800) {
++            reserved=0;
++            if (ioctl(k,MEM_GETPCJR,&reserved)<0 || reserved!=0x1800) reserved=0;
++        }
++    }
++    if(!reserved) {
++        if(k>=0)close(k);
++        fprintf(stderr,"Color RAM is not reserved; use the supporting Tandy or PCjr kernel.\n");return 1;
++    }
++    close(k);
++    if(getenv("NXDISPLAY")) {
++        fprintf(stderr,"Unset NXDISPLAY before local color mode.\n");return 1;
++    }
++    if(access(GR_NAMED_SOCKET,F_OK)==0) {
++        fprintf(stderr,"Close the running Nano-X session first.\n");return 1;
++    }
++    fd=open(console?console:"/dev/tty1",O_RDWR|O_NONBLOCK);
++    if(fd<0 || tcgetattr(fd,&saved)<0) { if(fd>=0)close(fd);return 1; }
++    signal(SIGINT,stop);signal(SIGTERM,stop);
++    server=fork();
++    if(server==(pid_t)-1) { close(fd);return 1; }
++    if(!server) { execl("/bin/nano-color","nano-color",NULL);_exit(1); }
++    for(n=0;n<200 && !stopped;n++) {
++        serverdone=finished(server);
++        if(serverdone) break;
++        if(access(GR_NAMED_SOCKET,F_OK)==0) { ready=1;break; }
++        usleep(50000UL);
++    }
++    if(!ready || stopped) {
++        if(!serverdone) stop_child(server);
++        /* Driver owns early cleanup. Do not reset another server after refusal. */
++        close(fd);return 1;
++    }
++    app=fork();
++    if(!app) { execl("/bin/nxstart","nxstart",NULL);_exit(1); }
++    if(app==(pid_t)-1) appdone=1;
++    while(!stopped && !serverdone && !appdone) {
++        serverdone=finished(server);
++        appdone=finished(app);
++        if(!serverdone && !appdone) usleep(50000UL);
++    }
++    if(!appdone) appdone=stop_child(app);
++    if(!serverdone) serverdone=stop_child(server);
++    if(!appdone || !serverdone) { close(fd);return 1; }
++    /* Both children are stopped: no concurrent graphics writes can follow. */
++    int10(3,0);
++    ioctl(fd,DCREL_GRAPH,0);
++    tcsetattr(fd,TCSANOW,&saved);
++    close(fd);
++    return 0;
++}
+--- /dev/null
++++ b/vidinfo.c
+@@ -0,0 +1,29 @@
++/* Read-only BIOS video/memory probe for ELKS on a known Tandy 1000.
++ * No BIOS mode calls, register writes, or framebuffer writes. */
++#include <stdio.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <linuxmt/mem.h>
++int main(void)
++{
++    volatile unsigned char __far *bda = (volatile unsigned char __far *)0x00400000UL;
++    unsigned i, reserved = 0;
++    int fd;
++    unsigned ram = bda[0x13] | ((unsigned)bda[0x14] << 8);
++    printf("BIOS conventional memory: %u KB\n",ram);
++    printf("BIOS video mode: %02x; columns: %u\n",bda[0x49],bda[0x4a]|((unsigned)bda[0x4b]<<8));
++    printf("BIOS video page bytes: %u; page offset: %04x\n",bda[0x4c]|((unsigned)bda[0x4d]<<8),bda[0x4e]|((unsigned)bda[0x4f]<<8));
++    printf("BDA 0040:0080..008f (raw):");
++    for(i=0x80;i<0x90;i++) printf(" %02x",bda[i]);
++    printf("\n");
++    fd=open("/dev/kmem",O_RDONLY);
++    if(fd>=0 && ioctl(fd,MEM_GETTANDY,&reserved)==0 && reserved==0x9800)
++        printf("ELKS kernel: 32K Tandy video RAM reserved at 98000\n");
++    else if(fd>=0 && ioctl(fd,MEM_GETPCJR,&reserved)==0 && reserved==0x1800)
++        printf("ELKS kernel: 32K PCjr video RAM reserved at 18000\n");
++    else printf("ELKS kernel: color reservation NOT confirmed\n");
++    if(fd>=0) close(fd);
++    printf("No video mode or memory settings changed.\n");
++    return 0;
++}
+--- /dev/null
++++ b/vidreset.c
+@@ -0,0 +1,34 @@
++/* Manual recovery after the graphics server has stopped unexpectedly. */
++#include <stdio.h>
++#include <string.h>
++#include <stdlib.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <termios.h>
++#include <linuxmt/ntty.h>
++extern void int10(int ax, int bx);
++int main(int argc, char **argv)
++{
++    int fd;
++    struct termios term;
++    char *console;
++    if (argc != 2 || strcmp(argv[1], "--text")) {
++        fprintf(stderr,"Usage: vidreset --text (only after graphics server has stopped)\n");
++        return 1;
++    }
++    console=getenv("CONSOLE");
++    fd=open(console?console:"/dev/tty1",O_RDWR|O_NONBLOCK);
++    if(fd<0) { perror("console"); return 1; }
++    int10(3,0);
++    if(ioctl(fd,DCREL_GRAPH,0)<0) { close(fd); return 1; }
++    if(tcgetattr(fd,&term)==0) {
++        term.c_lflag |= ECHO|ICANON|ISIG;
++        term.c_iflag |= ICRNL|BRKINT;
++        term.c_cc[VMIN]=1;
++        term.c_cc[VTIME]=0;
++        tcsetattr(fd,TCSANOW,&term);
++    }
++    close(fd);
++    return 0;
++}

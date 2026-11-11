@@ -6,14 +6,39 @@
 #       tests/mkimage.sh OUT_NAME [FLAG...]
 #
 # ELKS_ROOT: built tandy-video-v0.9.2 tree (its cross/bin and elks/tools/bin provide ia16-elf-gcc, mfs,
-# setboot). MWDIR: Microwindows built with Makefile.elks SCREEN_TANDY=y. Run from packages/win16 after
-# "make -C src" and building test/hello16/HELLO16.EXE. Flags are listed below ("kbd": keyboard only).
-set -e
+# setboot). MWDIR: Microwindows built by scripts/build-nanox.sh (both memory models retained).
+# Build w16 and all three samples first. Flags are listed below ("kbd": keyboard only).
+# Use a disposable, fully built ELKS checkout: upstream image generation may rebuild its kernel
+# and bootblocks. The existing image/Config and target staging directory are not touched.
+set -eu
 NAME=${1:?output name}
-W=$(pwd)
+W=$(cd "$(dirname "$0")/.." && pwd)
+OUT=$(cd "$(dirname "$NAME")" && pwd)/$(basename "$NAME")
+if [ -e "$OUT.img" ] || [ -e "$OUT-mbr.img" ]; then
+    echo "refusing to overwrite $OUT.img or $OUT-mbr.img; choose a new output name" >&2
+    exit 2
+fi
 : "${ELKS_ROOT:?}" "${MWDIR:?}"
+# ELKS's upstream makefiles do not support whitespace in build paths.
+case "$W:$OUT:$ELKS_ROOT:$MWDIR" in
+    *[[:space:]]*) echo "build and output paths must not contain whitespace" >&2; exit 2;;
+esac
+ELKS_ROOT=$(cd "$ELKS_ROOT" && pwd)
+MWDIR=$(cd "$MWDIR" && pwd)
+for f in "${@:2}"; do
+    case $f in
+    kbd|quiet|nocache|servertext|beat|ptykbd|repeat|skipneg|skiphello16|skipdlgtest|skipmbtest|skipwinver|skipclock|skipreversi) ;;
+    *) echo "unknown flag $f" >&2; exit 2;;
+    esac
+done
+for f in "$W/src/w16" "$W/test/hello16/HELLO16.EXE" "$W/test/dlgtest/DLGTEST.EXE" \
+         "$W/test/mbtest/MBTEST.EXE" "$MWDIR/src/bin/nano-x" "$MWDIR/vidreset" \
+         "$MWDIR/src/lib/libnano-X.a"; do
+    test -f "$f" || { echo "missing build input: $f" >&2; exit 2; }
+done
 cd "$ELKS_ROOT" && . ./env.sh > /dev/null
 T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
 ia16-elf-gcc -mcmodel=small -melks-libc -march=i8086 -Os -maout-heap=0x400 -maout-stack=0x600 -o $T/e9 $W/tests/elks/e9.c
 ia16-elf-gcc -mcmodel=small -melks-libc -march=i8086 -Os -maout-heap=0x400 -maout-stack=0x600 -o $T/w16mouse $W/tests/elks/w16mouse.c
 ia16-elf-gcc -mcmodel=small -melks-libc -march=i8086 -Os -maout-heap=0x400 -maout-stack=0x600 -I$ELKS_ROOT/elks/include -o $T/tvprobe $W/tests/elks/tvprobe.c
@@ -21,7 +46,7 @@ ia16-elf-gcc -mcmodel=small -melks-libc -march=i8086 -Os -maout-heap=0x400 -maou
 python3 $W/tests/mkbad.py $W/test/hello16/HELLO16.EXE $T/badall > /dev/null
 python3 $W/tests/mkbadres.py $W/test/dlgtest/DLGTEST.EXE $T/badres > /dev/null
 cd "$ELKS_ROOT/image"
-cat > Config <<CFG
+cat > "$T/Config" <<CFG
 CONFIG_APPS_HD=y
 CONFIG_IMG_HD=y
 CONFIG_IMG_BLOCKS=20000
@@ -32,12 +57,11 @@ CONFIG_IMG_MINIX=y
 CONFIG_IMG_DEV=y
 CONFIG_IMG_BOOT=y
 CFG
-sed -n -e '/CONFIG_TIME_/p' < "$ELKS_ROOT/.config" >> Config
-export DESTDIR="$ELKS_ROOT/target"
-make -f Make.image "CONFIG=$ELKS_ROOT/image/Config" NAME=hd20-minix > $T/make.log 2>&1 || { tail -30 $T/make.log; exit 1; }
-rm -f Config
-IMG=$W/$NAME.img
-cp hd20-minix.img $IMG
+sed -n -e '/CONFIG_TIME_/p' < "$ELKS_ROOT/.config" >> "$T/Config"
+export DESTDIR="$T/target"
+make -f Make.image "CONFIG=$T/Config" "DESTDIR=$T/target" "TARGET_FILE=$T/base.img" > $T/make.log 2>&1 || { tail -30 $T/make.log; exit 1; }
+IMG=$OUT.img
+cp "$T/base.img" "$IMG"
 mfs $IMG cp $MWDIR/src/bin/nano-x /bin/nano-color
 mfs $IMG cp $MWDIR/vidreset /bin/vidreset
 mfs $IMG cp $W/src/w16 /bin/w16
@@ -46,7 +70,7 @@ mfs $IMG cp $W/test/hello16/HELLO16.EXE /root/hello16.exe
 mfs $IMG cp $W/test/dlgtest/DLGTEST.EXE /root/dlgtest.exe
 mfs $IMG cp $W/test/mbtest/MBTEST.EXE /root/mbtest.exe
 # W16_EXTRA: your own copies of other programs to test (for example Windows 3.0 WINVER.EXE as winver.exe)
-for f in $W16_EXTRA; do n=$(basename $f | tr A-Z a-z); mfs $IMG cp $f /root/$n; done
+for f in ${W16_EXTRA:-}; do n=$(basename $f | tr A-Z a-z); mfs $IMG cp $f /root/$n; done
 mfs $IMG mkdir /root/bad
 for f in notmz.exe pe.exe dll.exe i286.exe tickcount.exe badmod.exe chainloop.exe truncseg.exe bigdata.exe; do
     mfs $IMG cp $T/badall/$f /root/bad/$f
@@ -72,8 +96,7 @@ mfs $IMG extract /bootopts $T/bootopts
 grep -q '^tandyvideo=1' $T/bootopts || printf 'tandyvideo=1\n' >> $T/bootopts
 mfs $IMG rm /bootopts && mfs $IMG cp $T/bootopts /bootopts
 mfsck -f $IMG > /dev/null
-dd if=/dev/zero bs=512 count=17 2>/dev/null | cat - $IMG > $W/$NAME-mbr.img
-setboot $W/$NAME-mbr.img -P17,4,615 -Sm "$ELKS_ROOT/bootblocks/mbr.bin"
-truncate -s $((615 * 4 * 17 * 512)) $W/$NAME-mbr.img
-rm -rf $T
-ls -l $W/$NAME-mbr.img
+dd if=/dev/zero bs=512 count=17 2>/dev/null | cat - "$IMG" > "$OUT-mbr.img"
+setboot "$OUT-mbr.img" -P17,4,615 -Sm "$ELKS_ROOT/bootblocks/mbr.bin"
+truncate -s $((615 * 4 * 17 * 512)) "$OUT-mbr.img"
+ls -l "$OUT-mbr.img"

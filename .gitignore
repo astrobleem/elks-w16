@@ -1,0 +1,16 @@
+# Build products and user-supplied applications are never source inputs.
+/build/
+/src/w16
+/src/w16host
+*.o
+*.OBJ
+*.MAP
+*.RES
+*.exe
+*.EXE
+*.img
+*.raw
+*.log
+__pycache__/
+/test/dlgtest/dlgtest.ico
+/test/dlgtest/nametab.bin

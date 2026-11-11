@@ -6,7 +6,7 @@
  * and runs it on the 8088 with Nano-X as the display.
  *
  * Builds two ways:
- *   ELKS target (ia16-elf-gcc, small model): the real loader.
+ *   ELKS target (ia16-elf-gcc, medium model): the real loader.
  *   W16_HOST (host gcc): NE parsing, loading and relocation only, against a
  *   simulated 1 MB real-mode memory, for host-side tests.
  */
