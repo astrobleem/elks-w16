@@ -1,0 +1,63 @@
+/* DLGTEST resources: a modal dialog with static text, a named icon and two push buttons. */
+#include <windows.h>
+#include "dlgtest.h"
+
+DlgIcon ICON dlgtest.ico
+
+TestDlg DIALOG 20, 16, 200, 84
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "w16 dialog test"
+FONT 8, "Helv"
+BEGIN
+    CTEXT           "", ID_INFO, 0, 6, 200, 10
+    ICON            "DlgIcon", -1, 12, 20, 32, 32
+    LTEXT           "Enter = OK, Esc = Cancel", ID_HINT, 52, 26, 140, 10
+    CTEXT           "Built with Open Watcom", -1, 0, 46, 200, 10
+    DEFPUSHBUTTON   "OK", IDOK, 52, 62, 40, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 108, 62, 40, 16
+END
+
+/* Not used by the program: resources for the host tests of menus, string tables and named types. */
+DlgMenu MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open...", 10
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", 11, CHECKED
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Big", 20, GRAYED
+        MENUITEM "&Small", 21
+    END
+    MENUITEM "&Help!", 30
+END
+
+STRINGTABLE
+BEGIN
+    1, "first"
+    2, "second string"
+    17, "block two"
+END
+
+DlgData DATA
+BEGIN
+    "w16 data", 0x1234
+END
+
+/* Also for the host tests: a second dialog and DATA resource with ordinal ids, named through a
+   Windows 3.0 style NAMETABLE (type 15, built by mknametab.py), the way RC 3.0 stored names. */
+2 DIALOG 10, 10, 60, 30
+STYLE WS_POPUP | WS_CAPTION
+CAPTION "NtDlg"
+BEGIN
+    DEFPUSHBUTTON   "OK", IDOK, 10, 10, 40, 14
+END
+
+2 DATA
+BEGIN
+    "nt data", 0x0002
+END
+
+1 15 nametab.bin
