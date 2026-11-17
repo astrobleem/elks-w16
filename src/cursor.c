@@ -74,6 +74,15 @@ static void cur_apply(void)
         }
 }
 
+/* A class cursor belongs to that window (including registered children).
+ * A NULL class cursor falls back to its parent/default Nano-X cursor. */
+void cursor_class(GR_WINDOW_ID frame,GR_WINDOW_ID client,u16 h)
+{
+    GR_CURSOR_ID id=cur_id(h);
+    GrSetWindowCursor(frame,id);
+    GrSetWindowCursor(client,id);
+}
+
 /* a new top-level window takes the current cursor */
 void cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client)
 {

@@ -88,7 +88,7 @@
 struct wclass {
     u8   used;
     char name[24];
-    u16  style, procoff, procseg, hinst, hbrush, cbwndextra;
+    u16  style, procoff, procseg, hinst, hbrush, hcursor, cbwndextra;
     char menu[16];              /* lpszMenuName: a name, "#n", or empty */
 };
 
@@ -152,6 +152,7 @@ u16       message_box(const char *text, const char *caption, u16 type);
 u16       user_key_mods(void);        /* MWKMOD_* at the latest key event */
 
 /* cursors and accelerators (cursor.c) */
+void      cursor_class(GR_WINDOW_ID frame,GR_WINDOW_ID client,u16 h);
 void      cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client);
 void      cursor_census(u16 *n);
 

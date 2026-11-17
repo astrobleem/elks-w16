@@ -778,6 +778,21 @@ static int find_class(u16 off, u16 seg)
     return -1;
 }
 
+/* SetClassWord(hWnd, GCW_HCURSOR, hCursor): all instances of this
+ * registered class share the association. System controls have no entry. */
+u32 u_SetClassWord(u16 ss,u16 ap)
+{
+    struct wnd *w;struct wclass *c;u16 old,h;int i;
+    if(ap>0xfffau || (i16)AW(2)!=-12) return 0;
+    w=win_get(AW(4)); h=AW(0);
+    if(!w || w->ctl || w->isdialog || w->cls<0 || w->cls>=MAXCLASS) return 0;
+    c=&classes[w->cls];if(!c->used)return 0;
+    old=c->hcursor;c->hcursor=h;
+    for(i=0;i<MAXWIN;i++) if(wins[i].used && !wins[i].ctl && !wins[i].isdialog && wins[i].cls==w->cls)
+        cursor_class(wins[i].frame,wins[i].client,h);
+    return old;
+}
+
 /* RegisterClass(lpWndClass) */
 u32 u_RegisterClass(u16 ss, u16 ap)
 {
@@ -802,6 +817,7 @@ u32 u_RegisterClass(u16 ss, u16 ap)
     c->procoff = rd16(seg, off + 2); c->procseg = rd16(seg, off + 4);
     c->cbwndextra = rd16(seg, off + 8);
     c->hinst = rd16(seg, off + 10);
+    c->hcursor = rd16(seg, off + 14);
     c->hbrush = rd16(seg, off + 16);
     {
         char mn[34];
@@ -909,6 +925,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_MOUSE_POSITION);
     cursor_attach(w->frame, w->client);
+    if(c->hcursor) cursor_class(w->frame,w->client,c->hcursor);
     vlog("w16: CreateWindow \"%s\" class \"%s\" style %08lx at %d,%d %dx%d -> hwnd %04x (client %dx%d)\n",
           w->title, c->name, (unsigned long)style, x, y, wd, h, w->hwnd, w->cw, w->ch);
 
