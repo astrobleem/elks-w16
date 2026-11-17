@@ -30,6 +30,7 @@ u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_GetDlgItemText(u16,u16),u_SendDlgItemMessage(u16,u16);
+u32 u_DlgDirList(u16,u16),u_DlgDirSelect(u16,u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
 u32 u_EndPaint(u16, u16), u_CreateWindow(u16, u16), u_ShowWindow(u16, u16), u_DestroyWindow(u16, u16);
 u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16), u_TranslateMessage(u16, u16);
@@ -331,8 +332,8 @@ const struct api api_table[] = {
     { U,  93, "GetDlgItemText", 10, 0, H(u_GetDlgItemText) },
     { U,  94, "SETDLGITEMINT", 0, API_MISSING, 0 },
     { U,  95, "GETDLGITEMINT", 0, API_MISSING, 0 },
-    { U,  99, "DLGDIRSELECT", 0, API_MISSING, 0 },
-    { U, 100, "DLGDIRLIST", 0, API_MISSING, 0 },
+    { U,  99, "DlgDirSelect", 8, 0, H(u_DlgDirSelect) },
+    { U, 100, "DlgDirList", 12, 0, H(u_DlgDirList) },
     { U, 104, "MESSAGEBEEP", 0, API_MISSING, 0 },
     { U, 111, "SendMessage", 10, 0, H(u_SendMessage) },
     { U, 119, "GETMESSAGEPOS", 0, API_MISSING, 0 },

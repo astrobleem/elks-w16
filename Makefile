@@ -35,6 +35,7 @@ test: host samples
 	python3 tests/scrolluitest.py
 	python3 tests/childtest.py
 	python3 tests/editcontroltest.py
+	python3 tests/filelisttest.py
 	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py
 	python3 tests/dcstacktest.py

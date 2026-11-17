@@ -89,6 +89,7 @@
 #define CTL_STATIC  1
 #define CTL_BUTTON  2
 #define CTL_EDIT    4
+#define CTL_LIST    5
 #define CTL_OTHER   3           /* class not provided: drawn as a placeholder */
 
 struct wclass {
@@ -109,6 +110,7 @@ struct wnd {
     int  cx, cy, cw, ch;        /* client area inside the frame */
     int  ul, ut, ur, ub;        /* update rectangle, client coordinates */
     char title[100];
+    struct filelist *list;
     GR_WINDOW_ID frame, client; /* controls: one Nano-X window, frame == client */
     u16  parent;                /* controls: the dialog */
     u8   ctl, pressed, isdialog, ended, checked;

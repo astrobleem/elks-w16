@@ -66,6 +66,7 @@ static u16 senthw,sentm,sentp;static u32 sentl;
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
 void scrollbar_forget(u16 w){(void)w;}\nvoid menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
+static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''

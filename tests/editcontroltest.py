@@ -24,6 +24,7 @@ u8 host_mem[0x110000];
 u8 *host_ptr(u16 s,u16 o,u16 n){assert((u32)o+n<=65536UL);assert(LIN(s,o)+n<=0x100000UL);return host_mem+LIN(s,o);}
 void fcopy_out(u16 s,u16 o,const void *p,u16 n){memcpy(host_ptr(s,o,n),p,n);}
 u16 fstrncpy_in(char*d,u16 s,u16 o,u16 n){strncpy(d,(char*)host_ptr(s,o,n),n);d[n-1]=0;return strlen(d);}
+static u32 list_message(struct wnd*w,u16 m,u16 p,u32 l){(void)w;(void)m;(void)p;(void)l;return 0;}
 static void paint_control(struct wnd*w){(void)w;paints++;}
 static u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){assert(w==wins);assert(m==WM_COMMAND&&p==106&&l==0x3000104UL);notifications++;return 0;}
 '''

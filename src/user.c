@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include "wapi.h"
+#include "filelist.h"
 
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
@@ -465,6 +466,7 @@ static void toggle_button(struct wnd *w)
 static void paint_control(struct wnd *w);
 static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp);
 static struct wnd *find_ctl(u16 hdlg,u16 id);
+static u32 list_message(struct wnd *w,u16 msg,u16 wp,u32 lp);
 
 static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x, int y, int rx, int ry)
 {
@@ -578,6 +580,14 @@ static void translate_event(GR_EVENT *ev)
         }
         if (!w || blocked(w))
             break;
+        if(w->ctl==CTL_LIST && down && w->list){
+            int row=(ev->button.y-2)/12+w->list->top;
+            focus_hwnd=w->hwnd;GrSetFocus(w->frame);
+            if(row>=0&&row<w->list->count){
+                struct wnd *d=win_get(w->parent);w->list->selected=row;paint_control(w);
+                if(d)win_send(d,WM_COMMAND,w->id,((u32)1<<16)|w->hwnd);
+            }
+        }
         if (w->ctl==CTL_EDIT && down) {
             focus_hwnd=w->hwnd;GrSetFocus(w->frame);
             w->edit_cursor=(u8)strlen(w->title);w->edit_anchor=w->edit_cursor;paint_control(w);
@@ -1076,6 +1086,7 @@ static void free_controls(u16 parent)
             if (wins[i].icon)
                 free(wins[i].icon);
             wins[i].icon = 0;
+            if(wins[i].list){filelist_clear(wins[i].list);free(wins[i].list);wins[i].list=0;}
             wins[i].used = 0;
         }
 }
@@ -1779,6 +1790,14 @@ static void paint_control(struct wnd *w)
         black = dark;
     gdi_usebg(0);
     switch (w->ctl) {
+    case CTL_LIST:
+        gdi_fill(f,white,0,0,w->w,w->h);gdi_fg(black);GrRect(f,gc,0,0,w->w,w->h);
+        if(w->list)for(k=w->list->top,y=2;k<w->list->count&&y+12<w->h;k++,y+=12){
+            if(k==w->list->selected)gdi_fill(f,black,1,y,w->w-2,12);
+            gdi_fg(k==w->list->selected?white:black);
+            GrText(f,gc,2,y,w->list->text[k],strlen(w->list->text[k]),GR_TFASCII|GR_TFTOP);
+        }
+        break;
     case CTL_EDIT:
         gdi_fill(f,white,0,0,w->w,w->h);gdi_fg(black);GrRect(f,gc,0,0,w->w,w->h);
         if(w->title[0]) GrText(f,gc,2,1,w->title,strlen(w->title),GR_TFASCII|GR_TFTOP);
@@ -1897,13 +1916,14 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
     w->hinst = d->hinst;
     w->id = it->id;
     w->style = it->style;
-    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : it->cls == 0x81 ? CTL_EDIT : CTL_OTHER;
+    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : it->cls == 0x81 ? CTL_EDIT : it->cls == 0x83 ? CTL_LIST : CTL_OTHER;
     if (w->ctl == CTL_OTHER)
         wlog("w16: dialog control %u of class %s is not provided; drawn as an empty box\n", it->id,
              it->cls >= 0x80 && it->cls <= 0x85 ? names[it->cls - 0x80] : it->clsname);
     if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) > BS_RADIOBUTTON && BUTTON_TYPE(w) != BS_GROUPBOX)
         wlog("w16: button control %u style %lx drawn as a push button\n", it->id, (unsigned long)(it->style & 0xF));
     strncpy(w->title, text ? text : it->text, sizeof(w->title) - 1);
+    if(w->ctl==CTL_LIST){w->list=calloc(1,sizeof(*w->list));if(!w->list){w->used=0;return 0;}w->list->selected=-1;}
     w->edit_limit=sizeof(w->title)-1;
     w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
     w->x = DX(it->x); w->y = DY(it->y); w->w = DX(it->cx); w->h = DY(it->cy);
@@ -1987,6 +2007,7 @@ static void dlg_command(struct wnd *d, u16 id)
 static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
 {
     u16 len=(u16)strlen(w->title),a,b,n,off=(u16)lp,seg=(u16)(lp>>16);
+    if(w->ctl==CTL_LIST)return list_message(w,msg,wp,lp);
     if(msg==0x000e) return len; /* WM_GETTEXTLENGTH */
     if(msg==0x000d){ /* WM_GETTEXT */
         if(!wp || (!off&&!seg) || (u32)off+wp>65536UL || ((u32)seg<<4)+off+wp>0x100000UL)return 0;
@@ -2225,6 +2246,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
                     break;
                 }
                 {struct wnd *e=win_get(focus_hwnd);
+                 if(e&&e->parent==d->hwnd&&e->ctl==CTL_LIST&&m.wp!=13&&m.wp!=27&&!(key_mods&MWKMOD_ALT)){control_message(e,WM_KEYDOWN,m.wp,0);break;}
                  if(e&&e->parent==d->hwnd&&e->ctl==CTL_EDIT&&m.wp!=13&&m.wp!=27&&!(key_mods&MWKMOD_ALT)){
                     if(m.ch)control_message(e,WM_CHAR,m.ch,0);else control_message(e,WM_KEYDOWN,m.wp,0);break;}}
 
@@ -2583,4 +2605,78 @@ u32 u_SendDlgItemMessage(u16 ss,u16 ap)
 {
     struct wnd *c=find_ctl(AW(10),AW(8));
     return c?control_message(c,AW(6),AW(4),AL(0)):0;
+}
+
+/* File-dialog list support uses the same confined DOS cwd as OpenFile. */
+static int list_directory(struct wnd *w,char *spec,u16 flags,int change)
+{
+    char dir[124],pattern[124],path[124];char *p,*last=0;
+    for(p=spec;*p;p++)if(*p=='/'||*p=='\\'||*p==':')last=p;
+    if(last){strcpy(pattern,last+1);p=last+1;*p=0;strcpy(dir,spec);}
+    else {strcpy(pattern,spec);dir[0]=0;}
+    if(!pattern[0])strcpy(pattern,"*.*");
+    if(files_directory(dir,path,change))return -1;
+    strcpy(spec,pattern);
+    if((flags&0x10)&&strcmp(path,".")&&filelist_add(w->list,"[..]",1)<0)return -2;
+    if((flags&0x4000)&&filelist_add(w->list,"[-c-]",1)<0)return -2;
+    return filelist_scan(w->list,path,pattern,flags);
+}
+static u32 list_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
+{
+    struct filelist *l=w->list;u16 seg=lp>>16,off=lp,n;char text[124];int i;
+    if(!l)return 0xffff;
+    switch(msg){
+    case 0x405:filelist_clear(l);paint_control(w);return 0;
+    case 0x40c:return l->count;
+    case 0x409:return (u16)l->selected;
+    case 0x407:
+        l->selected=wp<l->count?(i16)wp:-1;
+        if(l->selected>=0)l->top=wp;
+        paint_control(w);return (u16)l->selected;
+    case 0x40b:return wp<l->count?strlen(l->text[wp]):0xffff;
+    case 0x40a:
+        if(wp>=l->count)return 0xffff;
+        n=strlen(l->text[wp]);
+        if((!seg&&!off)||(u32)off+n+1>65536UL||((u32)seg<<4)+off+n+1>0x100000UL)return 0xffff;
+        fcopy_out(seg,off,l->text[wp],n+1);return n;
+    case 0x401:case 0x40e:
+        if(!seg||(u32)off+sizeof(text)>65536UL||((u32)seg<<4)+off+sizeof(text)>0x100000UL)return 0xffff;
+        fstrncpy_in(text,seg,off,sizeof(text));
+        i=msg==0x401?filelist_add(l,text,(w->style&2)!=0):list_directory(w,text,wp,0);
+        paint_control(w);return (u16)i;
+    case WM_KEYDOWN:
+        i=l->selected;
+        if(wp==0x26&&i>0)i--;else if(wp==0x28&&i+1<l->count)i++;
+        else if(wp==0x24&&l->count)i=0;else if(wp==0x23&&l->count)i=l->count-1;else return 0;
+        l->selected=i;
+        if(i<l->top)l->top=i;
+        if(i>=l->top+(w->h-4)/12)l->top=i-(w->h-4)/12+1;
+        paint_control(w);
+        {struct wnd *d=win_get(w->parent);if(d)win_send(d,WM_COMMAND,w->id,((u32)1<<16)|w->hwnd);}
+        return 1;
+    }
+    return 0;
+}
+u32 u_DlgDirList(u16 ss,u16 ap)
+{
+    u16 flags=AW(0),label=AW(2),id=AW(4),off=AW(6),seg=AW(8),dlg=AW(10);
+    struct wnd *w=find_ctl(dlg,id),*t=find_ctl(dlg,label);char spec[124],path[128];
+    if(!w||!w->list||!seg||(u32)off+sizeof(spec)>65536UL||((u32)seg<<4)+off+sizeof(spec)>0x100000UL)return 0;
+    fstrncpy_in(spec,seg,off,sizeof(spec));filelist_clear(w->list);
+    if(list_directory(w,spec,flags,1)<0){filelist_clear(w->list);paint_control(w);return 0;}
+    fcopy_out(seg,off,spec,strlen(spec)+1);paint_control(w);
+    if(t){files_directory_label(path);strncpy(t->title,path,sizeof(t->title)-1);t->title[sizeof(t->title)-1]=0;paint_control(t);}
+    return 1;
+}
+u32 u_DlgDirSelect(u16 ss,u16 ap)
+{
+    u16 id=AW(0),off=AW(2),seg=AW(4),dlg=AW(6),n,dir=0;char text[128];
+    struct wnd *w=find_ctl(dlg,id);const char *s;
+    if(!w||!w->list||w->list->selected<0)return 0;
+    s=w->list->text[w->list->selected];n=strlen(s);
+    if(!strcmp(s,"[-c-]")){strcpy(text,"C:\\");n=3;dir=1;}
+    else if(n>1&&s[0]=='['&&s[n-1]==']'){memcpy(text,s+1,n-2);text[n-2]='\\';text[n-1]=0;n--;dir=1;}
+    else memcpy(text,s,n+1);
+    if((!seg&&!off)||(u32)off+n+1>65536UL||((u32)seg<<4)+off+n+1>0x100000UL)return 0;
+    fcopy_out(seg,off,text,n+1);return dir;
 }
