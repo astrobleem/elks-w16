@@ -56,12 +56,13 @@ void GrSelectEvents(unsigned w,unsigned m){(void)w;(void)m;}
 void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
 void GrMapWindow(unsigned w){(void)w;}
 void win_invalidate_all(struct wnd*w,int e){w->invalid=1;w->erase=e;}
-u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){(void)w;(void)m;(void)p;(void)l;return 0;}
+static u16 senthw,sentm,sentp; static u32 sentl;
+u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=m;sentp=p;sentl=l;return m==0x400?0xface1234UL:0;}
 void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','client_origin','top_window','win_by_nx','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','u_CreateWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('win_get','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','u_CreateWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -73,6 +74,9 @@ int main(void){u16 id;int x,y;unsigned frame;
  assert(wins[1].parent==HWND_BASE&&wins[1].w==284&&wins[1].h==15);assert(wins[1].cx==1&&wins[1].cy==1&&wins[1].ch==13);
  client_origin(&wins[1],&x,&y);assert(x==12&&y==168);assert(top_window(&wins[1])==&wins[0]);
  setup(WS_CHILD,id,3,4,10,10);assert(u_CreateWindow(0x1000,0)==HWND_BASE+8);client_origin(&wins[2],&x,&y);assert(x==15&&y==172);
+ wr16(0x1000,8,id);wr16(0x1000,6,0x400);wr16(0x1000,4,0x7192);wr32(0x1000,0,0x12345678);
+ assert(u_SendMessage(0x1000,0)==0xface1234UL && senthw==id && sentm==0x400 && sentp==0x7192 && sentl==0x12345678);
+ wr16(0x1000,8,0xffff);u_SendMessage(0x1000,0);assert(senthw==HWND_BASE);
  nx_focus=wins[2].client;assert(u_GetActiveWindow(0,0)==HWND_BASE);nx_focus=987;assert(!u_GetActiveWindow(0,0));
  wr16(0x1000,0,16);wr16(0x1000,2,0x2000);wr16(0x1000,4,id);
  u_GetWindowRect(0x1000,0);assert(rd16(0x2000,16)==11&&rd16(0x2000,18)==167);

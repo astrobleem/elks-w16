@@ -1112,6 +1112,24 @@ u32 u_PeekMessage(u16 ss, u16 ap)
     return 1;
 }
 
+/* SendMessage is synchronous. Unlike DispatchMessage it must not interpret
+ * a WM_TIMER lParam as a callback address: the window procedure receives it. */
+u32 u_SendMessage(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    u16 hwnd,msg,wp,i; u32 lp;
+    if(ap>0xfff6u) return 0;
+    hwnd=AW(8); msg=AW(6); wp=AW(4); lp=AL(0);
+    if(hwnd==0xffffu) {
+        /* This runtime owns only one task. Broadcast to its top-level windows. */
+        for(i=0;i<MAXWIN;i++) if(wins[i].used && !wins[i].parent)
+            (void)win_send(&wins[i],msg,wp,lp);
+        return 0;
+    }
+    w=win_get(hwnd);
+    return w?win_send(w,msg,wp,lp):0;
+}
+
 /* PostMessage(hWnd, wMsg, wParam, lParam) */
 u32 u_PostMessage(u16 ss, u16 ap)
 {
@@ -1140,7 +1158,6 @@ u32 u_ReleaseCapture(u16 ss, u16 ap)
     return 0;
 }
 
-/* SetFocus(hWnd): returns the window that had the focus */
 /* The active window is the top-level owner of the actual Nano-X focus,
  * not necessarily the child HWND that last received keyboard input. */
 u32 u_GetActiveWindow(u16 ss,u16 ap)
@@ -1151,6 +1168,7 @@ u32 u_GetActiveWindow(u16 ss,u16 ap)
     return w?w->hwnd:0;
 }
 
+/* SetFocus(hWnd): returns the window that had the focus */
 u32 u_SetFocus(u16 ss, u16 ap)
 {
     struct wnd *w = win_get(AW(0));

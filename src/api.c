@@ -52,7 +52,7 @@ u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16
 u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
-u32 u_GetActiveWindow(u16,u16);
+u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
 u32 u_LoadAccelerators(u16, u16), u_TranslateAccelerator(u16, u16), u_WinHelp(u16, u16);
@@ -307,7 +307,7 @@ const struct api api_table[] = {
     { U,  99, "DLGDIRSELECT", 0, API_MISSING, 0 },
     { U, 100, "DLGDIRLIST", 0, API_MISSING, 0 },
     { U, 104, "MESSAGEBEEP", 0, API_MISSING, 0 },
-    { U, 111, "SENDMESSAGE", 0, API_MISSING, 0 },
+    { U, 111, "SendMessage", 10, 0, H(u_SendMessage) },
     { U, 119, "GETMESSAGEPOS", 0, API_MISSING, 0 },
     { U, 130, "SETCLASSWORD", 0, API_MISSING, 0 },
     { U, 135, "GETWINDOWLONG", 0, API_MISSING, 0 },
