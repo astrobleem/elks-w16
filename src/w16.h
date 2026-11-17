@@ -202,6 +202,7 @@ struct menu_item {
     char text[28];
 };
 struct menu_tmpl { u8 n; struct menu_item it[MENU_MAXITEMS]; };
+int menu_parse_into(const u8 *d,u16 len,struct menu_item *items,u16 capacity,u8 *count);
 int  menu_parse(const u8 *d, u16 len, struct menu_tmpl *t);  /* 0 ok, -1 malformed or too many items */
 
 /* ---------------------------------------------------------------- WIN.INI (profile.c, portable) */

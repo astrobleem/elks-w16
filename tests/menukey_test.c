@@ -3,7 +3,13 @@
  * so the normal Alt+F4 path, which looks the window up by the event's window, cannot see it).
  * Nano-X and the rest of USER are stubbed; menu.c and dlgtmpl.c (menu_parse) are the real ones.
  * Build: gcc -DW16_HOST -I$MWDIR/src/include -Isrc tests/menukey_test.c src/dlgtmpl.c */
+#include <stdlib.h>
+/* Simulate the small free heap left after CLOCK/About interactions. */
+static size_t allocation_limit=512,last_allocation;
+static void *bounded_calloc(size_t n,size_t size){last_allocation=n*size;return last_allocation>allocation_limit?0:calloc(n,size);}
+#define calloc bounded_calloc
 #include "../src/menu.c"
+#undef calloc
 
 /* ---- stubs: Nano-X */
 static int next_wid = 100, destroyed, focus;
@@ -98,6 +104,7 @@ int main(void)
     struct wnd *w = mkwin(0, 0x100), *box = mkwin(1, 0x102);
     w->hmenu = menu_load(w, 0, 1);
     check(w->hmenu != 0, "menu bar loaded from a MENU resource");
+    check(last_allocation<=512&&menus[0]->capacity==3,"tiny menu fits fragmented 512-byte heap budget");
 
     /* menu bar popup, opened with F10 */
     nposts = 0;
@@ -110,6 +117,7 @@ int main(void)
     /* system menu, opened as Alt+Space does */
     nposts = 0;
     check(menu_sys_open(w, 1, 0) && pop.open && pop.mi == SYSMENU, "Alt+Space opens the system menu");
+    check(last_allocation<=512&&menus[SYSMENU]->capacity==2,"system menu allocates only its two entries");
     check(key(MWKEY_F4, MWKMOD_ALT) == 1 && !pop.open, "Alt+F4 with the system menu open closes it");
     check(nposts == 1 && post_hwnd == 0x100 && post_msg == WM_SYSCOMMAND && post_wp == SC_CLOSE,
           "the window gets WM_SYSCOMMAND SC_CLOSE");
@@ -132,6 +140,7 @@ int main(void)
     check(key(MWKEY_F4, MWKMOD_ALT) == 0 && nposts == 0, "with no menu open Alt+F4 is left to the window");
 
 
+    allocation_limit=65535;
     /* Large menu resources and later popup handles must not alias other menus. */
     { int sub, i; u16 h;
       menu_free(w->hmenu);
@@ -147,6 +156,7 @@ int main(void)
         menu_free(w->hmenu);
       }
       memset(&menus[0]->t,0,sizeof(menus[0]->t));
+      check(slot(0,MENU_MAXITEMS)!=0,"full-capacity menu allocation remains supported");
       menus[0]->used=1;menus[0]->t.n=MENU_MAXITEMS;
       for(i=0;i<MENU_MAXITEMS;i++) {
           menus[0]->t.it[i].parent=0xff;

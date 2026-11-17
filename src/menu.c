@@ -21,12 +21,13 @@ struct menu {
     u8   used, idx;
     u16  hwnd;
     i16  bar_y;                         /* frame row of the bar, set when drawn */
-    struct menu_tmpl t;
-    i16  x0[MENU_MAXITEMS], x1[MENU_MAXITEMS];  /* bar items: frame columns */
-    i16  tw[MENU_MAXITEMS], aw[MENU_MAXITEMS];  /* label and accelerator widths */
-    i16  mx[MENU_MAXITEMS], mw[MENU_MAXITEMS];  /* mnemonic underline offset and width, mw 0 if none */
+    struct {u8 n;struct menu_item *it;} t;
+    u16 capacity;
+    i16 *x0,*x1,*tw,*aw,*mx,*mw;
+
 };
-/* about 6 KB each at the maximum capacity, so allocated when first needed: most programs have one menu bar, many none */
+/* One allocation sized to the actual item count. Small CLOCK/system menus
+ * must not each reserve the full 128-item Paintbrush capacity. */
 static struct menu *menus[MAXMENU + 1];
 #define USED(i) (menus[i] && menus[i]->used)
 static int scr_w = 320, scr_h = 200, asc = 10;
@@ -128,13 +129,22 @@ static void measure(struct menu *mn, int x)
 }
 
 /* slot i, allocated on first use (zeroed) */
-static struct menu *slot(int i)
+static struct menu *slot(int i,u16 count)
 {
-    if (!menus[i] && (menus[i] = calloc(1, sizeof(struct menu))) != 0)
-        menus[i]->idx = (u8)i;
-    if (!menus[i])
-        wlog("w16: no memory for a menu\n");
-    return menus[i];
+    struct menu *mn;
+    u16 bytes;
+    if(!count||count>MENU_MAXITEMS)return 0;
+    if(menus[i]&&menus[i]->capacity==count)return menus[i];
+    if(menus[i]){free(menus[i]);menus[i]=0;}
+    bytes=sizeof(struct menu)+count*(sizeof(struct menu_item)+6*sizeof(i16));
+    mn=calloc(1,bytes);
+    if(!mn){wlog("w16: no memory for a menu (%u items, %u bytes)\n",count,bytes);return 0;}
+    mn->idx=(u8)i;mn->capacity=count;
+    mn->t.it=(struct menu_item*)(mn+1);
+    mn->x0=(i16*)(mn->t.it+count);mn->x1=mn->x0+count;
+    mn->tw=mn->x1+count;mn->aw=mn->tw+count;
+    mn->mx=mn->aw+count;mn->mw=mn->mx+count;
+    menus[i]=mn;return mn;
 }
 
 /* attach a MENU resource to w as its menu bar; widths are measured once, here */
@@ -145,6 +155,7 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
     GR_SCREEN_INFO si;
     u32 off;
     u16 len;
+    u8 count;
     int i;
     for (i = 0; i < MAXMENU && USED(i); i++)
         ;
@@ -156,16 +167,16 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
         wlog("w16: menu %s not found in the program's resources\n", name ? name : "(ordinal)");
         return 0;
     }
-    if (!(mn = slot(i)))
-        return 0;
     if (len > W16_SCRATCH) {
         wlog("w16: menu resource too large (%u bytes)\n", len);
         return 0;
     }
-    if (ne_read(w16_mod, off, buf, len) || menu_parse(buf, len, &mn->t)) {
+    if (ne_read(w16_mod, off, buf, len) || menu_parse_into(buf,len,0,MENU_MAXITEMS,&count)) {
         wlog("w16: menu %s is malformed or has more than %d items\n", name ? name : "(ordinal)", MENU_MAXITEMS);
         return 0;
     }
+    if(!(mn=slot(i,count)))return 0;
+    if(menu_parse_into(buf,len,mn->t.it,count,&mn->t.n))return 0;
     GrGetScreenInfo(&si);
     if (si.cols > 0) {
         scr_w = si.cols;
@@ -420,7 +431,7 @@ int menu_sys_open(struct wnd *w, int sel_first, u32 click_time)
     static const struct menu_item close_item = { 0, SC_CLOSE, 0, "&Close\tAlt+F4" };
     struct menu *mn;
     int b = border_w(w->style);
-    if (!(w->style & WS_SYSMENU) || (w->style & WS_CAPTION) != WS_CAPTION || w->ctl || !(mn = slot(SYSMENU)))
+    if (!(w->style & WS_SYSMENU) || (w->style & WS_CAPTION) != WS_CAPTION || w->ctl || !(mn = slot(SYSMENU,2)))
         return 0;
     if (!mn->used) {
         mn->used = 1;

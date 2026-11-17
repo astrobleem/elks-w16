@@ -14,7 +14,11 @@ static unsigned fixture(unsigned count) {
     } return p;
 }
 int main(int argc,char **argv) {
-    unsigned n=fixture(104),i;
+    unsigned n=fixture(104),i;u8 count;struct menu_item *exact;
+    assert(!menu_parse_into(data,n,0,MENU_MAXITEMS,&count)&&count==104);
+    exact=malloc(count*sizeof(*exact));assert(exact);
+    assert(!menu_parse_into(data,n,exact,count,&count)&&count==104&&exact[103].id==203);
+    assert(menu_parse_into(data,n,exact,103,&count)<0);free(exact);
     assert(n>512 && !menu_parse(data,n,&menu)&&menu.n==104);
     assert(menu.it[103].id==203);
     n=fixture(128);assert(!menu_parse(data,n,&menu)&&menu.n==128);

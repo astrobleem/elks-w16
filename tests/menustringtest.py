@@ -32,7 +32,8 @@ static void args(u16 h,u16 id,u16 count,u16 flags){
 wr16(0x1000,0,flags);wr16(0x1000,2,count);wr16(0x1000,4,200);wr16(0x1000,6,0x1000);wr16(0x1000,8,id);wr16(0x1000,10,h);
 }
 int main(void){
-static struct menu m;menus[0]=&m;m.used=1;m.t.n=3;
+static struct menu m;static struct menu_item items[3];static i16 metrics[3];
+menus[0]=&m;m.used=1;m.t.n=3;m.t.it=items;m.x0=metrics;
 m.t.it[0].parent=255;m.t.it[0].flags=MF_POPUP;strcpy(m.t.it[0].text,"&File");
 m.t.it[1].parent=0;m.t.it[1].id=301;strcpy(m.t.it[1].text,"&Open\tCtrl+O");
 m.t.it[2].parent=0;m.t.it[2].flags=MF_SEPARATOR;
