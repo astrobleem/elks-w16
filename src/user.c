@@ -916,8 +916,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
             wlog("w16: CreateWindow: unsupported child geometry, decoration or parent\n");
             return 0;
         }
-    } else if (hmenu)
-        wlog("w16: CreateWindow: menu handle %04x ignored (only class menus are supported)\n", hmenu);
+    }
     for (i = 0; i < MAXWIN && wins[i].used; i++)
         ;
     if (i == MAXWIN) {
@@ -948,6 +947,10 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     b = border_of(style);
     cap = (style & WS_CAPTION) == WS_CAPTION ? CAPH + 1 : 0;
     w->cx = b; w->cy = b + cap; w->cw = wd - 2 * b; w->ch = h - 2 * b - cap;
+    if (!pw && hmenu) {
+        if(!menu_attach(w,hmenu)){w->used=0;return 0;}
+        w->cy+=MENUH;w->ch-=MENUH;
+    }
     if (!pw && c->menu[0] && !hmenu) {
         u16 mid = c->menu[0] == '#' ? (u16)atoi(c->menu + 1) : 0;
         if (menu_load(w, mid ? 0 : c->menu, mid) && w->ch > MENUH) {

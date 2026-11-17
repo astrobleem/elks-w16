@@ -15,6 +15,9 @@ static void *bounded_calloc(size_t n,size_t size){last_allocation=n*size;return 
 static int next_wid = 100, destroyed, focus;
 GR_WINDOW_ID GrNewWindowEx(GR_WM_PROPS p, const char *t, GR_WINDOW_ID par, GR_COORD x, GR_COORD y,
                            GR_SIZE w, GR_SIZE h, GR_COLOR bg) { return ++next_wid; }
+void GrMoveWindow(GR_WINDOW_ID w,GR_COORD x,GR_COORD y) {}
+void GrResizeWindow(GR_WINDOW_ID w,GR_SIZE x,GR_SIZE y) {}
+void GrClearArea(GR_WINDOW_ID w,GR_COORD x,GR_COORD y,GR_SIZE width,GR_SIZE height,int expose) {}
 void GrDestroyWindow(GR_WINDOW_ID wid) { destroyed = wid; }
 void GrMapWindow(GR_WINDOW_ID wid) {}
 void GrSelectEvents(GR_WINDOW_ID wid, GR_EVENT_MASK m) {}
@@ -45,6 +48,8 @@ struct wnd *win_get(u16 hwnd)
 }
 u32 win_send(struct wnd *w, u16 msg, u16 wp, u32 lp) { return 0; }
 void w16_post(u16 hwnd, u16 msg, u16 wp, u32 lp) { nposts++; post_hwnd = hwnd; post_msg = msg; post_wp = wp; }
+void win_invalidate_all(struct wnd *w,int erase) {}
+void res_name(u16 off,u16 seg,char *name,u16 *id) {name[0]=0;*id=off;}
 void nc_sysbox(struct wnd *w, int open) {}
 void ready_write(void) {}
 void lat_shown(const char *what, int synced) {}
@@ -106,6 +111,15 @@ int main(void)
     check(w->hmenu != 0, "menu bar loaded from a MENU resource");
     check(last_allocation<=512&&menus[0]->capacity==3,"tiny menu fits fragmented 512-byte heap budget");
 
+    {
+      u16 second=menu_load(0,0,2),first=w->hmenu;
+      check(second!=0 && menu_attach(w,second),"unattached menu replaces bar");
+      check(menu_attach(box,first),"replaced menu can be reused");
+      check(!menu_attach(w,first),"cannot share attached menu across windows");
+      check(!menu_attach(w,second+2),"popup cannot become menu bar");
+      check(menu_attach(box,0) && menu_attach(w,first),"detach and restore menu");
+      menu_free(second);
+    }
     /* menu bar popup, opened with F10 */
     nposts = 0;
     check(menu_key(w, MWKEY_F10, 0) && pop.open, "F10 opens the Settings popup");

@@ -183,12 +183,61 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
         scr_h = si.rows;
     }
     mn->used = 1;
-    mn->hwnd = w->hwnd;
-    mn->bar_y = (i16)(border_w(w->style) + ((w->style & WS_CAPTION) == WS_CAPTION ? font_h + 2 : 0));
-    measure(mn, border_w(w->style) + 2);
-    w->hmenu = (u16)(HMENU_BASE + HMENU_STRIDE * i);
-    vlog("w16: menu %s: %u items on window %04x -> %04x\n", name ? name : "(ordinal)", mn->t.n, w->hwnd, w->hmenu);
-    return w->hmenu;
+    mn->hwnd = 0;
+    if(w) {
+        mn->hwnd=w->hwnd;
+        mn->bar_y=(i16)(border_w(w->style)+((w->style&WS_CAPTION)==WS_CAPTION?font_h+2:0));
+        measure(mn,border_w(w->style)+2);
+        w->hmenu=(u16)(HMENU_BASE+HMENU_STRIDE*i);
+    }
+    return (u16)(HMENU_BASE+HMENU_STRIDE*i);
+}
+
+/* An unattached loaded menu can be installed once; replacing a menu detaches
+ * but does not destroy the old handle. Popup/system handles are not bars. */
+int menu_attach(struct wnd *w,u16 h)
+{
+    int sub;
+    struct menu *mn=h?menu_of(h,&sub):0,*old;
+    if(!w || (w->style&WS_CHILD))return 0;
+    if(h && (!mn || sub>=0 || mn->idx==SYSMENU ||
+       (mn->hwnd && mn->hwnd!=w->hwnd)))return 0;
+    menu_close_for(w->hwnd);
+    old=menu_of(w->hmenu,&sub);
+    if(old)old->hwnd=0;
+    w->hmenu=h;
+    if(mn) {
+        mn->hwnd=w->hwnd;
+        mn->bar_y=(i16)(border_w(w->style)+((w->style&WS_CAPTION)==WS_CAPTION?font_h+2:0));
+        measure(mn,border_w(w->style)+2);
+    }
+    return 1;
+}
+
+u32 u_LoadMenu(u16 ss,u16 ap)
+{
+    char name[34];u16 id;
+    if(!w16_mod || AW(4)!=w16_mod->dgroup)return 0;
+    res_name(AW(0),AW(2),name,&id);
+    return menu_load(0,name[0]?name:0,id);
+}
+
+u32 u_SetMenu(u16 ss,u16 ap)
+{
+    struct wnd *w=win_get(AW(2));
+    int before,delta;
+    if(!w)return 0;
+    before=w->hmenu!=0;
+    if(!menu_attach(w,AW(0)))return 0;
+    delta=((w->hmenu!=0)-before)*MENUH;
+    w->cy+=delta;w->ch-=delta;
+    if(w->ch<0)w->ch=0;
+    GrMoveWindow(w->client,w->cx,w->cy);
+    GrResizeWindow(w->client,w->cw?w->cw:1,w->ch?w->ch:1);
+    if(w->visible)GrClearArea(w->frame,0,0,w->w,w->h,GR_TRUE);
+    win_invalidate_all(w,1);
+    if(delta)win_send(w,WM_SIZE,0,((u32)(u16)w->ch<<16)|(u16)w->cw);
+    return 1;
 }
 
 void menu_free(u16 h)

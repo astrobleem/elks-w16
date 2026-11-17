@@ -200,6 +200,7 @@ extern u32 w16_t0;          /* test hook: rewrite the ready file with current cl
 #define MENUH (font_h + 3)              /* menu bar height, including its bottom line */
 u16       menu_load(struct wnd *w, const char *name, u16 id);   /* attach a MENU resource as w's menu bar */
 void      menu_free(u16 hmenu);
+int       menu_attach(struct wnd *w,u16 hmenu);
 void      menu_draw_bar(struct wnd *w, int y);                 /* in the frame, at frame row y */
 int       menu_bar_click(struct wnd *w, int x, int y);          /* frame coordinates; 1 if handled */
 int       menu_event(GR_EVENT *ev);                            /* events while a menu is open; 1 if taken */
