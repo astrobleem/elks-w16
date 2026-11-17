@@ -33,6 +33,7 @@ u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16
 u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
 u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
 u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16);
+u32 u_CheckRadioButton(u16,u16), u_CheckDlgButton(u16,u16), u_IsDlgButtonChecked(u16,u16);
 u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
 u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
 u32 k_GetProfileString(u16, u16), k_WriteProfileString(u16, u16), k_FindResource(u16, u16), k_LoadResource(u16, u16);
@@ -83,9 +84,9 @@ const struct api api_table[] = {
     { U,82,"InvertRect",0,API_MISSING,0 },
     { U,83,"FrameRect",0,API_MISSING,0 },
     { U,85,"DrawText",14,0,H(u_DrawText) },
-    { U,96,"CheckRadioButton",0,API_MISSING,0 },
-    { U,97,"CheckDlgButton",0,API_MISSING,0 },
-    { U,98,"IsDlgButtonChecked",0,API_MISSING,0 },
+    { U,96,"CheckRadioButton",8,0,H(u_CheckRadioButton) },
+    { U,97,"CheckDlgButton",6,0,H(u_CheckDlgButton) },
+    { U,98,"IsDlgButtonChecked",4,0,H(u_IsDlgButtonChecked) },
     { U,118,"RegisterWindowMessage",4,0,H(u_RegisterWindowMessage) },
 
     /* KERNEL */

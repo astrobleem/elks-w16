@@ -101,7 +101,7 @@ struct wnd {
     char title[100];
     GR_WINDOW_ID frame, client; /* controls: one Nano-X window, frame == client */
     u16  parent;                /* controls: the dialog */
-    u8   ctl, pressed, isdialog, ended;
+    u8   ctl, pressed, isdialog, ended, checked;
     u16  id, result, defid;
     u8  *icon;                  /* SS_ICON: DIB of the chosen icon image (malloc) */
     u16  iconlen;

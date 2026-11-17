@@ -411,6 +411,19 @@ static u16 vk_from_key(GR_KEY ch, u8 *ascii)
     return 0;
 }
 
+/* Win16 button types used by dialog templates. */
+#define BS_CHECKBOX      2
+#define BS_AUTOCHECKBOX  3
+#define BS_RADIOBUTTON   4
+#define BS_GROUPBOX      7
+#define BUTTON_TYPE(w) ((int)((w)->style & 0xF))
+
+static void toggle_button(struct wnd *w)
+{
+    if (BUTTON_TYPE(w) == BS_AUTOCHECKBOX)
+        w->checked = !w->checked;
+}
+
 static void paint_control(struct wnd *w);
 
 static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x, int y, int rx, int ry)
@@ -518,12 +531,13 @@ static void translate_event(GR_EVENT *ev)
         if (!w || blocked(w))
             break;
         if (w->ctl) {                   /* built-in control: push buttons notify their dialog */
-            if (w->ctl == CTL_BUTTON && (ev->button.changebuttons & MWBUTTON_L)) {
+            if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) != BS_GROUPBOX && (ev->button.changebuttons & MWBUTTON_L)) {
                 if (down) {
                     w->pressed = 1;
                     paint_control(w);
                 } else if (w->pressed) {
                     w->pressed = 0;
+                    toggle_button(w);
                     paint_control(w);
                     vlog("w16: button control %u clicked -> WM_COMMAND to %04x\n", w->id, w->parent);
                     post(w->parent, WM_COMMAND, w->id, ((u32)BN_CLICKED << 16) | w->hwnd, ev->button.rootx, ev->button.rooty);
@@ -1549,6 +1563,36 @@ static void paint_control(struct wnd *w)
             GrText(f, gc, x < 0 ? 0 : x, 0, txt, n, GR_TFASCII | GR_TFTOP);
         break;
     case CTL_BUTTON:
+        if (kind == BS_GROUPBOX) {
+            gdi_fill(f, white, 0, 0, w->w, w->h);
+            gdi_fg(dark);
+            GrRect(f, gc, 0, font_h / 2, w->w, w->h - font_h / 2);
+            if (n)
+                gdi_fill(f, white, 5, 0, tw + 4, font_h);
+            gdi_fg(black);
+            if (n)
+                GrText(f, gc, 7, 0, txt, n, GR_TFASCII | GR_TFTOP);
+            break;
+        }
+        if (kind == BS_CHECKBOX || kind == BS_AUTOCHECKBOX || kind == BS_RADIOBUTTON) {
+            y = (w->h - 9) / 2;
+            gdi_fill(f, white, 0, 0, w->w, w->h);
+            gdi_fg(black);
+            if (kind == BS_RADIOBUTTON) {
+                GrEllipse(f, gc, 5, y + 4, 4, 4);
+                if (w->checked)
+                    GrFillEllipse(f, gc, 5, y + 4, 2, 2);
+            } else {
+                GrRect(f, gc, 1, y, 9, 9);
+                if (w->checked) {
+                    GrLine(f, gc, 3, y + 4, 5, y + 6);
+                    GrLine(f, gc, 5, y + 6, 8, y + 2);
+                }
+            }
+            if (n)
+                GrText(f, gc, 13, (w->h - th) / 2, txt, n, GR_TFASCII | GR_TFTOP);
+            break;
+        }
         gdi_fill(f, gray, 0, 0, w->w, w->h);
         gdi_fg(black);
         GrRect(f, gc, 0, 0, w->w, w->h);
@@ -1593,7 +1637,7 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
     if (w->ctl == CTL_OTHER)
         wlog("w16: dialog control %u of class %s is not provided; drawn as an empty box\n", it->id,
              it->cls >= 0x80 && it->cls <= 0x85 ? names[it->cls - 0x80] : it->clsname);
-    if (w->ctl == CTL_BUTTON && (it->style & 0xF) > 1)
+    if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) > BS_RADIOBUTTON && BUTTON_TYPE(w) != BS_GROUPBOX)
         wlog("w16: button control %u style %lx drawn as a push button\n", it->id, (unsigned long)(it->style & 0xF));
     strncpy(w->title, text ? text : it->text, sizeof(w->title) - 1);
     w->x = DX(it->x); w->y = DY(it->y); w->w = DX(it->cx); w->h = DY(it->cy);
@@ -1638,7 +1682,7 @@ static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
     int i;
     for (i = 0; i < MAXWIN; i++) {
         const char *a;
-        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || wins[i].parent != d->hwnd || !wins[i].visible)
+        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || BUTTON_TYPE(&wins[i]) == BS_GROUPBOX || wins[i].parent != d->hwnd || !wins[i].visible)
             continue;
         for (a = wins[i].title; (a = strchr(a, '&')) != 0 && a[1] == '&'; a += 2)
             ;
@@ -1865,8 +1909,11 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
                     dlg_command(d, d->defid);
                 else if (m.wp == 0x1B)
                     dlg_command(d, IDCANCEL);
-                else if ((w = mnemonic_button(d, m.wp)) != 0)    /* a button's underlined letter */
+                else if ((w = mnemonic_button(d, m.wp)) != 0) {  /* a button's underlined letter */
+                    toggle_button(w);
+                    paint_control(w);
                     dlg_command(d, w->id);
+                }
                 break;
             case WM_CHAR:
             case WM_KEYUP:
@@ -1932,6 +1979,49 @@ u32 u_EndDialog(u16 ss, u16 ap)
     d->ended = 1;
     d->result = AW(0);
     vlog("w16: EndDialog(%04x, %u)\n", d->hwnd, d->result);
+    return 1;
+}
+
+/* CheckDlgButton(hDlg, id, check) and IsDlgButtonChecked(hDlg, id). */
+static void set_button_check(struct wnd *c, u8 check)
+{
+    if (c->checked != check) {
+        c->checked = check;
+        if (c->visible)
+            paint_control(c);
+    }
+}
+
+u32 u_CheckDlgButton(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(4), AW(2));
+    if (!c || c->ctl != CTL_BUTTON || AW(0) > 1)
+        return 0;
+    set_button_check(c, (u8)AW(0));
+    return 1;
+}
+
+u32 u_IsDlgButtonChecked(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(2), AW(0));
+    return c && c->ctl == CTL_BUTTON ? c->checked : 0;
+}
+
+/* CheckRadioButton(hDlg, first, last, selected): other groups are untouched. */
+u32 u_CheckRadioButton(u16 ss, u16 ap)
+{
+    u16 dlg = AW(6), first = AW(4), last = AW(2), selected = AW(0);
+    struct wnd *c = find_ctl(dlg, selected);
+    int i;
+    if (first > last || selected < first || selected > last ||
+        !c || c->ctl != CTL_BUTTON || BUTTON_TYPE(c) != BS_RADIOBUTTON)
+        return 0;
+    for (i = 0; i < MAXWIN; i++) {
+        struct wnd *w = &wins[i];
+        if (w->used && w->parent == dlg && w->ctl == CTL_BUTTON &&
+            BUTTON_TYPE(w) == BS_RADIOBUTTON && w->id >= first && w->id <= last)
+            set_button_check(w, w == c);
+    }
     return 1;
 }
 
