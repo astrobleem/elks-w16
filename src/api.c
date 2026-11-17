@@ -17,6 +17,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) 0
 #else
 #define H(f) f
+u32 g_EnumObjects(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
@@ -248,7 +249,7 @@ const struct api api_table[] = {
     { G,  64, "CREATERECTRGN", 0, API_MISSING, 0 },
     { G,  67, "DPTOLP", 0, API_MISSING, 0 },
     { G,  70, "ENUMFONTS", 0, API_MISSING, 0 },
-    { G,  71, "ENUMOBJECTS", 0, API_MISSING, 0 },
+    { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
     { G,  74, "GETBITMAPBITS", 0, API_MISSING, 0 },
     { G,  85, "GETROP2", 0, API_MISSING, 0 },
     { G,  99, "LPTODP", 0, API_MISSING, 0 },

@@ -1141,3 +1141,19 @@ u32 g_PtVisible(u16 ss, u16 ap)
 {
     return g_GetPixel(ss, ap) != 0xffffffffUL;
 }
+
+/* EnumObjects(hDC, OBJ_PEN/OBJ_BRUSH, callback, callerData). Enumerate the
+ * actual sixteen physical colors advertised by our indexed display driver. */
+u32 g_EnumObjects(u16 ss,u16 ap)
+{
+    GR_PALETTE *p=(GR_PALETTE *)w16_scratch;
+    u32 colors[16]; u16 i,kind,hdc;
+    if(ap>0xfff4u) return 0;
+    kind=AW(8); hdc=AW(10);
+    if((kind!=OBJ_PEN && kind!=OBJ_BRUSH) || !dc_get(hdc)) return 0;
+    memset(p,0,sizeof(*p)); GrGetSystemPalette(p);
+    if(p->count!=16) return 0;
+    for(i=0;i<16;i++) colors[i]=(u32)p->palette[i].r |
+        ((u32)p->palette[i].g<<8) | ((u32)p->palette[i].b<<16);
+    return enum_palette_objects(kind,AW(4),AW(6),AL(0),colors,16);
+}

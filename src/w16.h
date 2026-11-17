@@ -221,6 +221,9 @@ int  api_find_name(int mod, const char *name);
 const char *api_known_name(int mod, u16 ord);     /* diagnostic names of unimplemented entries */
 int  api_target(int idx, u16 *seg, u16 *off);     /* far address an import binds to */
 
+u32 enum_palette_objects(u16 kind,u16 proc_off,u16 proc_seg,u32 data,
+                         const u32 *colors,u16 count);
+
 /* ---------------------------------------------------------------- runtime (ELKS) */
 #ifndef W16_HOST
 /* medium model: a function's address is a far pointer; these take it apart */
