@@ -10,7 +10,7 @@
 #define DEFAULT_BITMAP 0x0aff
 struct bitmap {u16 w,h,seg,stride;GR_WINDOW_ID pix;u8 used;};
 static struct bitmap bitmaps[NB];
-static struct {u16 bitmap;u8 used;} memory[ND];
+static struct {u16 bitmap;u8 used;i16 brushx,brushy;} memory[ND];
 static int bi(u16 h){u16 n=(h-BBASE)/2;return h>=BBASE&&!(h&1)&&n<NB&&bitmaps[n].used?n:-1;}
 static int di(u16 h){u16 n=(h-DBASE)/2;return h>=DBASE&&!(h&1)&&n<ND&&memory[n].used?n:-1;}
 static void release_bitmap(int i){if(bitmaps[i].seg)seg_free(bitmaps[i].seg);if(bitmaps[i].pix)GrDestroyWindow(bitmaps[i].pix);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
@@ -94,4 +94,11 @@ u32 g_CreateCompatibleBitmap(u16 ss,u16 ap)
  }else{bitmaps[i].pix=GrNewPixmap(w,h,0);if(!bitmaps[i].pix)goto failed;}
  bitmaps[i].used=1;return BBASE+2*i;
 failed: release_bitmap(i);return 0;
+}
+
+int bitmap_brushorg(u16 h,i16 x,i16 y,u32 *old)
+{
+ int i=di(h);if(i<0)return 0;
+ *old=(u16)memory[i].brushx|((u32)(u16)memory[i].brushy<<16);
+ memory[i].brushx=x;memory[i].brushy=y;return 1;
 }

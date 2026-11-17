@@ -121,6 +121,7 @@ struct dc {
     u16  bkmode, textalign;
     u8   rop2;
     int  curx, cury;
+    i16 brushx, brushy;
 };
 
 #define HWND_BASE  0x0100
@@ -192,6 +193,7 @@ void      paint_done(struct wnd *w);
 /* Resource bitmap/source-only memory DC support. */
 void registered_reset(void);
 void bitmap_shutdown(void);
+int bitmap_brushorg(u16 dc,i16 x,i16 y,u32 *old);
 int bitmap_delete(u16 h);
 int bitmap_deletedc(u16 h);
 u16 bitmap_select(u16 dc,u16 h);

@@ -192,6 +192,19 @@ int main(void){
  b=compatible(9,640,51);assert(b);object_check(b,640,51,4);assert(bitmap_delete(b)==1);
  b=compatible(d,640,204);assert(b);object_check(b,640,204,1);assert(bitmap_delete(b)==1);
  for(k=0;k<NB;k++){b=compatible(d,1,1);assert(b);}assert(!compatible(d,1,1));
+
+ bitmap_shutdown();clean();
+ {u32 old=0xdeadbeef;
+ d=dcnew();e=dcnew();
+ assert(bitmap_brushorg(d,-32768,32767,&old)&&old==0);
+ assert(bitmap_brushorg(e,-1,1,&old)&&old==0);
+ assert(bitmap_brushorg(d,23,-29,&old)&&old==0x7fff8000);
+ assert(bitmap_brushorg(e,0,0,&old)&&old==0x0001ffff);
+ assert(bitmap_deletedc(d)==1);old=0xdeadbeef;
+ assert(!bitmap_brushorg(d,1,2,&old)&&old==0xdeadbeef);
+ d=dcnew();assert(bitmap_brushorg(d,1,2,&old)&&old==0);
+ bitmap_shutdown();d=dcnew();assert(bitmap_brushorg(d,1,2,&old)&&old==0);
+ }
  bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
  return 0;
 }

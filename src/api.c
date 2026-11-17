@@ -25,7 +25,7 @@ u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16,
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
-u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16);
+u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
@@ -62,7 +62,7 @@ const struct api api_table[] = {
     { G,34,"BitBlt",20,0,H(g_BitBlt) },
     /* Optional diagnostic traps for the remaining Solitaire imports.
      * Strict default lookup rejects these. -u binds a terminating thunk. */
-    { G,31,"SetPixel",0,API_MISSING,0 },
+    { G,31,"SetPixel",10,0,H(g_SetPixel) },
     { G,35,"StretchBlt",0,API_MISSING,0 },
     { G,51,"CreateCompatibleBitmap",6,0,H(g_CreateCompatibleBitmap) },
     { G,79,"GetDCOrg",0,API_MISSING,0 },
@@ -70,7 +70,7 @@ const struct api api_table[] = {
     { G,83,"GetPixel",0,API_MISSING,0 },
     { G,100,"LineDDA",0,API_MISSING,0 },
     { G,103,"PtVisible",0,API_MISSING,0 },
-    { G,148,"SetBrushOrg",0,API_MISSING,0 },
+    { G,148,"SetBrushOrg",6,0,H(g_SetBrushOrg) },
     { K,6,"LocalReAlloc",0,API_MISSING,0 },
     { K,15,"GlobalAlloc",0,API_MISSING,0 },
     { K,16,"GlobalReAlloc",0,API_MISSING,0 },
@@ -321,6 +321,10 @@ u32 w16_api_dispatch(u16 idx)
     if (a->flags & API_MISSING) {
         wlog("w16: MISSING API TRAP: %s.%u at %04x:%04x; stopping\n",
              w16_modnames[a->mod],a->ord,rd16(ss,sp+10),rd16(ss,sp+8));
+        if (opt_trace && sp <= 0xffe8u)
+            wlog("w16: missing args %04x %04x %04x %04x %04x %04x\n",
+                 rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),
+                 rd16(ss,sp+18),rd16(ss,sp+20),rd16(ss,sp+22));
         w16_exit16(W16_EIMPORT); return W16_EIMPORT;
     }
     w16_ret_bx = 0;
@@ -331,6 +335,10 @@ u32 w16_api_dispatch(u16 idx)
     if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
         wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
     r = a->fn(ss, (u16)(sp + 12));
+    if (opt_trace && !r && a->mod == MOD_GDI && (a->ord == 29 || a->ord == 34) && sp <= 0xffdcu)
+        wlog("w16: raster failed ord=%u args=%04x %04x %04x %04x %04x %04x %04x %04x %04x %04x\n", a->ord,
+             rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),rd16(ss,sp+18),rd16(ss,sp+20),
+             rd16(ss,sp+22),rd16(ss,sp+24),rd16(ss,sp+26),rd16(ss,sp+28),rd16(ss,sp+30));
     n = a->argbytes;
     if (n) {
         sp = w16_app_sp;                       /* restored by any nested calls */

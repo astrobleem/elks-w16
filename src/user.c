@@ -57,6 +57,27 @@ struct wnd *win_get(u16 hwnd)
     return &wins[i];
 }
 
+/* Child frame positions are relative to the parent's client, not the screen. */
+static void client_origin(struct wnd *w, int *x, int *y)
+{
+    int n = 0;
+    u16 px = 0, py = 0;
+    while (w && n++ < MAXWIN) {
+        px += (u16)w->x + (u16)w->cx; py += (u16)w->y + (u16)w->cy;
+        w = w->parent ? win_get(w->parent) : 0;
+    }
+    *x = (i16)px; *y = (i16)py;
+}
+
+static struct wnd *top_window(struct wnd *w)
+{
+    int n = 0;
+    struct wnd *p;
+    while (w && w->parent && n++ < MAXWIN && (p = win_get(w->parent)) != 0)
+        w = p;
+    return w;
+}
+
 static struct wnd *win_by_nx(GR_WINDOW_ID wid, int *isclient)
 {
     int i;
@@ -401,7 +422,7 @@ static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x
 /* a modal dialog is up and w is not part of it (Windows disables the dialog's owner) */
 static int blocked(struct wnd *w)
 {
-    return modal_hwnd && (w->ctl ? w->parent : w->hwnd) != modal_hwnd;
+    return modal_hwnd && top_window(w)->hwnd != modal_hwnd;
 }
 
 static void translate_event(GR_EVENT *ev)
@@ -437,7 +458,7 @@ static void translate_event(GR_EVENT *ev)
         w = win_by_nx(ev->keystroke.wid, &isclient);
         if (w && blocked(w))
             break;
-        top = w && w->ctl ? win_get(w->parent) : w;
+        top = top_window(w);
         if (top && ev->keystroke.ch == ' ' && (ev->keystroke.modifiers & MWKMOD_ALT)) {
             menu_sys_open(top, 1, 0);      /* Alt+Space: the system menu */
             break;
@@ -447,7 +468,7 @@ static void translate_event(GR_EVENT *ev)
         if (top && ev->keystroke.ch == MWKEY_F10 && !top->hmenu && menu_sys_open(top, 1, 0))
             break;                          /* F10 without a menu bar: the system menu, as in Windows */
         if (w && ev->keystroke.ch == MWKEY_F4 && (ev->keystroke.modifiers & MWKMOD_ALT)) {
-            post(w->ctl ? w->parent : w->hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, 0, 0);
+            post(top->hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, 0, 0);
             break;
         }
         if (!w || !vk)
@@ -481,9 +502,11 @@ static void translate_event(GR_EVENT *ev)
         mouse_buttons = ev->button.buttons;
         if (capture_hwnd && (!w || !w->ctl)) {  /* SetCapture: button events go to that window */
             struct wnd *cw = win_get(capture_hwnd);
-            if (cw) {
+            if (cw && !blocked(cw)) {
+                int ox, oy;
+                client_origin(cw, &ox, &oy);
                 post_button(cw, down, ev->button.changebuttons, ev->button.buttons,
-                            ev->button.rootx - (cw->x + cw->cx), ev->button.rooty - (cw->y + cw->cy),
+                            ev->button.rootx - ox, ev->button.rooty - oy,
                             ev->button.rootx, ev->button.rooty);
                 break;
             }
@@ -521,8 +544,11 @@ static void translate_event(GR_EVENT *ev)
         w = win_by_nx(ev->mouse.wid, &isclient);
         mouse_buttons = ev->mouse.buttons;
         if (capture_hwnd && (t = win_get(capture_hwnd)) != 0) {
-            x = ev->mouse.rootx - (t->x + t->cx);
-            y = ev->mouse.rooty - (t->y + t->cy);
+            int ox, oy;
+            if (blocked(t)) break;
+            client_origin(t, &ox, &oy);
+            x = ev->mouse.rootx - ox;
+            y = ev->mouse.rooty - oy;
         } else if (!w || !isclient || w->ctl || blocked(w))
             break;
         else
@@ -681,7 +707,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     u16 toff = AW(22), tseg = AW(24), coff = AW(26), cseg = AW(28);
     int ci = find_class(coff, cseg), i, b, cap;
     struct wclass *c;
-    struct wnd *w;
+    struct wnd *w, *pw = 0;
     u32 r;
     int isnull;
     GR_COLOR bg;
@@ -696,12 +722,15 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         return 0;
     }
     if (style & WS_CHILD) {
-        wlog("w16: CreateWindow: child windows are not supported yet\n");
-        return 0;
-    }
-    if (hmenu)
+        pw = win_get(parent);
+        /* Bounded registered children: plain/bordered client windows only. */
+        if (!pw || pw->active || (style & (WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) != (style & WS_BORDER) ||
+            wd <= 0 || h <= 0 || wd > 32760 || h > 32760) {
+            wlog("w16: CreateWindow: unsupported child geometry, decoration or parent\n");
+            return 0;
+        }
+    } else if (hmenu)
         wlog("w16: CreateWindow: menu handle %04x ignored (only class menus are supported)\n", hmenu);
-    (void)parent;
     for (i = 0; i < MAXWIN && wins[i].used; i++)
         ;
     if (i == MAXWIN) {
@@ -715,17 +744,20 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     w->hwnd = HWND_BASE + 4 * i;
     w->cls = ci;
     w->style = style;
+    if (pw) { w->parent = parent; w->id = hmenu; }
     w->hinst = c->hinst ? c->hinst : hinst;
     w->procoff = c->procoff; w->procseg = c->procseg;
-    if (x == (int)(i16)0x8000) { x = 16; y = 12; }
-    if (wd == (int)(i16)0x8000) { wd = 288; h = 168; }
-    if (wd < 40) wd = 40;
-    if (h < 30) h = 30;
+    if (!pw) {
+        if (x == (int)(i16)0x8000) { x = 16; y = 12; }
+        if (wd == (int)(i16)0x8000) { wd = 288; h = 168; }
+        if (wd < 40) wd = 40;
+        if (h < 30) h = 30;
+    }
     w->x = x; w->y = y; w->w = wd; w->h = h;
     b = border_of(style);
     cap = (style & WS_CAPTION) == WS_CAPTION ? CAPH + 1 : 0;
     w->cx = b; w->cy = b + cap; w->cw = wd - 2 * b; w->ch = h - 2 * b - cap;
-    if (c->menu[0] && !hmenu) {
+    if (!pw && c->menu[0] && !hmenu) {
         u16 mid = c->menu[0] == '#' ? (u16)atoi(c->menu + 1) : 0;
         if (menu_load(w, mid ? 0 : c->menu, mid) && w->ch > MENUH) {
             w->cy += MENUH;
@@ -735,9 +767,12 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if (tseg)
         fstrncpy_in(w->title, tseg, toff, sizeof(w->title));
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
-    w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, GR_ROOT_WINDOW_ID,
+    if (w->cw <= 0 || w->ch <= 0) { w->used = 0; return 0; }
+    w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
                              x, y, wd, h, GR_RGB(170, 170, 170));
+    if (!w->frame) { w->used = 0; return 0; }
     w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw, w->ch, 0, bg, 0);
+    if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
@@ -823,11 +858,15 @@ static void free_controls(u16 parent)
 static void destroy_window(struct wnd *w)
 {
     u16 hwnd = w->hwnd;
+    int i;
     if (w->active)                      /* already being destroyed (re-entered from WM_DESTROY) */
         return;
     w->active = 1;
     vlog("w16: DestroyWindow %04x\n", hwnd);
     win_send(w, WM_DESTROY, 0, 0);
+    for (i = 0; i < MAXWIN; i++)
+        if (wins[i].used && !wins[i].ctl && wins[i].parent == hwnd)
+            destroy_window(&wins[i]);
     win_send(w, WM_NCDESTROY, 0, 0);
     menu_close_for(hwnd);
     GrDestroyWindow(w->frame);          /* also destroys the Nano-X windows of its controls */
@@ -1106,8 +1145,12 @@ u32 u_ClientToScreen(u16 ss, u16 ap)
     struct wnd *w = win_get(AW(4));
     if (!w)
         return 0;
-    wr16(seg, off, (u16)(rd16(seg, off) + w->x + w->cx));
-    wr16(seg, off + 2, (u16)(rd16(seg, off + 2) + w->y + w->cy));
+    {
+        int x, y;
+        client_origin(w, &x, &y);
+        wr16(seg, off, (u16)(rd16(seg, off) + x));
+        wr16(seg, off + 2, (u16)(rd16(seg, off + 2) + y));
+    }
     return 0;
 }
 
@@ -2065,7 +2108,7 @@ void user_shutdown(void)
         }
     for (i = 0; i < MAXWIN; i++)
         if (wins[i].used && !wins[i].ctl) {
-            GrDestroyWindow(wins[i].frame);
+            if (!wins[i].parent) GrDestroyWindow(wins[i].frame);
             free_controls(wins[i].hwnd);
             wins[i].used = 0;
             n++;

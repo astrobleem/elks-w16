@@ -415,17 +415,14 @@ static int brush_pat(struct dc *d)
     return o && o->type == OBJ_BRUSH && o->style == BS_PATTERN && bmps[o->width].used ? o->width : -1;
 }
 
-/* Fill with a monochrome pattern aligned to the window origin: 1 bits in the background colour, 0 bits
- * in the text colour, as Windows paints a pattern brush. One GrBitmap per 16 rows (the client library
- * splits requests over 512 bytes itself). The screen is 320 pixels wide, so 20 words cover a row. */
-static void pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
+/* Monochrome pattern phase is relative to the DC brush origin. Scratch holds
+ * sixteen 640-pixel rows; unsupported larger extents fail before drawing. */
+static int pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
 {
-    GR_BITMAP *buf = (GR_BITMAP *)w16_scratch;      /* 640 bytes of the shared scratch */
+    GR_BITMAP *buf = (GR_BITMAP *)w16_scratch;      /* at most1280 bytes */
     int wpr, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
-    if (w <= 0 || h <= 0)
-        return;
-    if (w > 320)
-        w = 320;
+    if (w <= 0 || h <= 0)return 1;
+    if (w>640||h>480||(long)x+w-1>32767L||(long)y+h-1>32767L)return 0;
     wpr = (w + 15) / 16;
     gs_mode(GS(d), GR_MODE_COPY);
     gs_fg(GS(d), rgb_to_gr(d->bkcolor));
@@ -434,13 +431,13 @@ static void pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
     for (y0 = 0; y0 < h; y0 += 16) {
         int rows = h - y0 > 16 ? 16 : h - y0;
         for (r = 0; r < rows; r++) {
-            u16 pr = bmps[bi].rows[((y + y0 + r) % bh + bh) % bh], word = 0;
+            u16 pr = bmps[bi].rows[(((long)y + y0 + r - d->brushy) % bh + bh) % bh], word = 0;
             for (k = 0; k < wpr; k++) {
                 int px;
                 if (!k || !same) {
                     word = 0;
                     for (px = 0; px < 16; px++)
-                        if (pr & (0x8000u >> (((x + 16 * k + px) % bw + bw) % bw)))
+                        if (pr & (0x8000u >> ((((long)x + 16 * k + px - d->brushx) % bw + bw) % bw)))
                             word |= (u16)(0x8000u >> px);
                 }
                 buf[r * wpr + k] = word;
@@ -448,6 +445,7 @@ static void pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
         }
         GrBitmap(d->wid, d->gc, x, y + y0, w, rows, buf);
     }
+    return 1;
 }
 
 /* Set the GC for pen or brush output in colour c under the DC's binary raster op (SetROP2).
@@ -501,7 +499,7 @@ u32 g_Rectangle(u16 ss, u16 ap)
         return 0;
     pen = pen_of(d, &pc);
     if ((bi = brush_pat(d)) >= 0) {             /* pattern brush inside the outline */
-        pat_fill(d, l + pen, t + pen, r - l - 2 * pen, b - t - 2 * pen, bi);
+        if(!pat_fill(d, l + pen, t + pen, r - l - 2 * pen, b - t - 2 * pen, bi))return 0;
         if (pen && set_rop(d, pc))
             GrRect(d->wid, d->gc, l, t, r - l, b - t);
         return 1;
@@ -639,8 +637,7 @@ u32 g_PatBlt(u16 ss, u16 ap)
     switch (rop) {
     case 0x00F00021ul:                                      /* PATCOPY */
         if ((bi = brush_pat(d)) >= 0) {
-            pat_fill(d, x, y, w, h, bi);
-            return 1;
+            return pat_fill(d, x, y, w, h, bi);
         }
         if (!brush_of(d, &c))
             return 1;
@@ -687,7 +684,7 @@ u32 g_GetTextExtent(u16 ss, u16 ap)
     return ((u32)(u16)h << 16) | (u16)w;
 }
 
-u32 g_UnrealizeObject(u16 ss, u16 ap) { (void)ss; (void)ap; return 1; }   /* brushes have no origin here */
+u32 g_UnrealizeObject(u16 ss, u16 ap) { (void)ss; (void)ap; return 1; }   /* pattern realization is computed per draw */
 
 /* ---------------------------------------------------------------- text */
 #define TA_UPDATECP   1
@@ -1051,4 +1048,32 @@ int w16_dump_frame(const char *tag)
         e9puts(line);
     }
     return 0;
+}
+
+/* SetBrushOrg(HDC,x,y): signed device coordinates, old POINT packed in DWORD. */
+u32 g_SetBrushOrg(u16 ss,u16 ap)
+{
+ struct dc*d=dc_get(AW(4));u32 old; i16 x=(i16)AW(2),y=(i16)AW(0);
+ if(!d)return bitmap_brushorg(AW(4),x,y,&old)?old:0;
+ old=(u16)d->brushx|((u32)(u16)d->brushy<<16);
+ d->brushx=x;d->brushy=y;return old;
+}
+
+/* Display SetPixel uses the actual native 16-color palette. Unsupported color
+ * encodings and memory DCs fail rather than aliasing the screen. */
+typedef char pixel_palette_fits_scratch[(sizeof(GR_PALETTE)<=W16_SCRATCH)?1:-1];
+u32 g_SetPixel(u16 ss,u16 ap)
+{
+ struct dc*d=dc_get(AW(8));i16 x=(i16)AW(6),y=(i16)AW(4);u32 c=AL(0),best=0;
+ GR_PALETTE*p=(GR_PALETTE*)w16_scratch;GR_SCREEN_INFO si;
+ long dr,dg,db,dist,closest=0x7fffffffL;int i,w,h;
+ if(!d||x<0||y<0||(c&0xff000000UL))return 0xffffffffUL;
+ if(d->w){w=d->w->cw;h=d->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);w=si.cols;h=si.rows;}
+ if(x>=w||y>=h)return 0xffffffffUL;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0xffffffffUL;
+ for(i=0;i<16;i++){
+  dr=(long)(c&255)-p->palette[i].r;dg=(long)((c>>8)&255)-p->palette[i].g;db=(long)((c>>16)&255)-p->palette[i].b;
+  dist=dr*dr+dg*dg+db*db;if(dist<closest){closest=dist;best=(u32)p->palette[i].r|((u32)p->palette[i].g<<8)|((u32)p->palette[i].b<<16);}
+ }
+ gs_mode(GS(d),GR_MODE_COPY);gs_fg(GS(d),rgb_to_gr(best));GrPoint(d->wid,d->gc,x,y);return best;
 }
