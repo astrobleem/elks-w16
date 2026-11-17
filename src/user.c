@@ -499,6 +499,7 @@ static void translate_event(GR_EVENT *ev)
         lat_input("click");
     else if (ev->type == GR_EVENT_TYPE_KEY_DOWN)
         lat_input("key");
+    pointer_event(ev);
     if (menu_event(ev))                    /* an open menu takes the input */
         return;
     switch (ev->type) {

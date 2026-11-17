@@ -179,14 +179,6 @@ u32 u_ShowCursor(u16 ss, u16 ap)
     return (u16)cur_show;
 }
 
-/* SetCursorPos(X, Y) */
-u32 u_SetCursorPos(u16 ss, u16 ap)
-{
-    vlog("w16: SetCursorPos(%d,%d)\n", (i16)AW(2), (i16)AW(0));
-    GrMoveCursor((i16)AW(2), (i16)AW(0));
-    return 1;
-}
-
 void cursor_census(u16 *n)
 {
     int i;

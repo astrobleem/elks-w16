@@ -78,6 +78,7 @@ u32 u_MoveWindow(u16,u16);
 u32 u_ScrollWindow(u16,u16);
 u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
+u32 u_ClipCursor(u16,u16),u_GetCursorPos(u16,u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
 u32 u_LoadAccelerators(u16, u16), u_TranslateAccelerator(u16, u16), u_WinHelp(u16, u16);
 u32 g_PatBlt(u16, u16), g_CreateBitmap(u16, u16), g_CreatePatternBrush(u16, u16), g_GetTextExtent(u16, u16);
@@ -192,6 +193,8 @@ const struct api api_table[] = {
     { U,  37, "SetWindowText",     6, 0, H(u_SetWindowText) },
     { U,  57, "RegisterClass",     4, 0, H(u_RegisterClass) },
     { U,  69, "SetCursor",         2, 0, H(u_SetCursor) },
+    { U, 16, "ClipCursor", 4, 0, H(u_ClipCursor) },
+    { U, 17, "GetCursorPos", 4, 0, H(u_GetCursorPos) },
     { U,  70, "SetCursorPos",      4, 0, H(u_SetCursorPos) },
     { U,  71, "ShowCursor",        2, 0, H(u_ShowCursor) },
     { U,  66, "GetDC",             2, 0, H(u_GetDC) },

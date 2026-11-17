@@ -163,6 +163,7 @@ u16       user_key_mods(void);        /* MWKMOD_* at the latest key event */
 /* cursors and accelerators (cursor.c) */
 void      cursor_class(GR_WINDOW_ID frame,GR_WINDOW_ID client,u16 h);
 void      cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client);
+void      pointer_event(GR_EVENT *ev);
 void      cursor_census(u16 *n);
 
 /* GDI */
