@@ -111,7 +111,15 @@ u32 k_InitTask(u16 ss, u16 ap)
     w16_ret_bx = CMDLINE_OFF;
     w16_ret_cx = m->stack;
     w16_ret_es = m->psp;
-    vlog("w16: InitTask: hInstance %04x, PSP %04x, command line \"%s\"\n", m->dgroup, m->psp, "");
+    if (opt_verbose) {
+        char tail[121];
+        u16 n = rd8(m->psp, 0x80);
+        if (n > sizeof(tail) - 1) n = sizeof(tail) - 1;
+        fcopy_in(tail, m->psp, CMDLINE_OFF, n);
+        tail[n] = 0;
+        vlog("w16: InitTask: hInstance %04x, PSP %04x, command line \"%s\"\n",
+             m->dgroup, m->psp, tail);
+    }
     return 0x00010001ul;                /* DX = SW_SHOWNORMAL, AX = 1 */
 }
 
