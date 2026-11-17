@@ -238,3 +238,5 @@ u16 bitmap_select(u16 dc,u16 h);
 void scrollbar_draw(struct wnd *w);
 int scrollbar_input(struct wnd *w,int kind,int rx,int ry);
 void scrollbar_forget(u16 hwnd);
+
+u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set);

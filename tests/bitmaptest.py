@@ -72,8 +72,8 @@ static int ne_read(struct module*m,u32 o,void*p,u16 n){
 static int seg_alloc(u16 n,u16*s){int i;if(segfail||failafter==0)return -1;if(failafter>0)failafter--;assert(n*16<=sizeof ram);for(i=0;i<32&&segused[i];i++);if(i==32)return -1;segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
 static void seg_free(u16 s){assert(s>=1&&s<=32&&segused[s-1]);segused[s-1]=0;seglive--;}
 static void fzero(u16 s,u16 o,u16 n){assert(s>=1&&s<=32&&segused[s-1]&&o+n<=sizeof ram);memset(rams[s-1]+o,0,n);}
-static u8 rd8(u16 s,u16 o){assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
-static void wr8(u16 s,u16 o,u8 v){assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);rams[s-1][o]=v;}
+static u8 rd8(u16 s,u16 o){if(s==99)return output[o];assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
+static void wr8(u16 s,u16 o,u8 v){if(s==99){output[o]=v;return;}assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);rams[s-1][o]=v;}
 static int GrNewPixmap(int w,int h,void*p){assert(!"unexpected native allocation");return 0;}
 static void GrDestroyWindow(int p){assert(!"unexpected native destruction");}
 static int GrNewGC(void){assert(!"unexpected GC allocation");return 0;}
@@ -215,7 +215,30 @@ static void dib_band_test(void){
  puts("DIB 640x480 exact native palette and bounded bands, CORE, padding, atomic failures passed");
 }
 
+static void ddb_bits_test(void){
+ u16 h;unsigned i;u32 n;
+ native_palette.count=16;
+ h=bitmap_create(256,256,1,4,0,0);assert(h);n=32768;
+ for(i=0;i<n;i++)output[i]=(i*31)^17;
+ assert(bitmap_bits(h,n,99,0,1)==n);
+ memset(output,0,n);assert(bitmap_bits(h,n+10,99,0,0)==n);
+ for(i=0;i<n;i++)assert(output[i]==(u8)((i*31)^17));
+ assert(bitmap_bits(h,0,0,0,0)==n);
+ assert(!bitmap_bits(h,n,99,65500,1));
+ assert(!bitmap_bits(h,0xffffffffUL,99,0,1));
+ assert(!bitmap_bits(0xffff,4,99,0,0));
+ output[0]=0xe3;assert(bitmap_bits(h,1,99,0,1)==1);
+ assert(bitmap_index(&bitmaps[bi(h)],0,0)==14);
+ assert(bitmap_index(&bitmaps[bi(h)],1,0)==3);
+ bitmap_shutdown();clean();
+ h=bitmap_create(17,2,1,1,0,0);assert(h);
+ assert(bitmap_bits(h,0,0,0,0)==8);bitmap_shutdown();clean();
+ h=bitmap_create(640,480,1,4,0,0);assert(h);
+ assert(bitmap_bits(h,0,0,0,0)==153600UL);
+ assert(!bitmap_bits(h,153600UL,99,0,0));bitmap_shutdown();clean();
+}
 int main(int argc,char**argv){
+ ddb_bits_test();
  dib_band_test();
  stretch_tests();
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;

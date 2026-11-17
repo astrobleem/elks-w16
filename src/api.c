@@ -39,6 +39,7 @@ u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
+u32 g_GetBitmapBits(u16,u16),g_SetBitmapBits(u16,u16);
 u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16),g_PtVisible(u16,u16),g_LineDDA(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
@@ -283,9 +284,9 @@ const struct api api_table[] = {
     { G,67,"DPtoLP",8,0,H(g_DPtoLP) },
     { G,  70, "EnumFonts", 14, 0, H(g_EnumFonts) },
     { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
-    { G,  74, "GETBITMAPBITS", 0, API_MISSING, 0 },
+    { G,  74, "GetBitmapBits", 10, 0, H(g_GetBitmapBits) },
     { G, 85, "GetROP2", 2, 0, H(g_GetROP2) },
-    { G, 106, "SETBITMAPBITS", 0, API_MISSING, 0 },
+    { G, 106, "SetBitmapBits", 10, 0, H(g_SetBitmapBits) },
     { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
     { G, 156, "CREATEDISCARDABLEBITMAP", 0, API_MISSING, 0 },

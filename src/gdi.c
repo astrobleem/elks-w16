@@ -687,6 +687,28 @@ u32 g_CreateBitmap(u16 ss, u16 ap)
     return (u16)(HBMP_BASE + 2 * i);
 }
 
+/* Get/SetBitmapBits(hBitmap,LONG count,far bits), including brush DDBs. */
+static u32 transfer_bitmap_bits(u16 ss,u16 ap,int set)
+{
+ int i=bmp_index(AW(8));u32 count=AL(4),at,size;u16 seg=AW(2),off=AW(0),row;u8 v;
+ if(i<0)return bitmap_bits(AW(8),count,seg,off,set);
+ if(count&0x80000000UL)return 0;
+ size=2*bmps[i].h;
+ if(!seg&&!off)return set?0:size;
+ if(count>size)count=size;
+ if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
+ for(at=0;at<count;at++){
+  row=at/2;
+  if(set){v=rd8(seg,(u16)(off+at));
+   if(at&1)bmps[i].rows[row]=(bmps[i].rows[row]&0xff00)|v;
+   else bmps[i].rows[row]=(bmps[i].rows[row]&0xff)|((u16)v<<8);
+  }else wr8(seg,(u16)(off+at),(u8)(bmps[i].rows[row]>>((at&1)?0:8)));
+ }
+ return count;
+}
+u32 g_GetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,0);}
+u32 g_SetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,1);}
+
 /* CreatePatternBrush(hBitmap) */
 u32 g_CreatePatternBrush(u16 ss, u16 ap)
 {

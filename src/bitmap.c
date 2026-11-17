@@ -316,6 +316,24 @@ u32 g_GetObject(u16 ss,u16 ap)
  out[8]=1;out[9]=bpp;fcopy_out(seg,off,out,14);return 14;
 }
 
+/* DDB byte order is top-down, WORD-aligned packed rows, matching GetObject.
+ * A single far span must fit its segment; larger images use DIB scan bands. */
+u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set)
+{
+ int i=bi(h);u32 size,at;struct bitmap*b;
+ if(i<0 || (count & 0x80000000UL))return 0;
+ b=&bitmaps[i];size=(u32)b->stride*b->h;
+ if(!seg&&!off)return set?0:size;
+ if(count>size)count=size;
+ if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
+ for(at=0;at<count;at++){
+  u16 bank=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],bo=(u16)(at%BITMAP_BANK_BYTES);
+  if(set)wr8(bank,bo,rd8(seg,(u16)(off+at)));
+  else wr8(seg,(u16)(off+at),rd8(bank,bo));
+ }
+ return count;
+}
+
 /* Compatibility follows the supplied DC's selected bitmap, not merely the
  * display from which a memory DC was created. The default memory bitmap is mono. */
 typedef char bitmap_palette_fits_scratch[(sizeof(GR_PALETTE)<=W16_SCRATCH)?1:-1];
