@@ -73,7 +73,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','u_IsWindow','u_IsWindowVisible','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','u_ShowWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','u_ShowWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -81,6 +81,8 @@ static void setup(u32 style,u16 parent,int x,int y,int w,int h){
 int main(void){u16 id;int x,y;unsigned frame;
  /* Five Paintbrush windows, one 17-control Save As, then a 4-control alert. */
  assert(MAXWIN>=5+1+17+1+4);
+ {int j;for(j=0;j<23;j++)wins[j].used=1;assert(dialog_slots_available(4));
+  for(j=23;j<MAXWIN-4;j++)wins[j].used=1;assert(!dialog_slots_available(4));memset(wins,0,sizeof(wins));}
  wins[0].used=1;wins[0].hwnd=HWND_BASE;wins[0].client=77;wins[0].frame=76;wins[0].x=10;wins[0].y=20;wins[0].cx=2;wins[0].cy=30;
  strcpy(classes[0].menu,"must-not-load");
  setup(0x40800003UL,HWND_BASE,-1,117,284,15);id=u_CreateWindow(0x1000,0);assert(id==HWND_BASE+4);assert(frame_parent==77);assert(createdx==0&&createdy==117&&moves==1&&movex==-1&&movey==117);

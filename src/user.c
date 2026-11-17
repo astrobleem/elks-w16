@@ -2186,6 +2186,13 @@ u32 u_MessageBox(u16 ss, u16 ap)
     return message_box(text, caption, AW(0));
 }
 
+static int dialog_slots_available(u16 controls)
+{
+    int i,free_slots=0;
+    for(i=0;i<MAXWIN;i++)if(!wins[i].used)free_slots++;
+    return controls<MAXWIN && free_slots>(int)controls;
+}
+
 /* Create the dialog in dtmpl (dialog units, or pixels), run its modal loop, return EndDialog's result.
  * text0, if given, replaces the text of the first control (message boxes have long texts). */
 static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0)
@@ -2197,6 +2204,10 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     GR_SIZE tw, th, tb;
     u32 r;
 
+    if(!dialog_slots_available(dtmpl.nitems)){
+        wlog("w16: not enough window slots for complete dialog (%u controls)\n",dtmpl.nitems);
+        return 0xffff;
+    }
     /* dialog units: base units from the Nano-X system font, shrunk if the dialog would not fit */
     gdi_text_size("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, &tw, &th, &tb);
     dbx_num = tw; dbx_den = 52 * 4; dby_num = font_h; dby_den = 8;
@@ -2241,6 +2252,10 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
             hfocus = w->hwnd;
         if (w->ctl == CTL_BUTTON && (it->style & 0xF) == 1)
             d->defid = it->id;
+    }
+    if(k!=dtmpl.nitems){
+        GrDestroyWindow(d->frame);free_controls(d->hwnd);d->used=0;
+        wlog("w16: failed to create every dialog control\n");return 0xffff;
     }
     vlog("w16: DialogBox \"%s\": %u controls, %dx%d at %d,%d, default button %u\n", name, dtmpl.nitems,
          W, H, x, y, d->defid);
