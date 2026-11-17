@@ -33,7 +33,7 @@ static int keyup_pending, saw_real_keyup;
 static int npaints;
 int font_h = 13;
 static int scr_w = 320, scr_h = 200;
-static u16 modal_hwnd;                  /* the modal dialog running, or 0: other windows get no input */
+static u16 modal_owner, modal_hwnd;                  /* the modal dialog running, or 0: other windows get no input */
 char opt_dump[40];
 int  opt_ready;
 static char readyfile[40] = "/tmp/w16.ready";
@@ -342,6 +342,16 @@ u32 u_KillTimer(u16 ss, u16 ap)
 /* ---------------------------------------------------------------- measurements (-m) */
 int opt_metrics, opt_quit_s;
 u32 w16_t0;
+u32 u_GetCurrentTime(u16 ss,u16 ap)
+{ (void)ss;(void)ap; return now_ms()-w16_t0; }
+
+u32 u_GetLastActivePopup(u16 ss,u16 ap)
+{
+    u16 hwnd=AW(0);
+    if (modal_hwnd && hwnd==modal_owner) return modal_hwnd;
+    return hwnd==DESKTOP_HWND || win_get(hwnd) ? hwnd : 0;
+}
+
 static u32 lat_t;
 static u8 lat_on;
 static const char *lat_what;
@@ -2082,7 +2092,7 @@ static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
     return 1;
 }
 
-static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0);
+static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0, u16 owner);
 
 /* DialogBox(hInstance, lpTemplateName, hWndParent, lpDialogFunc): modal dialog from a DIALOG resource */
 u32 u_DialogBox(u16 ss, u16 ap)
@@ -2110,7 +2120,7 @@ u32 u_DialogBox(u16 ss, u16 ap)
     }
     if (dtmpl.menu[0])
         wlog("w16: DialogBox: dialog menu %s ignored (dialog menus are not supported)\n", dtmpl.menu);
-    return run_dialog(name[0] ? name : "#", procoff, procseg, hinst, 0, 0);
+    return run_dialog(name[0] ? name : "#", procoff, procseg, hinst, 0, 0, AW(4));
 }
 
 /* MessageBox(hWndParent, lpText, lpCaption, wType): a dialog built here, run like DialogBox */
@@ -2171,7 +2181,7 @@ u16 message_box(const char *text, const char *caption, u16 type)
         it->id = 0xFFF0 + icon;
         vlog("w16: MessageBox icon %u\n", icon);
     }
-    r = run_dialog("MessageBox", 0, 0, w16_mod->dgroup, 1, text);
+    r = run_dialog("MessageBox", 0, 0, w16_mod->dgroup, 1, text, focus_hwnd);
     vlog("w16: MessageBox \"%s\" -> %u\n", text, r);
     return r;
 }
@@ -2198,9 +2208,9 @@ static int dialog_slots_available(u16 controls)
 
 /* Create the dialog in dtmpl (dialog units, or pixels), run its modal loop, return EndDialog's result.
  * text0, if given, replaces the text of the first control (message boxes have long texts). */
-static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0)
+static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0, u16 owner)
 {
-    u16 hfocus = 0, k, prev_modal;
+    u16 hfocus = 0, k, prev_modal, prev_owner;
     struct wnd *d, *w;
     struct qmsg m;
     int b, cap, W, H, x, y;
@@ -2265,6 +2275,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
 
     r = win_send(d, WM_INITDIALOG, hfocus, 0);
     if(r && hfocus) focus_hwnd=hfocus;
+    prev_owner = modal_owner; modal_owner = owner;
     prev_modal = modal_hwnd;
     modal_hwnd = d->hwnd;
     GrMapWindow(d->client);
@@ -2346,7 +2357,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
             dispatch(m.hwnd, m.msg, m.wp, m.lp);    /* other windows of the program keep running */
     }
     r = d->result;
-    modal_hwnd = prev_modal;
+    modal_hwnd = prev_modal; modal_owner = prev_owner;
     vlog("w16: dialog ended with result %u\n", (u16)r);
     win_send(d, WM_DESTROY, 0, 0);
     GrDestroyWindow(d->frame);

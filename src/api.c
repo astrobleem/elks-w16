@@ -82,6 +82,7 @@ u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetClassWord(u16,u16);
 u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
+u32 u_GetCurrentTime(u16,u16),u_GetLastActivePopup(u16,u16),u_LoadMenu(u16,u16),u_SetMenu(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_MoveWindow(u16,u16),u_SetWindowPos(u16,u16);
 u32 u_ScrollWindow(u16,u16);
@@ -101,6 +102,11 @@ u32 g_UnrealizeObject(u16, u16);
 #define S MOD_SOUND
 #define L MOD_SHELL
 const struct api api_table[] = {
+    { U,15,"GetCurrentTime",0,0,H(u_GetCurrentTime) },
+    { U,150,"LoadMenu",6,0,H(u_LoadMenu) },
+    { U,158,"SetMenu",4,0,H(u_SetMenu) },
+    { U,286,"GetDesktopWindow",0,0,H(u_GetDesktopHwnd) },
+    { U,287,"GetLastActivePopup",2,0,H(u_GetLastActivePopup) },
     { U,175,"LoadBitmap",6,0,H(u_LoadBitmap) },
     { G,52,"CreateCompatibleDC",2,0,H(g_CreateCompatibleDC) },
     { G,34,"BitBlt",20,0,H(g_BitBlt) },
