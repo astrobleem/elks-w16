@@ -396,6 +396,10 @@ static void tick_done(u32 t)
     GrGetScreenInfo(&si);
     dt = now_ms() - t;
     tk_n++;
+#ifdef W16_COMPACT_LOG
+    if (!(tk_n & 63)) wlog("w16: timer messages %lu, latest %lu ms\n",
+                            (unsigned long)tk_n,(unsigned long)dt);
+#else
     tk_sum += dt;
     if (dt > tk_max)
         tk_max = dt;
@@ -407,6 +411,7 @@ static void tick_done(u32 t)
              "%lu %lu %lu %lu %lu %lu\n", (unsigned long)tk_n, (unsigned long)tk_sum, (unsigned long)tk_max,
              (unsigned long)tk_hist[0], (unsigned long)tk_hist[1], (unsigned long)tk_hist[2],
              (unsigned long)tk_hist[3], (unsigned long)tk_hist[4], (unsigned long)tk_hist[5]);
+#endif
 }
 
 static void purge(u16 hwnd)
@@ -1239,16 +1244,24 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
         if ((wp & 0xFFF0) == SC_CLOSE)
             return win_send(w, WM_CLOSE, 0, 0);
         return 0;
-    case WM_ERASEBKGND:
-        if (w->cls < 0) {               /* dialogs and controls: white background */
-            gdi_fill(w->client, GR_RGB(255, 255, 255), 0, 0, w->cw, w->ch);
-            return 1;
+    case WM_ERASEBKGND: {
+        struct dc *dc = dc_get(wp);
+        int l = 0, t = 0, r = w->cw, b = w->ch;
+        if (w->cls < 0)                /* dialogs and controls: white background */
+            c = 0xffffffUL;
+        else {
+            c = brush_color(classes[w->cls].hbrush, &isnull);
+            if (isnull)
+                return 0;
         }
-        c = brush_color(classes[w->cls].hbrush, &isnull);
-        if (isnull)
-            return 0;
-        gdi_fill(w->client, rgb_to_gr(c), 0, 0, w->cw, w->ch);
+        /* BeginPaint revalidates only the dirty bounds. Erasing the rest of
+         * the client would discard pixels the application will not repaint. */
+        if (dc && dc->paint && dc->w == w && w->invalid) {
+            l = w->ul; t = w->ut; r = w->ur; b = w->ub;
+        }
+        gdi_fill(w->client, rgb_to_gr(c), l, t, r - l, b - t);
         return 1;
+    }
     case WM_PAINT:
         w->invalid = 0;
         w->erase = 0;

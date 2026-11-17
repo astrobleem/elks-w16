@@ -43,8 +43,9 @@ The project is deliberately small in scope. It runs the source-built examples he
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
 | **Windows 3.0 REVERSI** | Play against the computer, menus, hints, cursors, accelerators and About | Bring your own copy |
+| **Windows 3.0 SOLITAIRE** | Stock dealing, basic tableau moves, and Game → Options in the [experimental VGA build](docs/build.md#experimental-vga-solitaire) | Bring your own copy |
 
-These results come from emulator runs. Tandy configurations have been exercised in **86Box and MartyPC**; the expanded-PCjr configuration has been exercised in **DOSBox-X**. **No physical Tandy or PCjr validation is claimed.** The [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) explains the configurations, timings and memory limits.
+These results come from emulator runs. Tandy configurations have been exercised in **86Box and MartyPC**; the expanded-PCjr configuration has been exercised in **DOSBox-X**. Solitaire was tested separately in **QEMU with 640×480 VGA**. No physical hardware validation is claimed. The [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) explains the configurations, timings and memory limits.
 
 <table>
   <tr>
@@ -70,6 +71,12 @@ python3 tools/winmine8088.py /path/to/original/WINMINE.EXE /tmp/mine8086.exe
 The output path must not already exist. Copy that private output into your ELKS guest, start the patched VGA Nano-X server and run `w16 /path/to/mine8086.exe`. Use a writable working directory if you want settings saved to `winmine.ini`. No Microsoft executable is distributed here. The transformer targets a specific two-segment layout, not arbitrary Windows programs.
 
 The converted game has run on ELKS in DOSBox-X's 8086 CPU mode. Mouse input revealed numbered squares and placed flags; the Game menu switched to an Intermediate board. This does not establish physical 8088 compatibility, original clock speed, or complete coverage of every game path. The legacy sound service reports no voices. The compact build retains API call tracing (`-t`) and error messages but omits detailed verbose logging and the allocation census to fit its two code segments.
+
+### Solitaire on experimental VGA
+
+[![Windows 3.0 Solitaire on ELKS after dealing three cards, captured in QEMU at 640×480 VGA](docs/screenshots/solitaire-stock-deal-qemu-vga.png)](docs/gallery.md#solitaire-on-experimental-vga)
+
+The separately supplied Windows 3.0 executable runs in QEMU. Stock dealing, basic tableau moves, and Options have been tested; a full game and real hardware have not. See the [VGA setup and limitations](docs/build.md#experimental-vga-solitaire).
 
 ## Build it from source
 

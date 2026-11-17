@@ -4,7 +4,7 @@
 
 Actual captures from prior emulator runs of `w16` on ELKS. Images are kept as supplied, with no invented UI or composited application windows. Click an image to view the full capture.
 
-The display target is 320×200 with 16 colours; these captures are displayed at 640×400, or include emulator window controls. All machines shown below are **emulated**. These images do not establish physical-hardware compatibility or performance.
+Tandy and PCjr target 320×200 with 16 colours; their captures are displayed at 640×400 or include emulator window controls. The separate experimental VGA build runs at 640×480 with 16 colours. All machines shown below are **emulated**. These images do not establish physical-hardware compatibility or performance.
 
 ## Windows 3.0 applications
 
@@ -49,6 +49,18 @@ The display target is 320×200 with 16 colours; these captures are displayed at 
 [![Windows 3.0 WINVER showing its Real Mode Windows Version 3.00 dialog under w16 in 86Box](screenshots/winver-86box-8088.png)](screenshots/winver-86box-8088.png)
 
 **86Box · emulated 8088 · capture includes emulator controls.** This is the Windows application's own version dialog running under `w16`; it does not mean a Windows operating system is running underneath.
+
+### Solitaire on experimental VGA
+
+<table>
+  <tr>
+    <td width="50%"><a href="screenshots/solitaire-stock-deal-qemu-vga.png"><img src="screenshots/solitaire-stock-deal-qemu-vga.png" alt="Windows 3.0 Solitaire showing seven tableau piles and three cards dealt from stock, in QEMU VGA" width="480"></a></td>
+    <td width="50%"><a href="screenshots/solitaire-options-qemu-vga.png"><img src="screenshots/solitaire-options-qemu-vga.png" alt="Windows 3.0 Solitaire Options dialog open over the tableau, in QEMU VGA" width="480"></a></td>
+  </tr>
+  <tr><td align="center">Draw Three after a stock click</td><td align="center">Game → Options</td></tr>
+</table>
+
+**QEMU · ELKS 0.9.2 · 640×480 VGA framebuffer captures.** This is the separately supplied Windows 3.0 executable running on the [experimental VGA build](build.md#experimental-vga-solitaire). The captures show tested features, not full-game or physical-hardware compatibility.
 
 ## Source-built examples
 
