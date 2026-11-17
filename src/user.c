@@ -69,6 +69,9 @@ static void client_origin(struct wnd *w, int *x, int *y)
     *x = (i16)px; *y = (i16)py;
 }
 
+void win_client_origin(struct wnd *w,int *x,int *y)
+{ client_origin(w,x,y); }
+
 static struct wnd *top_window(struct wnd *w)
 {
     int n = 0;

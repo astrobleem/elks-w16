@@ -1087,3 +1087,34 @@ void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n)
     gs_usebg(GS(d), d->bkmode == OPAQUE);
     GrText(d->wid, d->gc, x, y, text, n, GR_TFASCII | GR_TFTOP);
 }
+
+/* Negotiated visible native framebuffer readback; memory DCs are not accepted. */
+u32 g_GetPixel(u16 ss, u16 ap)
+{
+    struct dc *d;
+    i16 x,y;
+    GR_GC_INFO gi;
+    GR_PIXELVAL pixel = 255;
+    GR_PALETTE *p = (GR_PALETTE *)w16_scratch;
+    if (ap > 0xfffa) return 0xffffffffUL;
+    x=(i16)AW(2);y=(i16)AW(0);d=dc_get(AW(4));
+    if (!d || x<0 || y<0 || (d->w && (x>=d->w->cw || y>=d->w->ch)))
+        return 0xffffffffUL;
+    memset(&gi,0,sizeof(gi));GrGetGCInfo(d->gc,&gi);
+    if (gi.gcid!=d->gc || gi.region || !(gi.mode & 0x1000)) return 0xffffffffUL;
+    GrReadArea(d->wid,x,y,1,1,&pixel);
+    if (pixel>=16) return 0xffffffffUL;
+    memset(p,0,sizeof(*p));GrGetSystemPalette(p);
+    if (p->count!=16) return 0xffffffffUL;
+    return (u32)p->palette[pixel].r | ((u32)p->palette[pixel].g<<8) |
+           ((u32)p->palette[pixel].b<<16);
+}
+
+/* DC device origin in screen coordinates, including all ancestor clients.
+ * Root/display and the separate source-memory DCs have origin(0,0). */
+u32 g_GetDCOrg(u16 ss,u16 ap)
+{
+ struct dc*d=dc_get(AW(0));int x=0,y=0;
+ if(d&&d->w)win_client_origin(d->w,&x,&y);
+ return (u16)x|((u32)(u16)y<<16);
+}

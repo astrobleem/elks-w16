@@ -136,6 +136,7 @@ struct dc {
 
 extern struct wnd wins[MAXWIN];
 struct wnd *win_get(u16 hwnd);
+void win_client_origin(struct wnd *w,int *x,int *y);
 u32  win_send(struct wnd *w, u16 msg, u16 wp, u32 lp);
 void win_invalidate_all(struct wnd *w, int erase);
 

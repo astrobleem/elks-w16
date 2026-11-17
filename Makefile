@@ -23,6 +23,9 @@ test: host samples
 	python3 tests/devicecapstest.py
 	python3 tests/brushorgtest.py
 	python3 tests/setpixeltest.py
+	python3 tests/dcorgtest.py
+	python3 tests/getpixeltest.py
+	python3 tests/readpixelbackendtest.py
 	python3 tests/missingtraptest.py
 
 clean:

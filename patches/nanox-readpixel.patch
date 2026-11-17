@@ -1,0 +1,92 @@
+--- a/src/include/nano-X.h
++++ b/src/include/nano-X.h
+@@ -100,6 +100,7 @@
+ #define GR_MODE_DRAWMASK	0x00FF
+ #define GR_MODE_EXCLUDECHILDREN	0x0100		/* exclude children on clip*/
+ #define GR_MODE_EXCLUDEENDPOINT	0x0200		/* GrLine leaves out its end point (Windows LineTo)*/
++#define GR_MODE_HAVE_READPIXEL 0x1000 /* bounded one-pixel ReadArea, failure value255 */
+ #define GR_MODE_HAVE_EXCLUDEENDPOINT 0x0400	/* set by a server that implements the flag above*/
+ 
+ /* Line modes */
+--- a/src/nanox/client.c
++++ b/src/nanox/client.c
+@@ -4878,3 +4878,19 @@
+ 	return result;
+ }
+ #endif /*HAVE_FREETYPE_2_SUPPORT*/
++
++#if ELKS && !MW_FEATURE_AREAS
++/* Caller must first negotiate GR_MODE_HAVE_READPIXEL via GrGetGCInfo. */
++void GrReadArea(GR_DRAW_ID id, GR_COORD x, GR_COORD y, GR_SIZE width,
++               GR_SIZE height, GR_PIXELVAL *pixels)
++{
++    nxReadAreaReq *req;
++    *pixels = 255;
++    if (width != 1 || height != 1) return;
++    LOCK(&nxGlobalLock);
++    req = AllocReq(ReadArea);
++    req->drawid=id; req->x=x; req->y=y; req->width=1; req->height=1;
++    TypedReadBlock(pixels, sizeof(*pixels), GrNumReadArea);
++    UNLOCK(&nxGlobalLock);
++}
++#endif
+--- a/src/nanox/srvfunc.c
++++ b/src/nanox/srvfunc.c
+@@ -953,6 +953,9 @@
+ 
+ 	gcip->gcid = gc;
+ 	gcip->mode = gcp->mode;
++#if ELKS && !MW_FEATURE_AREAS
++	gcip->mode |= GR_MODE_HAVE_READPIXEL;
++#endif
+ 	gcip->region = gcp->regionid;
+ 	gcip->xoff = gcp->xoff;
+ 	gcip->yoff = gcp->yoff;
+@@ -2326,6 +2329,7 @@
+ 
+ 	SERVER_LOCK();
+ 
++	mode &= ~GR_MODE_HAVE_READPIXEL; /* query-only capability is never drawing state */
+ 	if (mode & GR_MODE_EXCLUDEENDPOINT)
+ 		mode |= GR_MODE_HAVE_EXCLUDEENDPOINT;	/* tell clients the flag is understood */
+ 	gcp = GsFindGC(gc);
+@@ -4269,3 +4273,23 @@
+ 	GdDelay(msecs);
+ 	SERVER_UNLOCK();
+ }
++
++#if ELKS && !MW_FEATURE_AREAS
++/* Negotiated one-pixel readback only; 255 is invalid for the 16-color backend. */
++void GrReadArea(GR_DRAW_ID id, GR_COORD x, GR_COORD y, GR_SIZE width,
++               GR_SIZE height, GR_PIXELVAL *pixels)
++{
++    GR_WINDOW *wp;
++    long sx, sy;
++    *pixels = 255;
++    if (width != 1 || height != 1 || x < 0 || y < 0) return;
++    wp = GsFindWindow(id);
++    if (!wp || !wp->realized || !wp->output ||
++        (wp != rootwp && wp->owner != curclient) ||
++        x >= wp->width || y >= wp->height || wp->psd->ncolors != 16) return;
++    sx = (long)wp->x + x; sy = (long)wp->y + y;
++    if (sx < 0 || sy < 0 || sx >= wp->psd->xvirtres || sy >= wp->psd->yvirtres) return;
++    if (wp != rootwp && GsFindVisibleWindow((GR_COORD)sx,(GR_COORD)sy) != wp) return;
++    GdReadArea(wp->psd, (GR_COORD)sx, (GR_COORD)sy, 1, 1, pixels);
++}
++#endif
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -908,6 +908,13 @@
+ 	GsWriteType(current_fd,GrNumReadArea);
+ 	GsWrite(current_fd, area, size);
+ 	free(area);
++#elif ELKS
++    nxReadAreaReq *req = r;
++    GR_PIXELVAL pixel = 255;
++    if (!req->hilength && GetReqLen(req) == sizeof(*req))
++        GrReadArea(req->drawid, req->x, req->y, req->width, req->height, &pixel);
++    GsWriteType(current_fd, GrNumReadArea);
++    GsWrite(current_fd, &pixel, sizeof(pixel));
+ #endif
+ }
+ 
