@@ -505,6 +505,15 @@ int main(int argc,char**argv){
    for(y=0;y<11;y++)for(x=0;x<17;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==expected[y*17+x]);
   }
  }
+ /* Odd-width monochrome DIB -> Win16 memory DC. Compare all 6,867
+  * visible pixels to the pattern oracle, not raw words (padding is not ink). */
+ setup(109,63,1);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ {u16 target=compatible(e,109,63);assert(target&&bitmap_select(e,target)==DEFAULT_BITMAP);
+  assert(memblit(e,d,0,0,0,0,109,63,0x00cc0020));
+  for(y=0;y<63;y++)for(x=0;x<109;x++)
+   assert(bitmap_index(&bitmaps[bi(target)],x,y)==pattern(x,y));
+ }
+ puts("Monochrome memory-DC copy: all 6867 odd-width image pixels match");
  /* Exact Solitaire 71x96 source to destination y=-3 crop. */
  setup(71,96,1);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
  {u16 target=compatible(e,71,96);assert(bitmap_select(e,target)==DEFAULT_BITMAP);
