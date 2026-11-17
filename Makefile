@@ -20,6 +20,7 @@ test: host samples
 	python3 tests/lineddatest.py
 	python3 tests/enumobjtest.py
 	python3 tests/recttest.py
+	python3 tests/globaltest.py
 	python3 tests/childtest.py
 	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py

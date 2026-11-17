@@ -374,6 +374,8 @@ u32 k_LoadResource(u16 ss, u16 ap)
 u32 k_GlobalLock(u16 ss, u16 ap)
 {
     u16 h = AW(0);
+    u32 ptr;
+    if(global_pointer(h,&ptr)) return ptr;
     if (rsrc_by_seg(h) < 0) {
         wlog("w16: GlobalLock(%04x): only loaded resources are global memory here\n", h);
         return 0;
@@ -381,7 +383,12 @@ u32 k_GlobalLock(u16 ss, u16 ap)
     return (u32)h << 16;
 }
 
-u32 k_GlobalUnlock(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }
+u32 k_GlobalUnlock(u16 ss, u16 ap) { return global_unlock(AW(0)); }
+u32 k_GlobalSize(u16 ss,u16 ap)
+{
+    int i=rsrc_by_seg(AW(0));
+    return i>=0?((u32)rsrc[i].len+15)&~15UL:global_size(AW(0));
+}
 
 /* FreeResource(hResData): 0 on success */
 u32 k_FreeResource(u16 ss, u16 ap)
@@ -411,6 +418,7 @@ void rsrc_census(u16 *n, u32 *bytes)
 void kernel_shutdown(void)
 {
     int i, n = 0;
+    global_shutdown();
     for (i = 0; i < MAXRSRC; i++) {
         if (rsrc[i].used && rsrc[i].seg) {
             seg_free(rsrc[i].seg);

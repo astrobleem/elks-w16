@@ -258,4 +258,10 @@ int  w16_dump_frame(const char *tag);       /* frame buffer dump with -d */
 extern char opt_dump[40];
 extern int  opt_ready;
 
+/* global.c: single-segment task-owned global memory */
+int global_pointer(u16 h,u32 *ptr);
+u32 global_unlock(u16 h);
+u32 global_size(u16 h);
+void global_shutdown(void);
+
 #endif

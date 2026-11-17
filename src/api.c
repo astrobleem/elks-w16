@@ -18,6 +18,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #else
 #define H(f) f
 u32 g_EnumObjects(u16,u16);
+u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
@@ -78,9 +79,9 @@ const struct api api_table[] = {
     { G,103,"PtVisible",6,0,H(g_PtVisible) },
     { G,148,"SetBrushOrg",6,0,H(g_SetBrushOrg) },
     { K,6,"LocalReAlloc",0,API_MISSING,0 },
-    { K,15,"GlobalAlloc",0,API_MISSING,0 },
-    { K,16,"GlobalReAlloc",0,API_MISSING,0 },
-    { K,17,"GlobalFree",0,API_MISSING,0 },
+    { K,15,"GlobalAlloc",6,0,H(k_GlobalAlloc) },
+    { K,16,"GlobalReAlloc",8,0,H(k_GlobalReAlloc) },
+    { K,17,"GlobalFree",2,0,H(k_GlobalFree) },
     { U,34,"EnableWindow",4,0,H(u_EnableWindow) },
     { U,56,"MoveWindow",0,API_MISSING,0 },
     { U,73,"SetRectEmpty",4,0,H(u_SetRectEmpty) },
@@ -98,6 +99,7 @@ const struct api api_table[] = {
     { U,118,"RegisterWindowMessage",4,0,H(u_RegisterWindowMessage) },
 
     /* KERNEL */
+    { K,20,"GlobalSize",2,0,H(k_GlobalSize) },
     { K, 154, "GlobalNotify", 4, 0, H(k_GlobalNotify) },
     { K,   3, "GetVersion",        0, 0, H(k_GetVersion) },
     { K,   5, "LocalAlloc",        4, 0, H(k_LocalAlloc) },
