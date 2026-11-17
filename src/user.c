@@ -1141,6 +1141,16 @@ u32 u_ReleaseCapture(u16 ss, u16 ap)
 }
 
 /* SetFocus(hWnd): returns the window that had the focus */
+/* The active window is the top-level owner of the actual Nano-X focus,
+ * not necessarily the child HWND that last received keyboard input. */
+u32 u_GetActiveWindow(u16 ss,u16 ap)
+{
+    int client;
+    struct wnd *w=top_window(win_by_nx(GrGetFocus(),&client));
+    (void)ss; (void)ap;
+    return w?w->hwnd:0;
+}
+
 u32 u_SetFocus(u16 ss, u16 ap)
 {
     struct wnd *w = win_get(AW(0));

@@ -52,6 +52,7 @@ u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16
 u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
+u32 u_GetActiveWindow(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
 u32 u_LoadAccelerators(u16, u16), u_TranslateAccelerator(u16, u16), u_WinHelp(u16, u16);
@@ -293,7 +294,7 @@ const struct api api_table[] = {
     { U,  47, "ISWINDOW", 0, API_MISSING, 0 },
     { U,  49, "ISWINDOWVISIBLE", 0, API_MISSING, 0 },
     { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
-    { U,  60, "GETACTIVEWINDOW", 0, API_MISSING, 0 },
+    { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
     { U,  61, "SCROLLWINDOW", 0, API_MISSING, 0 },
     { U,  62, "SETSCROLLPOS", 0, API_MISSING, 0 },
     { U,  63, "GETSCROLLPOS", 0, API_MISSING, 0 },
