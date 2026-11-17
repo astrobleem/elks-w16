@@ -471,20 +471,25 @@ static int brush_pat(struct dc *d)
 }
 
 /* Monochrome pattern phase is relative to the DC brush origin. Scratch holds
- * sixteen 640-pixel rows; unsupported larger extents fail before drawing. */
+ * bounded rows; each packet leaves room for the Nano-X request header. */
 static int pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
 {
     GR_BITMAP *buf = (GR_BITMAP *)w16_scratch;      /* at most1280 bytes */
-    int wpr, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
+    int wpr, batch, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
     if (w <= 0 || h <= 0)return 1;
     if (w>640||h>480||(long)x+w-1>32767L||(long)y+h-1>32767L)return 0;
     wpr = (w + 15) / 16;
+    /* ELKS Nano-X accepts 512-byte requests, including the 16-byte header.
+     * Its legacy GrBitmap splitter only checks payload size. Keep 32 bytes
+     * spare here so neither exact-512 payloads nor full-width rows kill it. */
+    batch = 480 / (2 * wpr);
+    if (batch > 16) batch = 16;
     gs_mode(GS(d), GR_MODE_COPY);
     gs_fg(GS(d), rgb_to_gr(d->bkcolor));
     gs_bg(GS(d), rgb_to_gr(d->textcolor));
     gs_usebg(GS(d), 1);
-    for (y0 = 0; y0 < h; y0 += 16) {
-        int rows = h - y0 > 16 ? 16 : h - y0;
+    for (y0 = 0; y0 < h; y0 += batch) {
+        int rows = h - y0 > batch ? batch : h - y0;
         for (r = 0; r < rows; r++) {
             u16 pr = bmps[bi].rows[(((long)y + y0 + r - d->brushy) % bh + bh) % bh], word = 0;
             for (k = 0; k < wpr; k++) {
