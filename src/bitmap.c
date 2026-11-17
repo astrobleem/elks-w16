@@ -12,7 +12,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-struct memory_dc {u16 bitmap;u8 used,stretchmode,rop2;i16 brushx,brushy;u32 textcolor,bkcolor;};
+struct memory_dc {u16 bitmap,pen,brush,font;u8 used,stretchmode,rop2;i16 brushx,brushy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
 #define MEMORY_SAVE_DEPTH 4
 static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
@@ -47,6 +47,22 @@ u16 bitmap_rop2(u16 h,u16 mode)
  int i=di(h);u16 old;if(i<0)return 0;old=memory[i].rop2;
  if(mode>=1&&mode<=16)memory[i].rop2=mode;return old;
 }
+u16 bitmap_object(u16 h,u16 type,u16 object)
+{
+ int i=di(h);u16 *slot,old;if(i<0)return 0;
+ slot=type==1?&memory[i].pen:type==2?&memory[i].brush:type==3?&memory[i].font:0;
+ if(!slot)return 0;old=*slot;if(object)*slot=object;return old;
+}
+int bitmap_object_used(u16 object)
+{
+ int i,j;
+ for(i=0;i<ND;i++)if(memory[i].used){
+  if(memory[i].pen==object||memory[i].brush==object||memory[i].font==object)return 1;
+  for(j=0;j<memory_saved_count[i];j++)
+   if(memory_saved[i][j].pen==object||memory_saved[i][j].brush==object||memory_saved[i][j].font==object)return 1;
+ }
+ return 0;
+}
 static void release_pixels(struct bitmap*b)
 {int j;for(j=0;j<BITMAP_BANKS;j++)if(b->bank[j]){seg_free(b->bank[j]);b->bank[j]=0;}}
 static void release_bitmap(int i){release_pixels(&bitmaps[i]);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
@@ -75,7 +91,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
@@ -109,6 +125,27 @@ static u8 bitmap_nearest(struct bitmap*b,u32 rgb)
   c=bitmap_rgb(b,i);dr=(long)(rgb&255)-(long)(c&255);dg=(long)((rgb>>8)&255)-(long)((c>>8)&255);db=(long)((rgb>>16)&255)-(long)((c>>16)&255);
   dist=dr*dr+dg*dg+db*db;if(dist<closest){closest=dist;best=i;}
  }return best;
+}
+int bitmap_patblt(u16 h,i16 x,i16 y,i16 w,i16 height,u32 rop,u32 color,u16 style,int nullbrush)
+{
+ int m=di(h),i,row,col;u8 index=0,mask;struct bitmap*b;
+ long l=x,t=y,r,bot,ww=w,hh=height;
+ if(m<0||(i=bi(memory[m].bitmap))<0)return 0;b=&bitmaps[i];
+ if(rop!=0x00f00021UL&&rop!=0x005a0049UL&&rop!=0x00550009UL&&rop!=0x00000042UL&&rop!=0x00ff0062UL)return 0;
+ if(rop==0x00f00021UL||rop==0x005a0049UL){
+  if(nullbrush)return 1;if(style!=0)return 0;index=bitmap_nearest(b,color);
+ }
+ if(ww<0){l+=ww;ww=-ww;}if(hh<0){t+=hh;hh=-hh;}r=l+ww;bot=t+hh;
+ if(l<0)l=0;if(t<0)t=0;if(r>b->w)r=b->w;if(bot>b->h)bot=b->h;
+ mask=b->bpp==1?1:15;
+ if(rop==0x00ff0062UL)index=mask;
+ for(row=t;row<bot;row++)for(col=l;col<r;col++){
+  u8 out=index;
+  if(rop==0x00550009UL)out=bitmap_index(b,col,row)^mask;
+  else if(rop==0x005a0049UL)out=bitmap_index(b,col,row)^index;
+  bitmap_put(b,col,row,out);
+ }
+ return 1;
 }
 u32 bitmap_getpixel(u16 h,i16 x,i16 y)
 {

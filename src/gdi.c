@@ -382,7 +382,7 @@ u32 g_DeleteObject(u16 ss, u16 ap)
         return 0;
     if (h < HOBJ_BASE)
         return 1;                       /* stock objects are never deleted */
-    if(saved_object(h))return 0;
+    if(saved_object(h)||bitmap_object_used(h))return 0;
     for (i = 0; i < MAXDC; i++)
         if (dcs[i].used && (dcs[i].pen == h || dcs[i].brush == h || dcs[i].font == h)) {
             vlog("w16: DeleteObject %04x refused: still selected\n", h);
@@ -398,7 +398,7 @@ u32 g_SelectObject(u16 ss, u16 ap)
     u16 h = AW(0), prev;
     struct dc *d = dc_get(AW(2));
     struct gobj *o = obj_get(h);
-    if (!d) return bitmap_select(AW(2),h);
+    if (!d) return o?bitmap_object(AW(2),o->type,h):bitmap_select(AW(2),h);
     if (!o) return 0;
     switch (o->type) {
     case OBJ_PEN:   prev = d->pen;   d->pen = h;   return prev;
@@ -695,8 +695,11 @@ u32 g_PatBlt(u16 ss, u16 ap)
     int h = (i16)AW(4), w = (i16)AW(6), y = (i16)AW(8), x = (i16)AW(10), bi;
     struct dc *d = dc_get(AW(12));
     GR_COLOR c;
-    if (!d)
-        return 0;
+    if (!d) {
+        struct gobj*o=obj_get(bitmap_object(AW(12),OBJ_BRUSH,0));
+        if(!o)return 0;
+        return bitmap_patblt(AW(12),x,y,w,h,rop,o->color,o->style,o->null);
+    }
     if (w < 0) { x += w; w = -w; }
     if (h < 0) { y += h; h = -h; }
     if (!w || !h)

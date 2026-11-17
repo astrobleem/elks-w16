@@ -38,6 +38,7 @@ struct gobj {int used,type,style,width;} object={1,0,0,0},objs[1];static struct{
 struct gobj*obj_get(u16 h){return h==0x400?&object:0;}
 int bmp_index(u16 h){return h==0x900?0:-1;}
 int bitmap_delete(u16 h){(void)h;return -1;}
+int bitmap_object_used(u16 h){(void)h;return 0;}
 #define vlog(...) ((void)0)
 '''
 code+=''.join(func(n) for n in ('dc_get','saved_object','g_SaveDC','g_RestoreDC','g_GetROP2','dc_release','g_DeleteObject'))

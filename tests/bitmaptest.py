@@ -495,6 +495,29 @@ int main(int argc,char**argv){
  assert(bitmap_deletedc(d)==1);assert(bitmap_select(e,b)==DEFAULT_BITMAP);
  assert(bitmap_deletedc(e)==1);assert(bitmap_delete(b)==1);d=dcnew();assert(!bitmap_restoredc(d,-1));
  assert(!bitmap_savedc(999)&&!bitmap_restoredc(999,-1));bitmap_shutdown();clean();
+
+ /* Genuine memory-DC brush state and solid/indexed raster operations. */
+ setup(1,1,1);win.cw=640;win.ch=480;
+ for(k=0;k<16;k++){native_palette.palette[k].r=k*17;native_palette.palette[k].g=k*17;native_palette.palette[k].b=k*17;}
+ b=compatible(9,640,480);d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ assert(bitmap_object(d,2,0x444)==0x300);assert(bitmap_object(d,1,0x446)==0x30e);
+ assert(bitmap_savedc(d)==1);assert(bitmap_object(d,2,0x448)==0x444);
+ assert(bitmap_object_used(0x444)&&bitmap_object_used(0x448)&&bitmap_object_used(0x446));
+ assert(bitmap_patblt(d,0,0,640,480,0x00000042,0,0,0));
+ assert(bitmap_patblt(d,0,0,640,3,0x00f00021,0xffffff,0,0));
+ for(y=0;y<480;y++)for(x=0;x<640;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==(y<3?15:0));
+ assert(bitmap_patblt(d,637,52,20,3,0x00ff0062,0,0,0));
+ assert(bitmap_patblt(d,640,55,-3,-3,0x00550009,0,0,0));
+ for(y=52;y<55;y++)for(x=637;x<640;x++)assert(!bitmap_index(&bitmaps[bi(b)],x,y));
+ assert(bitmap_patblt(d,-2,-2,4,4,0x00f00021,0x555555,0,0));
+ assert(bitmap_index(&bitmaps[bi(b)],0,0)==5&&bitmap_index(&bitmaps[bi(b)],1,1)==5&&bitmap_index(&bitmaps[bi(b)],2,1)==15);
+ assert(bitmap_patblt(d,0,0,2,2,0x005a0049,0x333333,0,0));assert(bitmap_index(&bitmaps[bi(b)],0,0)==6);
+ assert(!bitmap_patblt(d,0,0,2,2,0x123456,0,0,0));
+ assert(!bitmap_patblt(d,0,0,2,2,0x00f00021,0,3,0));assert(bitmap_index(&bitmaps[bi(b)],0,0)==6);
+ assert(bitmap_patblt(d,0,0,2,2,0x00f00021,0,0,1));assert(bitmap_index(&bitmaps[bi(b)],0,0)==6);
+ assert(bitmap_restoredc(d,-1));assert(bitmap_object(d,2,0)==0x444&&!bitmap_object_used(0x448));
+ assert(bitmap_deletedc(d));assert(!bitmap_object_used(0x444)&&!bitmap_object_used(0x446));
+ bitmap_shutdown();clean();win.cw=win.ch=100;
  /* Colored one-bit resources preserve RGB instead of text/background expansion. */
  for(k=0;k<4;k++){
   u32 first,second;

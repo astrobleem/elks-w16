@@ -211,6 +211,9 @@ void      paint_done(struct wnd *w);
 /* Resource bitmap/source-only memory DC support. */
 void registered_reset(void);
 void bitmap_shutdown(void);
+u16 bitmap_object(u16 h,u16 type,u16 object);
+int bitmap_object_used(u16 object);
+int bitmap_patblt(u16 h,i16 x,i16 y,i16 w,i16 height,u32 rop,u32 color,u16 style,int nullbrush);
 u16 bitmap_savedc(u16 h);
 u16 bitmap_restoredc(u16 h,i16 level);
 u16 bitmap_rop2(u16 h,u16 mode);
