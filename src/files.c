@@ -143,6 +143,17 @@ void files_directory_label(char *out)
     for(i=3;out[i];i++)if(out[i]=='/')out[i]='\\';
 }
 
+/* DOS AH=47: a 64-byte ASCIIZ relative directory, without drive/root prefix. */
+u16 files_getcwd(u16 drive,u16 seg,u16 off)
+{
+    char path[64];unsigned i,n=strlen(dos_cwd);
+    if(drive!=0 && drive!=3)return 15; /* invalid drive */
+    if(n>=sizeof(path))return 3; /* cannot represent this path in DOS buffer */
+    if(!far_range(seg,off,n+1))return 87;
+    for(i=0;i<n;i++)path[i]=dos_cwd[i]=='/'?'\\':dos_cwd[i];
+    path[n]=0;fcopy_out(seg,off,path,n+1);return 0;
+}
+
 static int file_index(u16 handle)
 {
     unsigned i=(unsigned)(handle-FILE_BASE);

@@ -71,6 +71,7 @@ void seg_free(u16 seg);
 /* DOS directory helpers: outputs need 124 bytes, except label needs 128. */
 int files_directory(const char *input,char *out,int change);
 void files_directory_label(char *out);
+u16 files_getcwd(u16 drive,u16 seg,u16 off);
 
 int palette_valid(u16 h);
 int palette_delete(u16 h);

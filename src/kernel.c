@@ -698,6 +698,12 @@ void w16_int21_dispatch(void)
         }
         break;
     }
+    case 0x47: {               /* current directory on our confined C: drive */
+        u16 error=files_getcwd(rd16(ss,f+R_DX)&255,rd16(ss,f+R_DS),rd16(ss,f+R_SI));
+        wr16(ss,f+R_AX,error?error:0x0100);
+        if(error)fl|=1;
+        break;
+    }
     case 0x41: {               /* unlink within mapped local drive only */
         u16 error=files_unlink(rd16(ss,f+R_DS),rd16(ss,f+R_DX));
         wr16(ss,f+R_AX,error);

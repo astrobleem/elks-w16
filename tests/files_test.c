@@ -123,6 +123,12 @@ int main(void)
     assert(!k_GetTempFileName(ss,0)); /* unmapped D: */
     assert(!files_directory("c:\\pictures",path,1));assert(!strcmp(path,"Pictures"));
     files_directory_label(path);assert(!strcmp(path,"C:\\Pictures"));
+    assert(!files_getcwd(0,ofs,200));fcopy_in(path,ofs,200,9);assert(!strcmp(path,"Pictures"));
+    assert(!files_getcwd(3,ofs,200));
+    wr8(ofs,200,0x77);assert(files_getcwd(4,ofs,200)==15&&rd8(ofs,200)==0x77);
+    assert(files_getcwd(3,0,0)==87);
+    assert(files_getcwd(3,ofs,65530)==87);
+
     h=create("current.bmp");assert(h!=0xffff);closeh(h);
     assert(!access("Pictures/current.bmp",F_OK));
     h=openh("C:\\Mixed.BMP");assert(h!=0xffff);closeh(h);
@@ -130,6 +136,8 @@ int main(void)
     assert(files_directory("C:\\linked",path,1)<0);
     files_directory_label(path);assert(!strcmp(path,"C:\\Pictures"));
     assert(!files_directory("..",path,1));assert(!strcmp(path,"."));
+    wr8(ofs,200,0x77);assert(!files_getcwd(3,ofs,200)&&!rd8(ofs,200));
+
     h=openh("pictures/CURRENT.BMP");assert(h!=0xffff);closeh(h);
     assert(files_directory("D:\\",path,1)<0);
     assert(!files_directory("..",path,1));assert(!strcmp(path,"."));
