@@ -692,7 +692,9 @@ u32 g_CreateBitmap(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2), bpp = AW(4), planes = AW(6), h = AW(8), w = AW(10), y;
     int i;
-    if (planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
+    /* The 1x1 mono placeholder is selected to detach a DDB before GetDIBits.
+     * Unlike legacy brush-row handles, owned bitmaps are real memory-DC objects. */
+    if ((w==1 && h==1) || planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
         return bitmap_create(w,h,planes,bpp,seg,off);
     }
     for (i = 0; i < MAXBMP && bmps[i].used; i++)

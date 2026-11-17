@@ -249,6 +249,10 @@ static void ddb_bits_test(void){
  assert(bitmap_index(&bitmaps[bi(h)],0,0)==14);
  assert(bitmap_index(&bitmaps[bi(h)],1,0)==3);
  bitmap_shutdown();clean();
+ h=bitmap_create(1,1,1,1,0,0);assert(h);
+ args[0]=0;{u16 dc=g_CreateCompatibleDC(0,0);assert(dc);
+ assert(bitmap_select(dc,h)==DEFAULT_BITMAP);
+ assert(bitmap_select(dc,DEFAULT_BITMAP)==h);assert(bitmap_delete(h));bitmap_deletedc(dc);}
  h=bitmap_create(17,2,1,1,0,0);assert(h);
  assert(bitmap_bits(h,0,0,0,0)==8);bitmap_shutdown();clean();
  h=bitmap_create(640,480,1,4,0,0);assert(h);
