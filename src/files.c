@@ -250,7 +250,8 @@ u32 k_GetTempDrive(u16 ss,u16 ap)
     return 0x00013a43UL;
 }
 /* GetTempFileName(drive,prefix,unique,out): unique zero reserves the file,
- * nonzero only formats its name. All temporary files stay in mapped C:. */
+ * nonzero only formats its name. Numeric DOS drive 3 names C:, including
+ * the high-bit forced-drive form used by Win16. All files stay in mapped C:. */
 u32 k_GetTempFileName(u16 ss,u16 ap)
 {
     static u16 sequence=1;
@@ -258,7 +259,7 @@ u32 k_GetTempFileName(u16 ss,u16 ap)
     char prefix[PATHLEN],name[16],path[PATHLEN];
     u16 off=AW(0),seg=AW(2),unique=AW(4),drive=AW(10)&0x7f;
     unsigned tries,n;
-    if((drive && drive!='C' && drive!='c') || !far_range(seg,off,15)) return 0;
+    if((drive && drive!=3 && drive!='C' && drive!='c') || !far_range(seg,off,15)) return 0;
     if(AW(6)||AW(8)) { if(read_name(AW(8),AW(6),prefix)) return 0; }
     else strcpy(prefix,"TM");
     strcpy(name,"C:\\~TM0000.TMP");

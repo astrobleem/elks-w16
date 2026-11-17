@@ -107,6 +107,16 @@ int main(void)
     name("PB");arg(0,0);arg(2,ofs);arg(4,0x1234);arg(6,0);arg(8,ns);arg(10,'C');
     assert(k_GetTempFileName(ss,0)==0x1234);
     fcopy_in(path,ofs,0,15);assert(openh(path)==0xffff);
+    /* Actual PBRUSH.DLL passes numeric drive 3, not ASCII C. */
+    for(i=0;i<2;i++){
+        name("PB");arg(0,0);arg(2,ofs);arg(4,0);arg(6,0);arg(8,ns);arg(10,i?0x83:3);
+        assert(k_GetTempFileName(ss,0));
+        fcopy_in(path,ofs,0,15);assert(!strncmp(path,"C:\\~PB",6));
+        h=openfile(path,0x1002);assert(h!=0xffff);closeh(h);
+        assert(openfile(path,0x200)==0);
+    }
+    name("PB");arg(0,0);arg(2,ofs);arg(4,0);arg(6,0);arg(8,ns);arg(10,4);
+    assert(!k_GetTempFileName(ss,0)); /* unmapped D: */
     seg_free(ss);seg_free(ns);seg_free(ds);seg_free(ofs);assert(!host_live);
     puts("Win16 file roundtrip, OFSTRUCT, path isolation, case lookup, exhaustion and cleanup passed");
     return 0;
