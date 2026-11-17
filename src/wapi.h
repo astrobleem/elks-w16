@@ -229,6 +229,7 @@ u16 bitmap_create(u16 w,u16 h,u16 planes,u16 bpp,u16 seg,u16 off);
 int bitmap_brushorg(u16 dc,i16 x,i16 y,u32 *old);
 u32 bitmap_getpixel(u16 dc,i16 x,i16 y);
 u32 bitmap_setpixel(u16 dc,i16 x,i16 y,u32 rgb);
+u32 bitmap_origin(u16 h,int set,int viewport,i16 x,i16 y);
 u32 bitmap_getcolor(u16 h,int bk);
 u32 bitmap_setcolor(u16 dc,u32 rgb,int bk);
 int bitmap_delete(u16 h);

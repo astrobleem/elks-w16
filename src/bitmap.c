@@ -12,7 +12,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-struct memory_dc {u16 bitmap,pen,brush,font,palette;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury;u32 textcolor,bkcolor;};
+struct memory_dc {u16 bitmap,pen,brush,font,palette;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
 #define MEMORY_SAVE_DEPTH 4
 static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
@@ -28,6 +28,18 @@ static int bitmap_referenced(u16 h,int exclude)
   for(j=0;j<memory_saved_count[i];j++)if(memory_saved[i][j].bitmap==h)return 1;
  }
  return 0;
+}
+u32 bitmap_origin(u16 h,int set,int viewport,i16 x,i16 y)
+{
+ int m=di(h);i16 *px,*py;u32 old;if(m<0)return 0;
+ px=viewport?&memory[m].vx:&memory[m].wx;py=viewport?&memory[m].vy:&memory[m].wy;
+ old=(u16)*px|((u32)(u16)*py<<16);if(set){*px=x;*py=y;}return old;
+}
+static int memory_point(int m,int*x,int*y)
+{
+ long a=(long)*x-memory[m].wx+memory[m].vx,b=(long)*y-memory[m].wy+memory[m].vy;
+ if(a< -32768L||a>32767L||b< -32768L||b>32767L)return 0;
+ *x=a;*y=b;return 1;
 }
 u16 bitmap_savedc(u16 h)
 {
@@ -91,7 +103,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].palette=0x031e;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].wx=memory[i].wy=memory[i].vx=memory[i].vy=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].palette=0x031e;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
@@ -135,6 +147,7 @@ int bitmap_patblt(u16 h,i16 x,i16 y,i16 w,i16 height,u32 rop,u32 color,u16 style
  if(rop==0x00f00021UL||rop==0x005a0049UL){
   if(nullbrush)return 1;if(style!=0)return 0;index=bitmap_nearest(b,color);
  }
+ l-=memory[m].wx;l+=memory[m].vx;t-=memory[m].wy;t+=memory[m].vy;
  if(ww<0){l+=ww;ww=-ww;}if(hh<0){t+=hh;hh=-hh;}r=l+ww;bot=t+hh;
  if(l<0)l=0;if(t<0)t=0;if(r>b->w)r=b->w;if(bot>b->h)bot=b->h;
  mask=b->bpp==1?1:15;
@@ -164,23 +177,29 @@ u32 bitmap_moveto(u16 h,i16 x,i16 y)
 }
 int bitmap_lineto(u16 h,i16 x,i16 y,u32 color,u16 style,u16 width,int nullpen)
 {
- int m=di(h),i;long xx,yy,dx,dy,err,e2,sx,sy;u8 index;struct bitmap*b;
+ int m=di(h),i,ax,ay,bx=x,by=y;long xx,yy,dx,dy,err,e2,sx,sy;u8 index;struct bitmap*b;
  if(m<0||(i=bi(memory[m].bitmap))<0)return 0;
  if(!nullpen&&(style!=0||width>1))return 0;
  b=&bitmaps[i];index=bitmap_nearest(b,color);
- xx=memory[m].curx;yy=memory[m].cury;dx=(long)x-xx;dy=(long)y-yy;
+ ax=memory[m].curx;ay=memory[m].cury;
+ if(!memory_point(m,&ax,&ay)||!memory_point(m,&bx,&by))return 0;
+ memory[m].curx=x;memory[m].cury=y;x=bx;y=by;
+ xx=ax;yy=ay;dx=(long)x-xx;dy=(long)y-yy;
  sx=dx<0?-1:1;sy=dy<0?-1:1;if(dx<0)dx=-dx;if(dy>0)dy=-dy;err=dx+dy;
  if(!nullpen)while(xx!=x||yy!=y){
   memory_rop_pixel(b,(int)xx,(int)yy,index,memory[m].rop2);
   e2=2*err;if(e2>=dy){err+=dy;xx+=sx;}if(e2<=dx){err+=dx;yy+=sy;}
  }
- memory[m].curx=x;memory[m].cury=y;return 1;
+ return 1;
 }
 int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)
 {
  int m=di(h),i,x,y,x0,y0,x1,y1;u8 pi,bindex;struct bitmap*b;
  if(m<0||(i=bi(memory[m].bitmap))<0||r<=l||bot<=t)return 0;
  if((!np&&(ps!=0||pw>1))||(!nb&&bs!=0))return 0;
+ x0=l;y0=t;x1=r;y1=bot;
+ if(!memory_point(m,&x0,&y0)||!memory_point(m,&x1,&y1))return 0;
+ l=x0;t=y0;r=x1;bot=y1;
  b=&bitmaps[i];pi=bitmap_nearest(b,pen);bindex=bitmap_nearest(b,brush);
  x0=l<0?0:l;y0=t<0?0:t;x1=(long)r>b->w?b->w:r;y1=(long)bot>b->h?b->h:bot;
  for(y=y0;y<y1;y++)for(x=x0;x<x1;x++){
@@ -288,7 +307,14 @@ u32 g_BitBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(18));int m=di(AW(8)),dm=di(AW(18)),db=-1,b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
  if((!d&&dm<0)||(rop!=0x00cc0020UL&&rop!=0x008800c6UL)||w<=0||h<=0)return 0;
- if(m<0){struct dc*src=dc_get(AW(8));return src&&dm>=0&&rop==0x00cc0020UL?capture_copy(src,dm,dx,dy,sx,sy,w,h):0;}
+ {
+  int ax=dx,ay=dy,bx=sx,by=sy;struct dc*src=dc_get(AW(8));
+  if(!(dm>=0?memory_point(dm,&ax,&ay):gdi_map_point(d,&ax,&ay)))return 0;
+  if(m>=0){if(!memory_point(m,&bx,&by))return 0;}
+  else if(!src||!gdi_map_point(src,&bx,&by))return 0;
+  dx=ax;dy=ay;sx=bx;sy=by;
+  if(m<0)return dm>=0&&rop==0x00cc0020UL?capture_copy(src,dm,dx,dy,sx,sy,w,h):0;
+ }
  b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
  if(dm>=0){db=bi(memory[dm].bitmap);if(db<0||rop!=0x00cc0020UL)return 0;dw=bitmaps[db].w;dh=bitmaps[db].h;}
  else if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}

@@ -15,6 +15,7 @@ static struct dc*dc_get(u16 h){return h==9?&d:0;}
 static u16 rd16(u16 s,u16 o){assert(s==0x1000);return mem[o/2];}
 static void wr16(u16 s,u16 o,u16 v){assert(s==0x1000);mem[o/2]=v;}
 """
+code+='static u32 bitmap_origin(u16 h,int set,int v,i16 x,i16 y){return 0;}\n'
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=r"""
 int main(void){int x,y,i,j,l,t,r,b;u32 old;

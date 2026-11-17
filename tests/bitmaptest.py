@@ -98,6 +98,7 @@ static void GrCopyArea(int p,int g,int dx,int dy,int w,int h,int s,int sx,int sy
 code+=(root/'src/dib.h').read_text().replace('#include "w16.h"','')
 code+=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
 code+="static u16 rd16(u16 s,u16 o){return rd8(s,o)|((u16)rd8(s,o+1)<<8); }\nstatic void wr16(u16 s,u16 o,u16 v){wr8(s,o,v);wr8(s,o+1,v>>8); }\n"
+code+='u32 bitmap_origin(u16,int,int,i16,i16);\n'
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
@@ -177,7 +178,24 @@ static void stretch_tests(void){
  assert(stretch(d,0,0,13,11,0,0,13,11,0x00cc0020UL));
  for(y=0;y<22;y++)for(x=0;x<39;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],(x/3+(y/2)*3)&15));
  bitmap_shutdown();clean();
+ gdi_map_init(&dest);
  puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");
+}
+static void origin_tests(void){
+ u16 d,e,b,c;int x,y;native_palette.count=16;for(x=0;x<16;x++){native_palette.palette[x].r=x*17;native_palette.palette[x].g=x*7;native_palette.palette[x].b=x*3;}
+ d=dcnew();e=dcnew();b=bitmap_create(16,8,1,4,0,0);c=bitmap_create(16,8,1,4,0,0);
+ assert(bitmap_select(d,b)&&bitmap_select(e,c));
+ for(y=0;y<8;y++)for(x=0;x<16;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y)&15);
+ args[0]=300;args[1]=20;args[2]=d;assert(g_SetWindowOrg(0,0)==0);
+ args[0]=d;assert(g_GetWindowOrg(0,0)==((u32)300<<16|20));
+ bitmap_origin(e,1,0,40,400);assert(bitmap_savedc(e)==1);bitmap_origin(e,1,1,2,1);
+ assert(memblit(e,d,40,400,20,300,8,4,0xcc0020));
+ for(y=0;y<4;y++)for(x=0;x<8;x++)assert(bitmap_index(&bitmaps[bi(c)],x+2,y+1)==((x+y)&15));
+ assert(bitmap_restoredc(e,-1));assert(bitmap_origin(e,0,1,0,0)==0);
+ assert(bitmap_origin(e,0,0,0,0)==((u32)400<<16|40));
+ assert(bitmap_patblt(e,42,402,3,2,0xff0062,0,0,0));
+ for(y=2;y<4;y++)for(x=2;x<5;x++)assert(bitmap_index(&bitmaps[bi(c)],x,y)==15);
+ bitmap_shutdown();clean();puts("Memory origin BitBlt/PatBlt and SaveDC restoration passed");
 }
 static void dib_band_test(void){
  u16 b,s,t,start,n,x,y;int i,live;u8 saved;
@@ -277,6 +295,7 @@ static void small_ddb_bits_test(void){
 int main(int argc,char**argv){
  small_ddb_bits_test();
  ddb_bits_test();
+ origin_tests();
  dib_band_test();
  stretch_tests();
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;

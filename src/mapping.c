@@ -47,7 +47,7 @@ u32 g_SetMapMode(u16 ss,u16 ap)
 static u32 set_pair(u16 ss,u16 ap,int viewport,int extent)
 {
     struct dc*d=dc_get(AW(4));i16 x=(i16)AW(2),y=(i16)AW(0),*px,*py;u32 old;
-    if(!d)return 0;
+    if(!d)return extent?0:bitmap_origin(AW(4),1,viewport,x,y);
     if(extent){px=viewport?&d->vex:&d->wex;py=viewport?&d->vey:&d->wey;}
     else{px=viewport?&d->vx:&d->wx;py=viewport?&d->vy:&d->wy;}
     old=pack(*px,*py);
@@ -59,7 +59,7 @@ u32 g_SetWindowOrg(u16 ss,u16 ap){return set_pair(ss,ap,0,0);}
 u32 g_SetViewportOrg(u16 ss,u16 ap){return set_pair(ss,ap,1,0);}
 u32 g_SetWindowExt(u16 ss,u16 ap){return set_pair(ss,ap,0,1);}
 u32 g_SetViewportExt(u16 ss,u16 ap){return set_pair(ss,ap,1,1);}
-u32 g_GetWindowOrg(u16 ss,u16 ap){struct dc*d=dc_get(AW(0));return d?pack(d->wx,d->wy):0;}
+u32 g_GetWindowOrg(u16 ss,u16 ap){struct dc*d=dc_get(AW(0));return d?pack(d->wx,d->wy):bitmap_origin(AW(0),0,0,0,0);}
 
 static int unmap_point(struct dc*d,int*x,int*y)
 {
