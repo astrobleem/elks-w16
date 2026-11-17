@@ -209,6 +209,7 @@ int  menu_parse(const u8 *d, u16 len, struct menu_tmpl *t);  /* 0 ok, -1 malform
 /* ---------------------------------------------------------------- WIN.INI (profile.c, portable) */
 const char *prof_path(void);                                 /* $W16INI, else win.ini in the current directory */
 int  prof_get(const char *path, const char *app, const char *key, char *out, int size);   /* length, or -1 if absent */
+int  prof_put_private(const char *,const char *,const char *,const char *);
 int  prof_put(const char *path, const char *app, const char *key, const char *val);       /* val 0 deletes; 0 ok */
 
 /* ---------------------------------------------------------------- imports */

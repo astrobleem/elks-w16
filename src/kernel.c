@@ -647,19 +647,32 @@ u32 k_GetPrivateProfileString(u16 ss, u16 ap)
 }
 
 /* WriteProfileString(lpAppName, lpKeyName, lpString): NULL string deletes the key, NULL key the section */
-u32 k_WriteProfileString(u16 ss, u16 ap)
+static u32 write_settings(u16 ss, u16 ap, const char *file)
 {
     char app[40], key[40], v[80];
     int nokey = !AW(4) && !AW(6), noval = !AW(0) && !AW(2), r;
     farstr(v, AW(0), AW(2), sizeof(v));
     farstr(key, AW(4), AW(6), sizeof(key));
     farstr(app, AW(8), AW(10), sizeof(app));
-    r = prof_put(prof_path(), app, nokey ? 0 : key, noval ? 0 : v);
+    r = file ? prof_put_private(file, app, nokey ? 0 : key, noval ? 0 : v) :
+               prof_put(prof_path(), app, nokey ? 0 : key, noval ? 0 : v);
     if (r)
-        wlog("w16: WriteProfileString [%s] %s: cannot rewrite %s\n", app, key, prof_path());
+        wlog("w16: WriteProfileString [%s] %s: cannot rewrite %s\n", app, key, file ? file : prof_path());
     else
         vlog("w16: WriteProfileString [%s] %s = \"%s\"\n", app, nokey ? "(section)" : key, noval ? "(deleted)" : v);
     return r ? 0 : 1;
+}
+
+u32 k_WriteProfileString(u16 ss,u16 ap) { return write_settings(ss,ap,0); }
+
+u32 k_WritePrivateProfileString(u16 ss,u16 ap)
+{
+    char file[13];
+    const char *ext;
+    if (!private_ini(AW(2),AW(0),file) || !(ext=strrchr(file,'.')) || strcmp(ext,".ini"))
+        return 0;
+    if (!(AW(12) || AW(14))) return !(AW(8)||AW(10)||AW(4)||AW(6)); /* no cached writes */
+    return write_settings(ss,ap+4,file);
 }
 
 /* ---------------------------------------------------------------- INT 21h */

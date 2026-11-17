@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+u32 k_WritePrivateProfileString(u16,u16);
 u32 k_GetPrivateProfileInt(u16,u16), k_GetPrivateProfileString(u16,u16);
 static void ptr(u16 s,u16 slot,u16 off) {
     wr16(s,slot,off);
@@ -30,6 +31,11 @@ int main(void) {
     assert(k_GetPrivateProfileString(s,0)==3 && !strcmp((char*)host_ptr(s,220,4),"Bob"));
     wr16(s,4,0);wr8(s,220,0xab);
     assert(k_GetPrivateProfileString(s,0)==0 && rd8(s,220)==0xab);
+    ptr(s,0,100);ptr(s,4,180);ptr(s,8,150);ptr(s,12,130);
+    assert(k_WritePrivateProfileString(s,0)==1);
+    { char buf[8];assert(prof_get("winmine.ini","Mine","Other",buf,sizeof(buf))==3 && !strcmp(buf,"Bob")); }
+    f=fopen("winmine.ini.b","w");assert(f && !fclose(f));
+    assert(!k_WritePrivateProfileString(s,0));
     seg_free(s);
     return 0;
 }

@@ -58,6 +58,7 @@ u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16), u_EnableWindow(u16, u1
 u32 u_CheckRadioButton(u16,u16), u_CheckDlgButton(u16,u16), u_IsDlgButtonChecked(u16,u16);
 u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
 u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
+u32 k_WritePrivateProfileString(u16,u16);
 u32 k_GetPrivateProfileInt(u16,u16), k_GetPrivateProfileString(u16,u16);
 u32 k_GetProfileString(u16, u16), k_WriteProfileString(u16, u16), k_FindResource(u16, u16), k_LoadResource(u16, u16);
 u32 k_FreeResource(u16, u16), k_lstrcpy(u16, u16), k_lstrcat(u16, u16), k_lstrlen(u16, u16);
@@ -149,6 +150,7 @@ const struct api api_table[] = {
     { K,  18, "GlobalLock",        2, 0, H(k_GlobalLock) },
     { K,  19, "GlobalUnlock",      2, 0, H(k_GlobalUnlock) },
     { K,  54, "GetInstanceData",   6, 0, H(k_GetInstanceData) },
+    { K, 129, "WritePrivateProfileString", 16, 0, H(k_WritePrivateProfileString) },
     { K, 127, "GetPrivateProfileInt", 14, 0, H(k_GetPrivateProfileInt) },
     { K, 128, "GetPrivateProfileString", 22, 0, H(k_GetPrivateProfileString) },
     { K,  57, "GetProfileInt",    10, 0, H(k_GetProfileInt) },

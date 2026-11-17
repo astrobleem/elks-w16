@@ -141,7 +141,7 @@ static int put_key(int fd, const char *key, const char *val)
  * The new contents go to PATH.new; the old file is kept as PATH.bak until the new one is in
  * place, so a failure at any step leaves either the original or a restorable copy. (ELKS
  * rename() is link + unlink and refuses an existing target, so the old file must move first.) */
-int prof_put(const char *path, const char *app, const char *key, const char *val)
+static int write_profile(const char *path, const char *app, const char *key, const char *val, int priv)
 {
     char tmp[64], bak[64];
     const char *p, *a = 0, *v = 0;
@@ -149,9 +149,10 @@ int prof_put(const char *path, const char *app, const char *key, const char *val
     had = load(path);
     if (strlen(path) + 5 > sizeof(tmp) || had < 0)
         return -1;
-    sprintf(tmp, "%s.new", path);
-    sprintf(bak, "%s.bak", path);
-    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    sprintf(tmp, priv ? "%s.n" : "%s.new", path);
+    sprintf(bak, priv ? "%s.b" : "%s.bak", path);
+    if (priv && access(bak, F_OK) == 0) return -1;
+    fd = open(tmp, O_WRONLY | O_CREAT | (priv ? O_EXCL : O_TRUNC), 0644);
     if (fd < 0)
         return -1;
     for (p = pbuf; *p; ) {
@@ -186,7 +187,7 @@ int prof_put(const char *path, const char *app, const char *key, const char *val
         return -1;
     }
     if (had > 0 || access(path, F_OK) == 0) {       /* an existing file steps aside first */
-        unlink(bak);
+        if (!priv) unlink(bak);
         if (rename(path, bak)) {
             unlink(tmp);
             return -1;
@@ -200,3 +201,10 @@ int prof_put(const char *path, const char *app, const char *key, const char *val
     unlink(bak);
     return 0;
 }
+
+int prof_put(const char *path, const char *app, const char *key, const char *val)
+{ return write_profile(path,app,key,val,0); }
+
+/* 8.3 + a two-byte suffix fits the Minix V1 14-character filename limit. */
+int prof_put_private(const char *path,const char *app,const char *key,const char *val)
+{ return write_profile(path,app,key,val,1); }
