@@ -23,6 +23,7 @@ test: host samples
 	python3 tests/lineddatest.py
 	python3 tests/enumobjtest.py
 	python3 tests/displayictest.py
+	python3 tests/ansistrtest.py
 	python3 tests/recttest.py
 	python3 tests/globaltest.py
 	python3 tests/scrolltest.py

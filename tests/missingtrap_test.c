@@ -36,7 +36,7 @@ int main(void) {
  opt_missing=1;
  i=api_find_name(MOD_PBRUSH,"vBitBlt");assert(i>=0&&api_table[i].flags==API_MISSING);
  assert(api_find_ord(MOD_PBRUSH,5)==i && !api_target(i,&s,&o) && o==8*i);
- i=api_find_ord(MOD_USER,473);assert(i>255 && api_table[i].flags==API_MISSING);
+ i=api_find_ord(MOD_USER,414);assert(i>255 && api_table[i].flags==API_MISSING);
  assert(!api_target(i,&s,&o) && o==8*i);
  i=api_find_ord(MOD_GDI,35);
  assert(i>=0 && (api_table[i].flags&API_MISSING));

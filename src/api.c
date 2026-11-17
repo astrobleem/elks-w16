@@ -17,6 +17,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) 0
 #else
 #define H(f) f
+u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_LocalInit(u16,u16);
@@ -239,8 +240,8 @@ const struct api api_table[] = {
     { G, 97, "GetWindowOrg", 0, API_MISSING, 0 },
     { K, 97, "GetTempFileName", 0, API_MISSING, 0 },
     { K, 164, "GlobalLRUNewest", 0, API_MISSING, 0 },
-    /* Recognized Paintbrush calls for -u diagnostics only. These entries always
-     * terminate if executed; ordinary loads reject them as unsupported. */
+    /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
+     * these terminate if executed; ordinary loads reject them. */
     { G,   3, "SETMAPMODE", 0, API_MISSING, 0 },
     { G,   6, "SETPOLYFILLMODE", 0, API_MISSING, 0 },
     { G,   7, "SETSTRETCHBLTMODE", 0, API_MISSING, 0 },
@@ -342,11 +343,11 @@ const struct api api_table[] = {
     { U, 410, "INSERTMENU", 0, API_MISSING, 0 },
     { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
     { U, 414, "MODIFYMENU", 0, API_MISSING, 0 },
-    { U, 430, "LSTRCMP", 0, API_MISSING, 0 },
+    { U, 430, "lstrcmp", 8, 0, H(u_lstrcmp) },
     { U, 431, "ANSIUPPER", 0, API_MISSING, 0 },
-    { U, 471, "LSTRCMPI", 0, API_MISSING, 0 },
-    { U, 472, "ANSINEXT", 0, API_MISSING, 0 },
-    { U, 473, "ANSIPREV", 0, API_MISSING, 0 },
+    { U, 471, "lstrcmpi", 8, 0, H(u_lstrcmpi) },
+    { U, 472, "AnsiNext", 4, 0, H(u_AnsiNext) },
+    { U, 473, "AnsiPrev", 8, 0, H(u_AnsiPrev) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=288)?1:-1];
