@@ -3,6 +3,7 @@
 int main(void) {
  int i;u16 s,o;
  assert(!opt_missing);
+ assert(api_table[api_find_ord(MOD_USER,161)].argbytes==12);
  assert(api_table[api_find_ord(MOD_GDI,70)].argbytes==14);
  assert(api_table[api_find_ord(MOD_KERNEL,169)].argbytes==2);
  assert(api_table[api_find_ord(MOD_GDI,30)].argbytes==2);

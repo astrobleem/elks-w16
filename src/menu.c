@@ -695,6 +695,23 @@ static struct menu_item *find_item(u16 h, u16 idpos, u16 flags, struct menu **pm
     return 0;
 }
 
+/* GetMenuString(hMenu,idOrPosition,out,maxChars,flags). Preserve the raw
+ * ampersand mnemonic/tab accelerator bytes from the real resource. */
+u32 u_GetMenuString(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it;
+    u16 off=AW(4),seg=AW(6),n=0,max=AW(2);
+    if((i16)max<=0 || !(off||seg) || (u32)off+max>0x10000UL ||
+       ((u32)seg<<4)+off+max>0x100000UL) return 0;
+    it=find_item(AW(10),AW(8),AW(0),&mn);
+    if(it) while(n+1<max && it->text[n]) {
+        wr8(seg,off+n,it->text[n]);n++;
+    }
+    wr8(seg,off+n,0);
+    return n;
+}
+
 static void menu_changed(struct menu *mn)
 {
     struct wnd *w = win_get(mn->hwnd);
