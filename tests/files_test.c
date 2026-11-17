@@ -117,6 +117,18 @@ int main(void)
     }
     name("PB");arg(0,0);arg(2,ofs);arg(4,0);arg(6,0);arg(8,ns);arg(10,4);
     assert(!k_GetTempFileName(ss,0)); /* unmapped D: */
+    assert(!files_directory("c:\\pictures",path,1));assert(!strcmp(path,"Pictures"));
+    files_directory_label(path);assert(!strcmp(path,"C:\\Pictures"));
+    h=create("current.bmp");assert(h!=0xffff);closeh(h);
+    assert(!access("Pictures/current.bmp",F_OK));
+    h=openh("C:\\Mixed.BMP");assert(h!=0xffff);closeh(h);
+    assert(openh("Mixed.BMP")==0xffff);
+    assert(files_directory("C:\\linked",path,1)<0);
+    files_directory_label(path);assert(!strcmp(path,"C:\\Pictures"));
+    assert(!files_directory("..",path,1));assert(!strcmp(path,"."));
+    h=openh("pictures/CURRENT.BMP");assert(h!=0xffff);closeh(h);
+    assert(files_directory("D:\\",path,1)<0);
+    assert(!files_directory("..",path,1));assert(!strcmp(path,"."));
     seg_free(ss);seg_free(ns);seg_free(ds);seg_free(ofs);assert(!host_live);
     puts("Win16 file roundtrip, OFSTRUCT, path isolation, case lookup, exhaustion and cleanup passed");
     return 0;

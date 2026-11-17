@@ -13,6 +13,7 @@
 #define PATHLEN 124
 #define OFSTRUCT_SIZE 136
 static struct { int fd; u8 used; } files[FILES];
+static char dos_cwd[PATHLEN];
 
 static int far_range(u16 seg,u16 off,u16 n)
 {
@@ -43,7 +44,7 @@ static int fold_equal(const char *a,const char *b)
  * spelling wins; ambiguous case-fold matches fail rather than choose a file. */
 static int local_path(const char *input,char *out,int allow_new)
 {
-    char component[PATHLEN],match[PATHLEN],parent[PATHLEN];
+    char component[PATHLEN],match[PATHLEN],parent[PATHLEN],joined[PATHLEN];
     const char *p=input;
     unsigned used=0;
     int drive=0;
@@ -53,6 +54,10 @@ static int local_path(const char *input,char *out,int allow_new)
         p+=2;drive=1;
     }
     if(*p=='/'&&!drive) { errno=EACCES; return -1; }
+    if(*p!='/'&&*p!='\\' && dos_cwd[0]) {
+        if(strlen(dos_cwd)+strlen(p)+2>PATHLEN) { errno=ENAMETOOLONG;return -1; }
+        strcpy(joined,dos_cwd);strcat(joined,"/");strcat(joined,p);p=joined;
+    }
     while(*p=='/'||*p=='\\') p++;
     while(*p) {
         unsigned n=0;
@@ -85,7 +90,7 @@ static int local_path(const char *input,char *out,int allow_new)
         closedir(dir);
         if(!exact && matches>1) { errno=EEXIST; return -1; }
         if(!exact && !matches) {
-            if(!last || !allow_new) { errno=ENOENT; return -1; }
+            if(!last || allow_new!=1) { errno=ENOENT; return -1; }
             strcpy(match,component);
         }
         n=strlen(match);
@@ -93,14 +98,51 @@ static int local_path(const char *input,char *out,int allow_new)
         if(used) out[used++]='/';
         memcpy(out+used,match,n+1);used+=n;
         if(lstat(out,&st)==0) {
-            if(S_ISLNK(st.st_mode) || (last?!S_ISREG(st.st_mode):!S_ISDIR(st.st_mode))) {
+            if(S_ISLNK(st.st_mode) || (last&&allow_new!=2?!S_ISREG(st.st_mode):!S_ISDIR(st.st_mode))) {
                 errno=EACCES; return -1;
             }
-        } else if(errno!=ENOENT || !last || !allow_new) return -1;
+        } else if(errno!=ENOENT || !last || allow_new!=1) return -1;
     }
-    if(!used) { errno=EINVAL; return -1; }
+    if(!used) { if(allow_new==2){strcpy(out,".");return 0;} errno=EINVAL; return -1; }
     return 0;
 }
+/* Shared dialog directory state. Never change the host process directory.
+ * A leading C:\ path is rooted at launch; all subsequent relative file APIs
+ * use this verified logical directory. The caller owns PATHLEN-byte buffers. */
+int files_directory(const char *input,char *out,int change)
+{
+    char absolute[PATHLEN],next[PATHLEN],component[PATHLEN];
+    const char *p=input;unsigned used=0,n;
+    if(p[0]&&p[1]==':'){if(p[0]!='c'&&p[0]!='C')return -1;p+=2;}
+    if(*p!='/'&&*p!='\\'){strcpy(next,dos_cwd);used=strlen(next);}else next[0]=0;
+    while(*p){
+        while(*p=='/'||*p=='\\')p++;
+        n=0;while(*p&&*p!='/'&&*p!='\\'){
+            if(n+1>=PATHLEN)return -1;
+            component[n++]=*p++;
+        }
+        component[n]=0;if(!n||!strcmp(component,"."))continue;
+        if(!strcmp(component,"..")){
+            while(used&&next[used-1]!='/')used--;
+            if(used)used--;
+            next[used]=0;continue;
+        }
+        if(used+n+2>=PATHLEN)return -1;
+        if(used)next[used++]='/';
+        memcpy(next+used,component,n+1);used+=n;
+    }
+    if(used+4>PATHLEN)return -1;
+    strcpy(absolute,"C:\\");strcat(absolute,next);
+    if(local_path(absolute,out,2))return -1;
+    if(change)strcpy(dos_cwd,!strcmp(out,".")?"":out);
+    return 0;
+}
+void files_directory_label(char *out)
+{
+    unsigned i;strcpy(out,"C:\\");strcat(out,dos_cwd);
+    for(i=3;out[i];i++)if(out[i]=='/')out[i]='\\';
+}
+
 static int file_index(u16 handle)
 {
     unsigned i=(unsigned)(handle-FILE_BASE);

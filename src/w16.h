@@ -68,6 +68,10 @@ extern u8 w16_scratch[W16_SCRATCH];
 int  seg_alloc(u16 paras, u16 *seg);
 void seg_free(u16 seg);
 
+/* DOS directory helpers: outputs need 124 bytes, except label needs 128. */
+int files_directory(const char *input,char *out,int change);
+void files_directory_label(char *out);
+
 /* ---------------------------------------------------------------- logging */
 extern int opt_verbose, opt_trace, opt_debugport;
 void wlog(const char *fmt, ...);        /* stderr (and port 0xE9 with -e) */
