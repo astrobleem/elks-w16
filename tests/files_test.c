@@ -17,6 +17,33 @@ static u16 openh(const char *s){name(s);arg(0,0);arg(2,0);arg(4,ns);return k_lop
 static u32 seekh(u16 h,i32 pos,u16 whence){arg(0,whence);wr32(ss,2,pos);arg(6,h);return k_llseek(ss,0);}
 static u32 transfer(u16 h,u16 count,int writeit){arg(0,count);arg(2,0);arg(4,ds);arg(6,h);return writeit?k_lwrite(ss,0):k_lread(ss,0);}
 static u16 openfile(const char *s,u16 flags){name(s);arg(0,flags);arg(2,0);arg(4,ofs);arg(6,0);arg(8,ns);return k_OpenFile(ss,0);}
+/* Real BMP-shaped streams cross 64 KiB at VGA dimensions; API counts remain
+ * 16 bit and seek offsets/file lengths must remain 32 bit. */
+static void bitmap_roundtrip(u16 width,u16 height)
+{
+    u16 h,y,x,row=(width/2+3)&~3u;
+    u32 size=118UL+(u32)row*height;
+    const char *file=width==256?"SMALL.BMP":"VGA.BMP";
+    h=create(file);assert(h!=0xffff);
+    fzero(ds,0,118);wr8(ds,0,'B');wr8(ds,1,'M');wr32(ds,2,size);
+    wr32(ds,10,118);wr32(ds,14,40);wr32(ds,18,width);wr32(ds,22,height);
+    wr16(ds,26,1);wr16(ds,28,4);wr32(ds,34,(u32)row*height);wr32(ds,46,16);
+    for(x=0;x<16;x++){wr8(ds,54+4*x,x*17);wr8(ds,55+4*x,x*17);wr8(ds,56+4*x,x*17);}
+    assert(transfer(h,118,1)==118);
+    for(y=0;y<height;y++) {
+        for(x=0;x<row;x++)wr8(ds,x,(u8)(x+y));
+        assert(transfer(h,row,1)==row);
+    }
+    assert(seekh(h,0,2)==size);closeh(h);
+    h=openh(file);assert(h!=0xffff);
+    assert(transfer(h,118,0)==118);assert(rd32(ds,2)==size&&rd32(ds,18)==width&&rd32(ds,22)==height);
+    for(y=0;y<height;y++) {
+        assert(transfer(h,row,0)==row);
+        for(x=0;x<row;x++)assert(rd8(ds,x)==(u8)(x+y));
+    }
+    assert(!transfer(h,1,0));closeh(h);
+}
+
 int main(void)
 {
     u16 h,i,slots[16];char path[128];
@@ -44,9 +71,11 @@ int main(void)
     assert(!mkdir("Pictures",0700));
     h=create("pictures/One.Bmp");assert(h!=0xffff);assert(transfer(h,12,1)==12);closeh(h);
     h=openh("PICTURES\\one.bmp");assert(h!=0xffff);closeh(h);
+#ifdef W16_HOST
     assert(!symlink("Mixed.BMP","link.bmp"));assert(openh("link.bmp")==0xffff);
     assert(create("link.bmp")==0xffff);
     assert(!symlink("Pictures","linked"));assert(openh("linked/one.bmp")==0xffff);
+#endif
     h=create("Case.bmp");closeh(h);
     { int fd=open("case.BMP",O_CREAT|O_WRONLY,0600);assert(fd>=0);close(fd); }
     assert(openh("CASE.BMP")==0xffff);
@@ -66,6 +95,10 @@ int main(void)
     h=openh("mixed.bmp");assert(h!=0xffff&&seekh(h,0,2)==1400);
     arg(0,32);arg(2,65530);arg(4,ds);arg(6,h);assert(k_lread(ss,0)==0xffff);
     closeh(h);files_shutdown();
+    bitmap_roundtrip(256,256);bitmap_roundtrip(640,480);
+    name("SMALL.BMP");assert(!files_unlink(ns,0));assert(files_unlink(ns,0)==2);
+    name("../VGA.BMP");assert(files_unlink(ns,0)==5);assert(openh("VGA.BMP")!=0xffff);
+    files_shutdown();
     assert(k_GetTempDrive(ss,0)==0x00013a43UL);
     name("PB");arg(0,0);arg(2,ofs);arg(4,0);arg(6,0);arg(8,ns);arg(10,0);
     i=k_GetTempFileName(ss,0);assert(i);

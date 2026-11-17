@@ -275,5 +275,6 @@ u32 global_unlock(u16 h);
 u32 global_size(u16 h);
 void global_shutdown(void);
 void files_shutdown(void);
+u16 files_unlink(u16 seg,u16 off);
 
 #endif

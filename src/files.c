@@ -200,6 +200,15 @@ static u16 dos_error(void)
     default:return 87;
     }
 }
+/* Shared by OpenFile(OF_DELETE) and the DLL's DOS3Call AH=41 helper. */
+u16 files_unlink(u16 seg,u16 off)
+{
+    char name[PATHLEN],path[PATHLEN];
+    if(read_name(seg,off,name) || local_path(name,path,0) || unlink(path)<0)
+        return dos_error();
+    return 0;
+}
+
 /* OpenFile(name,OFSTRUCT*,style); OFSTRUCT is 136 Win16 bytes. */
 u32 k_OpenFile(u16 ss,u16 ap)
 {
@@ -211,7 +220,7 @@ u32 k_OpenFile(u16 ss,u16 ap)
     if(style&0x8000) {
         if(read_name(seg,off+8,name)) goto failed;
     } else if(read_name(AW(8),AW(6),name)) goto failed;
-    if((style&0x008c) || ((style&0x70)>0x40) ||
+    if((style&0x048c) || ((style&0x70)>0x40) ||
        ((style&0x1000)&&(style&(0x200|0x4000)))) { errno=EINVAL;goto failed; }
     if(local_path(name,path,(style&(0x1000|0x100))!=0)) goto failed;
     if(style&0x100) { h=0;goto result; } /* OF_PARSE */
