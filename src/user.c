@@ -2466,6 +2466,49 @@ u32 u_SetDlgItemText(u16 ss, u16 ap)
     return 0;
 }
 
+
+/* SetDlgItemInt(hDlg,id,value,signed): render the Win16-width value. */
+u32 u_SetDlgItemInt(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(6), AW(4));
+    if (!c) return 0;
+    if (AW(0))
+        sprintf(c->title, "%d", (int)(i16)AW(2));
+    else
+        sprintf(c->title, "%u", (unsigned)AW(2));
+    c->edit_cursor = c->edit_anchor = (u8)strlen(c->title);
+    if (c->visible) paint_control(c);
+    return 1;
+}
+
+/* GetDlgItemInt(hDlg,id,translated,signed): a BOOL far output is optional.
+ * A 16-bit Windows INT is -32768..32767, UINT is 0..65535. */
+u32 u_GetDlgItemInt(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(8), AW(6));
+    u16 off = AW(2), seg = AW(4), sign = AW(0), ok = 0, neg = 0;
+    u32 value = 0, limit;
+    const char *p;
+    if ((seg || off) && (!seg || off > 0xfffeu)) return 0;
+    if (c) {
+        p = c->title;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '-') { neg = 1; p++; }
+        else if (*p == '+') p++;
+        limit = sign ? (neg ? 32768ul : 32767ul) : 65535ul;
+        if ((!neg || sign) && *p >= '0' && *p <= '9') {
+            ok = 1;
+            while (*p >= '0' && *p <= '9') {
+                u16 digit = (u16)(*p++ - '0');
+                if (value > (limit - digit) / 10ul) { ok = 0; break; }
+                value = value * 10ul + digit;
+            }
+        }
+    }
+    if (seg) wr16(seg, off, ok);
+    return ok ? (u16)(neg ? 0u - (u16)value : (u16)value) : 0;
+}
+
 /* GetDlgItem(hDlg, nIDDlgItem) */
 u32 u_GetDlgItem(u16 ss, u16 ap)
 {

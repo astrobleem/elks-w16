@@ -25,6 +25,8 @@ if [ "${HOSTTEST_ONLY:-}" != optional ]; then   # HOSTTEST_ONLY=optional: sectio
 if gcc -DW16_HOST -Isrc -ffunction-sections -fdata-sections -fsanitize=address,undefined -no-pie \
        tests/privateprofile_test.c src/kernel.c src/profile.c src/mem.c -Wl,--gc-sections -o "$T/privateprofile" \
        && (cd "$T" && ./privateprofile); then ok "private profile reads"; else bad "private profile reads"; fi
+if python3 tests/dialoginttest.py && python3 tests/shelltest.py; then ok "dialog integer and About APIs"; else bad "dialog integer and About APIs"; fi
+
 if python3 tests/legacytest.py; then ok "legacy sound and fatal APIs"; else bad "legacy sound and fatal APIs"; fi
 
 echo "== 1. load HELLO16 and compare with the model"

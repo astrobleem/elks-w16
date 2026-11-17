@@ -28,6 +28,7 @@ u32 k_OpenFile(u16,u16),k_lclose(u16,u16),k_lread(u16,u16),k_lcreat(u16,u16),k_l
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16), k_GlobalLRUNewest(u16,u16);
+u32 u_SetDlgItemInt(u16,u16), u_GetDlgItemInt(u16,u16), sh_ShellAbout(u16,u16);
 u32 s_OpenSound(u16,u16), s_CloseSound(u16,u16), s_Unavailable(u16,u16);
 u32 k_FatalExit(u16,u16), k_FatalAppExit(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
@@ -348,8 +349,8 @@ const struct api api_table[] = {
     { U,  89, "CREATEDIALOG", 0, API_MISSING, 0 },
     { U,  90, "ISDIALOGMESSAGE", 0, API_MISSING, 0 },
     { U,  93, "GetDlgItemText", 10, 0, H(u_GetDlgItemText) },
-    { U,  94, "SETDLGITEMINT", 8, API_MISSING, 0 },
-    { U,  95, "GETDLGITEMINT", 10, API_MISSING, 0 },
+    { U,  94, "SetDlgItemInt", 8, 0, H(u_SetDlgItemInt) },
+    { U,  95, "GetDlgItemInt", 10, 0, H(u_GetDlgItemInt) },
     { U,  99, "DlgDirSelect", 8, 0, H(u_DlgDirSelect) },
     { U, 100, "DlgDirList", 12, 0, H(u_DlgDirList) },
     { U, 104, "MESSAGEBEEP", 0, API_MISSING, 0 },
@@ -396,7 +397,7 @@ const struct api api_table[] = {
     { K, 137, "FatalAppExit", 6, 0, H(k_FatalAppExit) },
     { K, 115, "OutputDebugString", 4, API_MISSING, 0 },
     /* These bind only with -u and terminate if called. */
-    { L, 22, "ShellAbout", 12, API_MISSING, 0 },
+    { L, 22, "ShellAbout", 12, 0, H(sh_ShellAbout) },
     { G, 442, "CreateDIBitmap", 20, API_MISSING, 0 },
     { U, 50, "FindWindow", 8, API_MISSING, 0 },
 
