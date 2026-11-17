@@ -15,6 +15,7 @@ test: host samples
 	bash tests/hosttest.sh
 	python3 tests/menucapacitytest.py
 	python3 tests/manysegtest.py
+	python3 tests/librarytest.py
 	python3 tests/image_setup_test.py
 	python3 tests/dibtest.py
 	python3 tests/registeredtest.py

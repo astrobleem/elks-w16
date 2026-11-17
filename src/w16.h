@@ -90,6 +90,10 @@ struct ne_module {
     int  fd;
     u32  ne_off;        /* file offset of the NE header */
     u32  filesize;
+    u32  nonres_off;
+    u16  nonres_len;
+    u8   library, loaded;
+    struct ne_module *dependencies[MAXMOD]; /* borrowed; caller owns their lifetime */
     /* header fields */
     u16  ent_off, ent_len, flags, autodata, heap, stack, ip, cs, sp, ss;
     u16  nseg, nmod, segtab_off, rsrc_off, resn_off, modref_off, impn_off;
@@ -125,6 +129,9 @@ enum {
 };
 
 int  ne_open(struct ne_module *m, const char *path);   /* read and validate headers */
+int  ne_open_library(struct ne_module *m, const char *path); /* single-data DLL, not initialized */
+int  ne_bind_library(struct ne_module *m, u16 import_index, struct ne_module *dll);
+int  ne_export(struct ne_module *m, const char *name, u16 ordinal, u16 *seg, u16 *off);
 int  ne_check_imports(struct ne_module *m);            /* every import provided? */
 int  ne_load(struct ne_module *m);                     /* allocate, read, relocate */
 void ne_free(struct ne_module *m);

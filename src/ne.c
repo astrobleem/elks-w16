@@ -121,7 +121,7 @@ static int modindex(const char *name)
     return -1;
 }
 
-int ne_open(struct ne_module *m, const char *path)
+static int ne_open_image(struct ne_module *m, const char *path, int library)
 {
     u8 h[64];
     u16 i, lfarlc;
@@ -131,6 +131,7 @@ int ne_open(struct ne_module *m, const char *path)
     memset(m, 0, sizeof(*m));
     rmod = 0;
     m->path = path;
+    m->library = library;
     m->fd = open(path, O_RDONLY);
     if (m->fd < 0) {
         wlog("w16: cannot open %s\n", path);
@@ -176,6 +177,7 @@ int ne_open(struct ne_module *m, const char *path)
         wlog("w16: %s: no NE signature at offset %lu\n", path, (unsigned long)m->ne_off);
         return W16_EFORMAT;
     }
+    m->nonres_off = g32(h + 0x2c); m->nonres_len = g16(h + 0x20);
     m->ent_off = g16(h + NE_ENTOFF);  m->ent_len = g16(h + NE_ENTLEN);
     m->flags = g16(h + NE_FLAGS);     m->autodata = g16(h + NE_AUTODATA);
     m->heap = g16(h + NE_HEAP);       m->stack = g16(h + NE_STACK);
@@ -201,10 +203,12 @@ int ne_open(struct ne_module *m, const char *path)
         wlog("w16: %s: target OS %u is not Windows\n", path, m->target_os);
         return W16_EUNSUPP;
     }
-    if (m->flags & NEF_LIBRARY) {
+    if (!library && (m->flags & NEF_LIBRARY)) {
         wlog("w16: %s: is a library (DLL), not an application\n", path);
         return W16_EUNSUPP;
     }
+    if (library && !(m->flags & NEF_LIBRARY))
+        return W16_EUNSUPP;
     if (m->flags & NEF_LINKERR) {
         wlog("w16: %s: the linker marked this image as containing errors\n", path);
         return W16_EFORMAT;
@@ -222,7 +226,7 @@ int ne_open(struct ne_module *m, const char *path)
              (m->flags & NEF_I386) ? "3" : "2");
         return W16_EUNSUPP;
     }
-    if ((m->flags & 3) != NEF_MULTIDATA) {
+    if ((m->flags & 3) != (library ? NEF_SINGLEDATA : NEF_MULTIDATA)) {
         wlog("w16: %s: data model %s; applications use one automatic data segment per instance\n", path,
              (m->flags & 3) == 0 ? "NOAUTODATA" : (m->flags & 3) == 1 ? "SINGLEDATA (library style)" : "invalid");
         return W16_EUNSUPP;
@@ -231,12 +235,12 @@ int ne_open(struct ne_module *m, const char *path)
         wlog("w16: %s: %u segments (this layer handles 1..%d)\n", path, m->nseg, MAXSEG);
         return m->nseg ? W16_EUNSUPP : W16_EFORMAT;
     }
-    if (!m->autodata || m->autodata > m->nseg || !m->cs || m->cs > m->nseg || !m->ss || m->ss > m->nseg) {
+    if (!m->autodata || m->autodata > m->nseg || !m->cs || m->cs > m->nseg || (!library && !m->ss) || m->ss > m->nseg) {
         wlog("w16: %s: segment numbers out of range (autodata %u, CS %u, SS %u, %u segments)\n", path,
              m->autodata, m->cs, m->ss, m->nseg);
         return W16_EFORMAT;
     }
-    if (m->ss != m->autodata) {
+    if ((!library && m->ss != m->autodata) || (library && (m->ss || m->sp || m->stack))) {
         wlog("w16: %s: stack segment %u is not the automatic data segment %u\n", path, m->ss, m->autodata);
         return W16_EUNSUPP;
     }
@@ -312,7 +316,7 @@ int ne_open(struct ne_module *m, const char *path)
         /* the startup code builds an 18-byte register frame below SP, so SP must leave room for it
          * above the static data, be even, and lie inside the segment */
         sp = m->sp ? m->sp : (data + m->stack) & ~(u32)1;
-        if ((sp & 1) || sp < data + 18 || sp > total) {
+        if (!library && ((sp & 1) || sp < data + 18 || sp > total)) {
             wlog("w16: %s: initial SP %04lx is invalid: it must be even, at least 18 bytes above the %lu bytes "
                  "of static data, and inside the %lu-byte data segment\n", path, (unsigned long)sp,
                  (unsigned long)data, (unsigned long)total);
@@ -320,7 +324,7 @@ int ne_open(struct ne_module *m, const char *path)
         }
         m->heap_start = (u16)hs;
         m->dgroup_size = (u16)total;
-        m->init_sp = (u16)sp;
+        m->init_sp = library ? 0 : (u16)sp;
     }
 
     /* imported module names */
@@ -378,6 +382,16 @@ int ne_open(struct ne_module *m, const char *path)
     return W16_OK;
 }
 
+int ne_open(struct ne_module *m, const char *path)
+{
+    return ne_open_image(m,path,0);
+}
+
+int ne_open_library(struct ne_module *m, const char *path)
+{
+    return ne_open_image(m,path,1);
+}
+
 /* find an entry point by ordinal; returns 0 if found */
 int ne_entry(struct ne_module *m, u16 ord, u16 *seg, u16 *off)
 {
@@ -400,6 +414,83 @@ int ne_entry(struct ne_module *m, u16 ord, u16 *seg, u16 *off)
         p += cnt * size;
     }
     return -1;
+}
+
+/* Read export names within their own table, never into adjacent NE records.
+ * Ordinal zero is a module name/description, not an exported entry point. */
+static int export_name(struct ne_module *m,u32 pos,u32 size,const char *name,u16 *ordinal)
+{
+    u8 data[255], b[2], len;
+    u32 end;
+    int found=0;
+    if(pos>m->filesize || size>m->filesize-pos) return -1;
+    end=pos+size;
+    while(pos<end) {
+        u16 i;
+        int equal=1;
+        if(rd_at(m,pos++,&len,1,"export name length")) return -1;
+        if(!len) return found;
+        if((u32)len+2>end-pos) return -1;
+        if(rd_at(m,pos,data,len,"export name") ||
+           rd_at(m,pos+len,b,2,"export ordinal")) return -1;
+        for(i=0;i<len;i++) {
+            u8 c=data[i], d=(u8)name[i];
+            if(!d) { equal=0; break; }
+            if(c>='a'&&c<='z') c-=32;
+            if(d>='a'&&d<='z') d-=32;
+            if(c!=d) { equal=0; break; }
+        }
+        if(equal && !name[len] && g16(b)) {
+            if(found && *ordinal!=g16(b)) return -1;
+            *ordinal=g16(b); found=1;
+        }
+        pos+=(u32)len+2;
+    }
+    return -1; /* missing table terminator */
+}
+
+int ne_export(struct ne_module *m,const char *name,u16 ordinal,u16 *seg,u16 *off)
+{
+    u16 p=0,first=1,s,o;
+    if(name) {
+        int found;
+        if(m->modref_off<m->resn_off) return -1;
+        found=export_name(m,m->ne_off+m->resn_off,m->modref_off-m->resn_off,name,&ordinal);
+        if(found<0) return -1;
+        if(!found && m->nonres_len)
+            found=export_name(m,m->nonres_off,m->nonres_len,name,&ordinal);
+        if(found!=1) return -1;
+    }
+    if(!ordinal || ne_entry(m,ordinal,&s,&o) ||
+       (m->seg[s-1].flags&NES_DATA) || !m->seg[s-1].fileoff || o>=m->seg[s-1].size)
+        return -1;
+    /* Internal entry references may address unexported functions. Imports may not. */
+    while(p+2<=m->ent_len) {
+        u8 count=m->enttab[p],type=m->enttab[p+1];
+        u16 stride=type==0?0:type==255?6:3;
+        u32 next;
+        p+=2;
+        if(!count) return -1;
+        next=(u32)p+(u32)count*stride;
+        if(next>m->ent_len) return -1;
+        if(ordinal>=first && ordinal<(u32)first+count) {
+            if(!type || !(m->enttab[p+(ordinal-first)*stride]&1)) return -1;
+            *seg=s; *off=o; return 0;
+        }
+        first+=count; p=(u16)next;
+    }
+    return -1;
+}
+
+/* Binding is explicit: never search the current directory or silently select a
+ * DLL from its filename. The caller must initialize it before running imports.
+ * Dependencies are borrowed and must outlive the importing image. */
+int ne_bind_library(struct ne_module *m,u16 index,struct ne_module *dll)
+{
+    if(index>=m->nmod || !dll || dll==m || !dll->library || !dll->loaded || m->loaded)
+        return W16_EIMPORT;
+    m->dependencies[index]=dll;
+    return 0;
 }
 
 /* ------------------------------------------------------------------ relocation records */
@@ -489,6 +580,25 @@ static int resolve_import(struct ne_module *m, struct reloc *r, char *desc, int 
     return idx;
 }
 
+/* Resolve only explicitly bound DLLs; return 0 when the normal API resolver
+ * should be used, 1 on a library target, and -1 for a missing/invalid export. */
+static int library_target(struct ne_module *m,struct reloc *r,u16 *seg,u16 *off)
+{
+    struct ne_module *dll;
+    u16 s,o;
+    char name[33];
+    if(r->t1<1 || r->t1>m->nmod || !(dll=m->dependencies[r->t1-1])) return 0;
+    if(!dll->loaded) return -1;
+    if((r->fl&3)==RT_IMPORDINAL) {
+        if(ne_export(dll,0,r->t2,&s,&o)) return -1;
+    } else {
+        if(rd_pstr(m,m->ne_off+m->impn_off+r->t2,name,32,"imported entry name")<0 ||
+           ne_export(dll,name,0,&s,&o)) return -1;
+    }
+    *seg=dll->seg[s-1].sel; *off=o;
+    return 1;
+}
+
 /* pass 1: every relocation is of a supported kind and every import is provided */
 struct chk { int missing, bad, nimp; char seen[16][64]; };
 
@@ -521,6 +631,15 @@ static int chk_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
         return 0;
     }
     c->nimp++;
+    {
+        u16 seg,off;
+        int bound=library_target(m,r,&seg,&off);
+        if(bound>0) return 0;
+        if(bound<0) {
+            wlog("w16: %s: invalid or missing bound-library export in segment %u\n",m->path,segi+1);
+            c->bad++; return 0;
+        }
+    }
     idx = resolve_import(m, r, desc, sizeof(desc));
     if (idx >= 0) {
         if ((api_table[idx].flags & API_CONST) && r->st == RS_FARADDR) {
@@ -550,7 +669,7 @@ int ne_check_imports(struct ne_module *m)
 
     memset(&c, 0, sizeof(c));
     for (i = 0; i < m->nmod; i++)
-        if (m->modid[i] < 0)
+        if (m->modid[i] < 0 && !m->dependencies[i])
             wlog("w16: %s: imports module %s, which this layer does not provide (KERNEL, USER and GDI only)\n",
                  m->path, m->modname[i]);
     for (i = 0; i < m->nseg; i++)
@@ -566,7 +685,7 @@ int ne_check_imports(struct ne_module *m)
     if (c.missing)
         return W16_EIMPORT;
     for (i = 0; i < m->nmod; i++)
-        if (m->modid[i] < 0)
+        if (m->modid[i] < 0 && !m->dependencies[i])
             return W16_EIMPORT;
     vlog("w16: %s: all %u import references resolve to provided entry points\n", m->path, c.nimp);
     return W16_OK;
@@ -593,7 +712,10 @@ static int apply_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
             tseg = m->seg[r->t1 - 1].sel; toff = r->t2;
         }
     } else if (t == RT_IMPORDINAL || t == RT_IMPNAME) {
-        int idx = resolve_import(m, r, desc, sizeof(desc));
+        int idx, bound=library_target(m,r,&tseg,&toff);
+        if(bound<0) return W16_EIMPORT;
+        if(bound>0) goto resolved_import;
+        idx = resolve_import(m, r, desc, sizeof(desc));
         if (idx < 0)
             return W16_EIMPORT;
         if (api_table[idx].flags & API_CONST) {
@@ -604,6 +726,7 @@ static int apply_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
             return W16_EIMPORT;
     } else
         return W16_EUNSUPP;
+resolved_import:
     (void)isconst;
 
     width = r->st == RS_LOBYTE ? 1 : r->st == RS_FARADDR ? 4 : 2;
@@ -676,7 +799,8 @@ static int load_segment_data(struct ne_module *m, int i)
 
 /* Windows patches the prologue of exported functions in applications:
  * "push ds; pop ax; nop" (1E 58 90) or "mov ax,ds; nop" (8C D8 90) becomes three NOPs, so the
- * caller's AX (the instance data segment) is loaded into DS by the rest of the prologue. */
+ * caller's AX (the instance data segment) is loaded into DS by the rest of the prologue.
+ * Single-data DLL exports instead load AX with their own DGROUP selector. */
 static void patch_prologues(struct ne_module *m)
 {
     u16 p = 0, ord = 1;
@@ -696,9 +820,14 @@ static void patch_prologues(struct ne_module *m)
             sel = m->seg[s - 1].sel;
             b0 = rd8(sel, o); b1 = rd8(sel, o + 1); b2 = rd8(sel, o + 2);
             if ((b0 == 0x1E && b1 == 0x58 && b2 == 0x90) || (b0 == 0x8C && b1 == 0xD8 && b2 == 0x90)) {
-                wr8(sel, o, 0x90); wr8(sel, o + 1, 0x90);
+                if (m->library) {
+                    wr8(sel,o,0xb8); wr16(sel,o+1,m->dgroup); /* mov ax, DLL DGROUP */
+                } else {
+                    wr8(sel, o, 0x90); wr8(sel, o + 1, 0x90);
+                }
                 m->npatched++;
-                vlog("w16: exported entry %u at %u:%04x: prologue patched for instance data in AX\n", ord, s, o);
+                vlog("w16: exported entry %u at %u:%04x: prologue patched for %s data in AX\n", ord, s, o,
+                     m->library ? "library" : "instance");
             }
         }
     }
@@ -731,6 +860,7 @@ int ne_load(struct ne_module *m)
         if ((e = each_reloc(m, i, apply_one, 0)))
             return e;
     patch_prologues(m);
+    m->loaded = 1;
     vlog("w16: %s: %u fixups applied, %u prologues patched, %lu bytes of segments\n", m->path, m->nreloc,
           m->npatched, (unsigned long)m->total_bytes);
     return W16_OK;
@@ -739,6 +869,7 @@ int ne_load(struct ne_module *m)
 void ne_free(struct ne_module *m)
 {
     int i;
+    m->loaded = 0;
     for (i = 0; m->seg && i < m->nseg; i++)
         if (m->seg[i].paras) {
             seg_free(m->seg[i].sel);
