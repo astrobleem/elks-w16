@@ -116,7 +116,7 @@ static int modindex(const char *name)
 {
     int i;
     for (i = 0; i < NMODS; i++)
-        if ((i != MOD_PBRUSH || opt_missing) && !strcmp(name, w16_modnames[i]))
+        if (((i != MOD_PBRUSH && i != MOD_SHELL) || opt_missing) && !strcmp(name, w16_modnames[i]))
             return i;
     return -1;
 }
@@ -683,7 +683,7 @@ int ne_check_imports(struct ne_module *m)
     memset(&c, 0, sizeof(c));
     for (i = 0; i < m->nmod; i++)
         if (m->modid[i] < 0 && !m->dependencies[i])
-            wlog("w16: %s: imports module %s, which this layer does not provide (KERNEL, USER and GDI only)\n",
+            wlog("w16: %s: imports module %s, which this layer does not provide (no matching built-in module)\n",
                  m->path, m->modname[i]);
     for (i = 0; i < m->nseg; i++)
         if ((e = each_reloc(m, i, chk_one, &c)))

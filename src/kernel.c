@@ -505,3 +505,273 @@ void kernel_shutdown(void)
             seg_free(rsrc[i].seg);
             n++;
         }
+        rsrc[i].used = 0;
+        rsrc[i].seg = 0;
+    }
+    if (n)
+        vlog("w16: freed %d loaded resource(s) at exit\n", n);
+}
+
+/* ---------------------------------------------------------------- strings, instance data */
+static u16 fstrlen(u16 seg, u16 off)
+{
+    u16 n = 0;
+    while (rd8(seg, (u16)(off + n)) && n < 0xFFF0u)
+        n++;
+    return n;
+}
+
+/* lstrcpy(lpString1, lpString2) / lstrcat(lpString1, lpString2) / lstrlen(lpString) */
+u32 k_lstrcpy(u16 ss, u16 ap)
+{
+    u16 so = AW(0), sg = AW(2), dof = AW(4), dg = AW(6), i = 0;
+    u8 c;
+    do {
+        c = rd8(sg, (u16)(so + i));
+        wr8(dg, (u16)(dof + i), c);
+        i++;
+    } while (c && i < 0xFFF0u);
+    return ((u32)dg << 16) | dof;
+}
+
+u32 k_lstrcat(u16 ss, u16 ap)
+{
+    u16 dof = AW(4), dg = AW(6), n = fstrlen(dg, dof);
+    wr16(ss, ap + 4, (u16)(dof + n));
+    k_lstrcpy(ss, ap);
+    wr16(ss, ap + 4, dof);
+    return ((u32)dg << 16) | dof;
+}
+
+u32 k_lstrlen(u16 ss, u16 ap) { return fstrlen(AW(2), AW(0)); }
+
+/* GetInstanceData(hInstance, pData, nCount): copy from a previous instance's data segment */
+u32 k_GetInstanceData(u16 ss, u16 ap)
+{
+    u16 n = AW(0), off = AW(2), from = AW(4), to = w16_mod->dgroup, i;
+    if (from != to)
+        for (i = 0; i < n; i++)
+            wr8(to, (u16)(off + i), rd8(from, (u16)(off + i)));
+    return n;
+}
+
+/* ---------------------------------------------------------------- WIN.INI */
+static void farstr(char *dst, u16 off, u16 seg, u16 max)
+{
+    if (seg || off)
+        fstrncpy_in(dst, seg, off, max);
+    else
+        dst[0] = 0;
+}
+
+/* GetProfileInt(lpAppName, lpKeyName, nDefault) */
+static u32 profile_int(u16 ss, u16 ap, const char *path)
+{
+    char app[40], key[40], v[16];
+    u16 r = 0, k;
+    farstr(key, AW(2), AW(4), sizeof(key));
+    farstr(app, AW(6), AW(8), sizeof(app));
+    if (!path || prof_get(path, app, key, v, sizeof(v)) < 0)
+        return AW(0);
+    for (k = 0; v[k] >= '0' && v[k] <= '9'; k++)
+        r = (u16)(r * 10 + (v[k] - '0'));
+    vlog("w16: GetProfileInt [%s] %s = %u\n", app, key, r);
+    return r;
+}
+
+/* GetProfileString(lpAppName, lpKeyName, lpDefault, lpReturnedString, nSize) */
+static u32 profile_string(u16 ss, u16 ap, const char *path)
+{
+    char app[40], key[40], v[80];
+    u16 size = AW(0), ro = AW(2), rs = AW(4), n;
+    int r;
+    if (!size)
+        return 0;
+    farstr(key, AW(10), AW(12), sizeof(key));
+    farstr(app, AW(14), AW(16), sizeof(app));
+    if (!AW(10) && !AW(12)) {
+        wlog("w16: GetProfileString [%s] with no key (list of keys) is not supported; returning the default\n", app);
+        r = -1;
+    } else
+        r = path ? prof_get(path, app, key, v, sizeof(v)) : -1;
+    if (r < 0)
+        farstr(v, AW(6), AW(8), sizeof(v));
+    n = (u16)strlen(v);
+    if (n > size - 1)
+        n = size - 1;
+    fcopy_out(rs, ro, v, n);
+    wr8(rs, (u16)(ro + n), 0);
+    vlog("w16: GetProfileString [%s] %s = \"%s\"%s\n", app, key, v, r < 0 ? " (default)" : "");
+    return n;
+}
+
+u32 k_GetProfileInt(u16 ss, u16 ap) { return profile_int(ss, ap, prof_path()); }
+u32 k_GetProfileString(u16 ss, u16 ap) { return profile_string(ss, ap, prof_path()); }
+
+/* Private profiles: a DOS 8.3 basename in the current app directory.
+ * Do not silently turn a DOS absolute path or a truncated name into a
+ * different file. ELKS filesystems are case sensitive. */
+static const char *private_ini(u16 seg, u16 off, char *name)
+{
+    int n, dot = -1;
+    if (!seg)
+        return 0;
+    for (n = 0; n < 13; n++) {
+        int c;
+        if ((u32)off + n > 0xfffful) return 0;
+        c = rd8(seg, (u16)(off+n));
+        if (!c) break;
+        if (c == '.') {
+            if (dot >= 0 || !n || n > 8) return 0;
+            dot = n;
+        } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                     (c >= 'A' && c <= 'Z') || c == '_' || c == '-')) return 0;
+        name[n] = c >= 'A' && c <= 'Z' ? c + ('a'-'A') : c;
+    }
+    if (n == 13 || !n || (dot < 0 ? n > 8 : n-dot <= 1 || n-dot > 4))
+        return 0;
+    name[n] = 0;
+    return name;
+}
+
+u32 k_GetPrivateProfileInt(u16 ss, u16 ap)
+{
+    char file[13];
+    return profile_int(ss, ap + 4, private_ini(AW(2), AW(0), file));
+}
+
+u32 k_GetPrivateProfileString(u16 ss, u16 ap)
+{
+    char file[13];
+    return profile_string(ss, ap + 4, private_ini(AW(2), AW(0), file));
+}
+
+/* WriteProfileString(lpAppName, lpKeyName, lpString): NULL string deletes the key, NULL key the section */
+u32 k_WriteProfileString(u16 ss, u16 ap)
+{
+    char app[40], key[40], v[80];
+    int nokey = !AW(4) && !AW(6), noval = !AW(0) && !AW(2), r;
+    farstr(v, AW(0), AW(2), sizeof(v));
+    farstr(key, AW(4), AW(6), sizeof(key));
+    farstr(app, AW(8), AW(10), sizeof(app));
+    r = prof_put(prof_path(), app, nokey ? 0 : key, noval ? 0 : v);
+    if (r)
+        wlog("w16: WriteProfileString [%s] %s: cannot rewrite %s\n", app, key, prof_path());
+    else
+        vlog("w16: WriteProfileString [%s] %s = \"%s\"\n", app, nokey ? "(section)" : key, noval ? "(deleted)" : v);
+    return r ? 0 : 1;
+}
+
+/* ---------------------------------------------------------------- INT 21h */
+/* register frame at w16_app_ss:w16_app_sp: AX BX CX DX SI DI ES DS BP IP CS FLAGS */
+#define R_AX 0
+#define R_BX 2
+#define R_CX 4
+#define R_DX 6
+#define R_SI 8
+#define R_DI 10
+#define R_ES 12
+#define R_DS 14
+#define R_IP 18
+#define R_CS 20
+#define R_FL 22
+
+void dos_init(void)
+{
+    nvtab = 0;
+    (void)dos_vectors;
+}
+
+void w16_int21_dispatch(void)
+{
+    u16 ss = w16_app_ss, f = w16_app_sp;
+    u16 ax = rd16(ss, f + R_AX), ah = ax >> 8, al = ax & 0xFF;
+    u16 fl = rd16(ss, f + R_FL) & ~1u;      /* clear carry */
+    int i;
+
+    if (opt_trace)
+        wlog("w16: INT 21h AH=%02x AL=%02x\n", ah, al);
+    switch (ah) {
+    case 0x00:                  /* terminate */
+        w16_exit_code = 0;
+        w16_exit16(0);
+        break;
+    case 0x4C:                  /* terminate with return code */
+        w16_exit_code = al;
+        vlog("w16: program exit via INT 21h AH=4Ch, code %u\n", al);
+        w16_exit16(al);
+        break;
+    case 0x30:                  /* DOS version: 3.30 */
+        wr16(ss, f + R_AX, 0x1E03);
+        wr16(ss, f + R_BX, 0);
+        wr16(ss, f + R_CX, 0);
+        break;
+    case 0x19:                  /* current drive: C: */
+        wr16(ss, f + R_AX, (ax & 0xFF00) | 2);
+        break;
+    case 0x25:                  /* set vector: recorded, never installed in the real IVT */
+        for (i = 0; i < nvtab && vtab[i].vec != al; i++)
+            ;
+        if (i == nvtab && nvtab < 8)
+            nvtab++;
+        if (i < 8) {
+            vtab[i].vec = (u8)al; vtab[i].off = rd16(ss, f + R_DX); vtab[i].seg = rd16(ss, f + R_DS);
+        }
+        vlog("w16: INT 21h set vector %02x to %04x:%04x (virtual, not installed)\n", al,
+              rd16(ss, f + R_DS), rd16(ss, f + R_DX));
+        break;
+    case 0x35:                  /* get vector: virtual table, else 0:0 */
+        for (i = 0; i < nvtab && vtab[i].vec != al; i++)
+            ;
+        wr16(ss, f + R_BX, i < nvtab ? vtab[i].off : 0);
+        wr16(ss, f + R_ES, i < nvtab ? vtab[i].seg : 0);
+        break;
+    case 0x2A: case 0x2C: {     /* date / time */
+        time_t t = time(0);
+        struct tm *tm = localtime(&t);
+        if (ah == 0x2A) {
+            wr16(ss, f + R_CX, tm->tm_year + 1900);
+            wr16(ss, f + R_DX, ((tm->tm_mon + 1) << 8) | tm->tm_mday);
+            wr16(ss, f + R_AX, (ax & 0xFF00) | tm->tm_wday);
+        } else {
+            wr16(ss, f + R_CX, (tm->tm_hour << 8) | tm->tm_min);
+            wr16(ss, f + R_DX, tm->tm_sec << 8);
+        }
+        break;
+    }
+    case 0x47: {               /* current directory on our confined C: drive */
+        u16 error=files_getcwd(rd16(ss,f+R_DX)&255,rd16(ss,f+R_DS),rd16(ss,f+R_SI));
+        wr16(ss,f+R_AX,error?error:0x0100);
+        if(error)fl|=1;
+        break;
+    }
+    case 0x41: {               /* unlink within mapped local drive only */
+        u16 error=files_unlink(rd16(ss,f+R_DS),rd16(ss,f+R_DX));
+        wr16(ss,f+R_AX,error);
+        if(error) fl|=1;
+        break;
+    }
+    case 0x40:                  /* write: only stdout/stderr, forwarded to the log */
+        if (rd16(ss, f + R_BX) == 1 || rd16(ss, f + R_BX) == 2) {
+            char buf[81];
+            u16 n = rd16(ss, f + R_CX), k = n > 80 ? 80 : n;
+            fcopy_in(buf, rd16(ss, f + R_DS), rd16(ss, f + R_DX), k);
+            buf[k] = 0;
+            wlog("w16: program output: %s\n", buf);
+            wr16(ss, f + R_AX, n);
+            break;
+        }
+        /* fall through */
+    default:
+        wlog("w16: unsupported INT 21h function AH=%02x AL=%02x at %04x:%04x; returning error 1\n", ah, al,
+             rd16(ss, f + R_CS), rd16(ss, f + R_IP));
+        if (opt_strict_dos) {
+            w16_exit_code = 255;
+            w16_exit16(255);
+        }
+        wr16(ss, f + R_AX, 1);
+        fl |= 1;
+        break;
+    }
+    wr16(ss, f + R_FL, fl);
+}

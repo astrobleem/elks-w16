@@ -216,7 +216,9 @@ int  prof_put(const char *path, const char *app, const char *key, const char *va
 #define MOD_USER   1
 #define MOD_GDI    2
 #define MOD_PBRUSH 3       /* diagnostic-only table; no DLL loading implied */
-#define NMODS      4
+#define MOD_SOUND  4       /* no play device: OpenSound reports zero voices */
+#define MOD_SHELL  5       /* diagnostic-only until shell APIs are implemented */
+#define NMODS      6
 extern const char *const w16_modnames[NMODS];
 
 #define API_MISSING 0x08   /* diagnostic trap, disabled by default */

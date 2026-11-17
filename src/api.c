@@ -11,7 +11,7 @@
 
 int opt_missing; /* explicit diagnostic mode; never returns success for missing APIs */
 
-const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
+const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SOUND", "SHELL" };
 
 #ifdef W16_HOST
 #define H(f) 0
@@ -28,6 +28,8 @@ u32 k_OpenFile(u16,u16),k_lclose(u16,u16),k_lread(u16,u16),k_lcreat(u16,u16),k_l
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16), k_GlobalLRUNewest(u16,u16);
+u32 s_OpenSound(u16,u16), s_CloseSound(u16,u16), s_Unavailable(u16,u16);
+u32 k_FatalExit(u16,u16), k_FatalAppExit(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_OpenClipboard(u16,u16),u_CloseClipboard(u16,u16),u_EmptyClipboard(u16,u16);
 u32 u_SetClipboardData(u16,u16),u_GetClipboardData(u16,u16),u_GetPriorityClipboardFormat(u16,u16);
@@ -94,6 +96,8 @@ u32 g_UnrealizeObject(u16, u16);
 #define U MOD_USER
 #define G MOD_GDI
 #define P MOD_PBRUSH
+#define S MOD_SOUND
+#define L MOD_SHELL
 const struct api api_table[] = {
     { U,175,"LoadBitmap",6,0,H(u_LoadBitmap) },
     { G,52,"CreateCompatibleDC",2,0,H(g_CreateCompatibleDC) },
@@ -266,4 +270,280 @@ const struct api api_table[] = {
     { G, 136, "RemoveFontResource", 4, 0, H(g_RemoveFontResource) },
     { G, 150, "UnrealizeObject",   2, 0, H(g_UnrealizeObject) },
     { G, 154, "GetNearestColor",   6, 0, H(g_GetNearestColor) },
-    { G, 346, "SetTextAlign",      4, 0,
+    { G, 346, "SetTextAlign",      4, 0, H(g_SetTextAlign) },
+    { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
+    { G, 75, "GetBkColor", 2, 0, H(g_GetBkColor) },
+    { G,97,"GetWindowOrg",2,0,H(g_GetWindowOrg) },
+    { K,97,"GetTempFileName",12,0,H(k_GetTempFileName) },
+    { K, 164, "GlobalLRUNewest", 2, 0, H(k_GlobalLRUNewest) },
+    /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
+     * these terminate if executed; ordinary loads reject them. */
+    { G,3,"SetMapMode",4,0,H(g_SetMapMode) },
+    { G,   6, "SETPOLYFILLMODE", 0, API_MISSING, 0 },
+    { G,7,"SetStretchBltMode",4,0,H(g_SetStretchBltMode) },
+    { G,11,"SetWindowOrg",6,0,H(g_SetWindowOrg) },
+    { G,12,"SetWindowExt",6,0,H(g_SetWindowExt) },
+    { G,13,"SetViewportOrg",6,0,H(g_SetViewportOrg) },
+    { G,14,"SetViewportExt",6,0,H(g_SetViewportExt) },
+    { G,  21, "EXCLUDECLIPRECT", 0, API_MISSING, 0 },
+    { G,  28, "ROUNDRECT", 0, API_MISSING, 0 },
+    { G, 30, "SaveDC", 2, 0, H(g_SaveDC) },
+    { G,  36, "POLYGON", 0, API_MISSING, 0 },
+    { G,  37, "POLYLINE", 0, API_MISSING, 0 },
+    { G,  38, "ESCAPE", 0, API_MISSING, 0 },
+    { G, 39, "RestoreDC", 4, 0, H(g_RestoreDC) },
+    { G,  44, "SELECTCLIPRGN", 0, API_MISSING, 0 },
+    { G,  58, "CREATEHATCHBRUSH", 0, API_MISSING, 0 },
+    { G,  63, "CREATEPOLYGONRGN", 0, API_MISSING, 0 },
+    { G,  64, "CREATERECTRGN", 0, API_MISSING, 0 },
+    { G,99,"LPtoDP",8,0,H(g_LPtoDP) },
+    { G,67,"DPtoLP",8,0,H(g_DPtoLP) },
+    { G,  70, "EnumFonts", 14, 0, H(g_EnumFonts) },
+    { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
+    { G,  74, "GetBitmapBits", 10, 0, H(g_GetBitmapBits) },
+    { G, 85, "GetROP2", 2, 0, H(g_GetROP2) },
+    { G, 106, "SetBitmapBits", 10, 0, H(g_SetBitmapBits) },
+    { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
+    { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
+    { G, 156, "CREATEDISCARDABLEBITMAP", 0, API_MISSING, 0 },
+    { G, 163, "SETBITMAPDIMENSION", 0, API_MISSING, 0 },
+    { G, 360, "CREATEPALETTE", 4, 0, H(g_CreatePalette) },
+    { G, 363, "GETPALETTEENTRIES", 10, 0, H(g_GetPaletteEntries) },
+    { G, 366, "UPDATECOLORS", 0, API_MISSING, 0 },
+    { G, 370, "GETNEARESTPALETTEINDEX", 6, 0, H(g_GetNearestPaletteIndex) },
+    { G, 372, "EXTFLOODFILL", 0, API_MISSING, 0 },
+    { G, 440, "SetDIBits", 18, 0, H(g_SetDIBits) },
+    { G, 441, "GetDIBits", 18, 0, H(g_GetDIBits) },
+    { G, 443, "SETDIBITSTODEVICE", 28, API_MISSING, 0 },
+    { K,  50, "GETPROCADDRESS", 0, API_MISSING, 0 },
+    { K, 74, "OpenFile", 10, 0, H(k_OpenFile) },
+    { K, 81, "_lclose", 2, 0, H(k_lclose) },
+    { K, 82, "_lread", 8, 0, H(k_lread) },
+    { K, 84, "_llseek", 8, 0, H(k_llseek) },
+    { K, 85, "_lopen", 6, 0, H(k_lopen) },
+    { K, 86, "_lwrite", 8, 0, H(k_lwrite) },
+    { K,  92, "GetTempDrive", 2, 0, H(k_GetTempDrive) },
+    { K,  95, "LOADLIBRARY", 0, API_MISSING, 0 },
+    { K,  96, "FREELIBRARY", 0, API_MISSING, 0 },
+
+    { K, 169, "GetFreeSpace", 2, 0, H(k_GetFreeSpace) },
+    { P,   2, "VCREATEBITMAP", 0, API_MISSING, 0 },
+    { P,   3, "GETVCACHEDC", 0, API_MISSING, 0 },
+    { P,   4, "VPATBLT", 0, API_MISSING, 0 },
+    { P,   5, "VBITBLT", 0, API_MISSING, 0 },
+    { P,   6, "VSTRETCHBLT", 0, API_MISSING, 0 },
+    { P,   7, "VDELETEOBJECT", 0, API_MISSING, 0 },
+    { P,   8, "DISCARDBAND", 0, API_MISSING, 0 },
+    { U,  16, "CLIPCURSOR", 0, API_MISSING, 0 },
+    { U,  17, "GETCURSORPOS", 0, API_MISSING, 0 },
+    { U,  45, "BRINGWINDOWTOTOP", 2, API_MISSING, 0 },
+    { U,  47, "IsWindow", 2, 0, H(u_IsWindow) },
+    { U,  49, "IsWindowVisible", 2, 0, H(u_IsWindowVisible) },
+    { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
+    { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
+    { U,61,"ScrollWindow",14,0,H(u_ScrollWindow) },
+    { U,  62, "SetScrollPos", 8, 0, H(u_SetScrollPos) },
+    { U,  63, "GetScrollPos", 4, 0, H(u_GetScrollPos) },
+    { U,  64, "SetScrollRange", 10, 0, H(u_SetScrollRange) },
+    { U,  89, "CREATEDIALOG", 0, API_MISSING, 0 },
+    { U,  90, "ISDIALOGMESSAGE", 0, API_MISSING, 0 },
+    { U,  93, "GetDlgItemText", 10, 0, H(u_GetDlgItemText) },
+    { U,  94, "SETDLGITEMINT", 8, API_MISSING, 0 },
+    { U,  95, "GETDLGITEMINT", 10, API_MISSING, 0 },
+    { U,  99, "DlgDirSelect", 8, 0, H(u_DlgDirSelect) },
+    { U, 100, "DlgDirList", 12, 0, H(u_DlgDirList) },
+    { U, 104, "MESSAGEBEEP", 0, API_MISSING, 0 },
+    { U, 111, "SendMessage", 10, 0, H(u_SendMessage) },
+    { U, 119, "GETMESSAGEPOS", 0, API_MISSING, 0 },
+    { U, 130, "SetClassWord", 6, 0, H(u_SetClassWord) },
+    { U, 135, "GetWindowLong", 4, 0, H(u_GetWindowLong) },
+    { U, 136, "SetWindowLong", 8, 0, H(u_SetWindowLong) },
+    { U, 137, "OPENCLIPBOARD", 2, 0, H(u_OpenClipboard) },
+    { U, 138, "CLOSECLIPBOARD", 0, 0, H(u_CloseClipboard) },
+    { U, 139, "EMPTYCLIPBOARD", 0, 0, H(u_EmptyClipboard) },
+    { U, 141, "SETCLIPBOARDDATA", 4, 0, H(u_SetClipboardData) },
+    { U, 142, "GETCLIPBOARDDATA", 2, 0, H(u_GetClipboardData) },
+    { U, 156, "GETSYSTEMMENU", 0, API_MISSING, 0 },
+    { U, 161, "GetMenuString", 12, 0, H(u_GetMenuString) },
+    { U, 163, "CREATECARET", 0, API_MISSING, 0 },
+    { U, 164, "DESTROYCARET", 0, API_MISSING, 0 },
+    { U, 165, "SETCARETPOS", 0, API_MISSING, 0 },
+    { U, 166, "HIDECARET", 0, API_MISSING, 0 },
+    { U, 167, "SHOWCARET", 0, API_MISSING, 0 },
+    { U, 232, "SetWindowPos", 14, 0, H(u_SetWindowPos) },
+    { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
+    { U, 278, "GetDesktopHwnd", 0, 0, H(u_GetDesktopHwnd) },
+    { U, 282, "SELECTPALETTE", 6, 0, H(u_SelectPalette) },
+    { U, 283, "REALIZEPALETTE", 2, 0, H(u_RealizePalette) },
+    { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 6, 0, H(u_GetPriorityClipboardFormat) },
+    { U, 410, "INSERTMENU", 0, API_MISSING, 0 },
+    { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
+    { U, 414, "ModifyMenu", 12, 0, H(u_ModifyMenu) },
+    { U, 430, "lstrcmp", 8, 0, H(u_lstrcmp) },
+    { U, 431, "ANSIUPPER", 0, API_MISSING, 0 },
+    { U, 471, "lstrcmpi", 8, 0, H(u_lstrcmpi) },
+    { U, 472, "AnsiNext", 4, 0, H(u_AnsiNext) },
+    { U, 473, "AnsiPrev", 8, 0, H(u_AnsiPrev) },
+    /* SOUND is a deliberately unavailable play device, not pretend playback.
+     * WinMine disables sound when OpenSound reports fewer than one voice. */
+    { S, 1, "OpenSound", 0, 0, H(s_OpenSound) },
+    { S, 2, "CloseSound", 0, 0, H(s_CloseSound) },
+    { S, 4, "SetVoiceNote", 8, 0, H(s_Unavailable) },
+    { S, 5, "SetVoiceAccent", 10, 0, H(s_Unavailable) },
+    { S, 9, "StartSound", 0, 0, H(s_Unavailable) },
+    { S, 10, "StopSound", 0, 0, H(s_Unavailable) },
+    { K, 1, "FatalExit", 2, 0, H(k_FatalExit) },
+    { K, 137, "FatalAppExit", 6, 0, H(k_FatalAppExit) },
+    { K, 115, "OutputDebugString", 4, API_MISSING, 0 },
+    /* These bind only with -u and terminate if called. */
+    { L, 22, "ShellAbout", 12, API_MISSING, 0 },
+    { G, 442, "CreateDIBitmap", 20, API_MISSING, 0 },
+    { U, 50, "FindWindow", 8, API_MISSING, 0 },
+
+};
+const int api_count = sizeof(api_table) / sizeof(api_table[0]);
+typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
+
+/* Names of common Windows 3.0 entry points this layer does NOT implement, for diagnostics only. */
+struct known { u8 mod; u16 ord; const char *name; };
+static const struct known known_names[] = {
+    { K, 1, "FatalExit" }, { K, 4, "LocalInit" }, { K, 6, "LocalReAlloc" },
+    
+    { K, 15, "GlobalAlloc" }, { K, 16, "GlobalReAlloc" }, { K, 17, "GlobalFree" }, 
+    { K, 20, "GlobalSize" }, 
+    { K, 36, "GetCurrentTask" }, { K, 47, "GetModuleHandle" }, 
+    { K, 50, "GetProcAddress" }, 
+    { K, 74, "OpenFile" },
+    { K, 81, "_lclose" }, { K, 82, "_lread" }, { K, 83, "_lcreat" }, { K, 84, "_llseek" }, { K, 85, "_lopen" },
+    { K, 86, "_lwrite" }, 
+    { K, 95, "LoadLibrary" }, { K, 96, "FreeLibrary" }, { K, 131, "GetDOSEnvironment" }, { K, 137, "FatalAppExit" },
+    { U, 13, "GetTickCount" },
+    { U, 15, "GetCurrentTime" }, { U, 17, "GetCursorPos" }, 
+    { U, 23, "GetFocus" }, { U, 32, "GetWindowRect" }, { U, 34, "EnableWindow" },
+    { U, 36, "GetWindowText" }, { U, 46, "GetParent" }, { U, 56, "MoveWindow" },
+    { U, 85, "DrawText" },
+    { U, 89, "CreateDialog" }, { U, 104, "MessageBeep" },
+    { U, 111, "SendMessage" },
+    { U, 150, "LoadMenu" }, { U, 175, "LoadBitmap" }, 
+    { U, 421, "wvsprintf" },
+    { G, 3, "SetMapMode" }, { G, 11, "SetWindowOrg" }, { G, 13, "SetViewportOrg" },
+    { G, 28, "RoundRect" }, { G, 30, "SaveDC" }, { G, 31, "SetPixel" }, { G, 34, "BitBlt" },
+    { G, 35, "StretchBlt" }, { G, 36, "Polygon" }, { G, 37, "Polyline" }, { G, 39, "RestoreDC" },
+    { G, 50, "CreateBrushIndirect" }, { G, 52, "CreateCompatibleDC" },
+    { G, 56, "CreateFont" }, { G, 58, "CreateHatchBrush" },
+    
+};
+
+int api_find_ord(int mod, u16 ord)
+{
+    int i;
+    for (i = 0; i < api_count; i++)
+        if (api_table[i].mod == mod && api_table[i].ord == ord &&
+            (!(api_table[i].flags & API_MISSING) || opt_missing))
+            return i;
+    return -1;
+}
+
+static int ieq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = *a >= 'a' && *a <= 'z' ? *a - 32 : *a, y = *b >= 'a' && *b <= 'z' ? *b - 32 : *b;
+        if (x != y)
+            return 0;
+    }
+    return *a == *b;
+}
+
+int api_find_name(int mod, const char *name)
+{
+    int i;
+    for (i = 0; i < api_count; i++)
+        if (api_table[i].mod == mod && ieq(api_table[i].name, name) &&
+            (!(api_table[i].flags & API_MISSING) || opt_missing))
+            return i;
+    return -1;
+}
+
+const char *api_known_name(int mod, u16 ord)
+{
+    unsigned i;
+    for (i = 0; i < sizeof(known_names) / sizeof(known_names[0]); i++)
+        if (known_names[i].mod == mod && known_names[i].ord == ord)
+            return known_names[i].name;
+    return 0;
+}
+
+#ifdef W16_HOST
+/* host tests: stubs live in a pretend segment so bindings can be checked */
+int api_target(int idx, u16 *seg, u16 *off)
+{
+    if (idx < 0 || idx >= api_count || (api_table[idx].flags & API_CONST))
+        return -1;
+    *seg = 0xE000;
+    *off = (u16)(8 * idx);
+    return 0;
+}
+#else
+int api_target(int idx, u16 *seg, u16 *off)
+{
+    if (idx < 0 || idx >= api_count || (api_table[idx].flags & API_CONST))
+        return -1;
+    *seg = FSEG(w16_stubs);                 /* the stubs' own code segment */
+    *off = (api_table[idx].flags & API_RAW) ? FOFF(w16_dos3call) : (u16)(FOFF(w16_stubs) + 8 * idx);
+    return 0;
+}
+
+/* Called from thunk.S on the loader stack. The app frame at w16_app_ss:w16_app_sp is
+ * DI SI DS BP IP CS, then the arguments. Pops Pascal arguments by moving the frame up. */
+u32 w16_api_dispatch(u16 idx)
+{
+    const struct api *a;
+    u16 ss = w16_app_ss, sp = w16_app_sp, n, k;
+    u32 r;
+
+    if (idx >= api_count) { w16_exit16(W16_EIMPORT); return W16_EIMPORT; }
+    a = &api_table[idx];
+    if (a->flags & API_MISSING) {
+        wlog("w16: MISSING API TRAP: %s.%u at %04x:%04x; stopping\n",
+             w16_modnames[a->mod],a->ord,rd16(ss,sp+10),rd16(ss,sp+8));
+        if (opt_trace && sp <= 0xffe8u)
+            wlog("w16: missing args %04x %04x %04x %04x %04x %04x\n",
+                 rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),
+                 rd16(ss,sp+18),rd16(ss,sp+20),rd16(ss,sp+22));
+        w16_exit16(W16_EIMPORT); return W16_EIMPORT;
+    }
+    w16_ret_bx = 0;
+    w16_ret_cx = 0;
+    w16_ret_es = ss;
+    if (opt_trace)
+        wlog("w16: call %s.%s\n", w16_modnames[a->mod], a->name);
+    if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
+        wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
+    r = a->fn(ss, (u16)(sp + 12));
+    if (opt_trace && !r && a->mod == MOD_USER && a->ord == 175 && sp <= 0xffe8u)
+        wlog("w16: LoadBitmap failed name=%04x:%04x instance=%04x\n",rd16(ss,sp+14),rd16(ss,sp+12),rd16(ss,sp+16));
+    if (opt_trace && r == 0xffffffffUL && a->mod == MOD_GDI && (a->ord == 31 || a->ord == 83) && sp <= 0xffe8u)
+        wlog("w16: pixel failed ord=%u args=%04x %04x %04x %04x %04x\n", a->ord,
+             rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),rd16(ss,sp+18),rd16(ss,sp+20));
+    if (opt_trace && !r && a->mod == MOD_GDI && (a->ord == 29 || a->ord == 34) && sp <= 0xffdcu)
+        wlog("w16: raster failed ord=%u args=%04x %04x %04x %04x %04x %04x %04x %04x %04x %04x\n", a->ord,
+             rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),rd16(ss,sp+18),rd16(ss,sp+20),
+             rd16(ss,sp+22),rd16(ss,sp+24),rd16(ss,sp+26),rd16(ss,sp+28),rd16(ss,sp+30));
+    if(opt_trace && ((a->mod==MOD_KERNEL && (a->ord==15 || a->ord==16 || a->ord==74 || a->ord==81 || a->ord==82 || a->ord==86)) ||
+       (a->mod==MOD_GDI && (a->ord==48 || a->ord==74 || a->ord==106 || a->ord==440)))) {
+        wlog("w16: result %s.%u = %08lx",w16_modnames[a->mod],a->ord,(unsigned long)r);
+        for(k=0;k<a->argbytes && k<12;k+=2)wlog(" %04x",rd16(ss,sp+12+k));
+        wlog("\n");
+    }
+    n = a->argbytes;
+    if (n) {
+        sp = w16_app_sp;                       /* restored by any nested calls */
+        for (k = 12; k; ) {
+            k -= 2;
+            wr16(ss, (u16)(sp + n + k), rd16(ss, (u16)(sp + k)));
+        }
+        w16_app_sp = sp + n;
+    }
+    return r;
+}
+#endif

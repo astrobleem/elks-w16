@@ -22,8 +22,8 @@ for i in range(nmod):
 # api_table order defines the stub index; constants carry a value
 table = []
 body = apic[apic.index('const struct api api_table[]'):apic.index('const int api_count')]
-for m in re.finditer(r'\{\s*([KUGP]),\s*(\d+),\s*"(\w+)",\s*(\d+),\s*([\w|]+)\s*,\s*([^,}]+?)(?:,\s*(0x[0-9A-Fa-f]+|\d+))?\s*\}', body):
-    table.append(dict(mod={'K': 'KERNEL', 'U': 'USER', 'G': 'GDI', 'P': 'PBRUSH'}[m[1]], ord=int(m[2]), name=m[3], flags=m[5],
+for m in re.finditer(r'\{\s*([KUGPSL]),\s*(\d+),\s*"(\w+)",\s*(\d+),\s*([\w|]+)\s*,\s*([^,}]+?)(?:,\s*(0x[0-9A-Fa-f]+|\d+))?\s*\}', body):
+    table.append(dict(mod={'K': 'KERNEL', 'U': 'USER', 'G': 'GDI', 'P': 'PBRUSH', 'S': 'SOUND', 'L': 'SHELL'}[m[1]], ord=int(m[2]), name=m[3], flags=m[5],
                       value=int(m[7], 0) if m[7] else 0))
 index = {(t['mod'], t['ord']): i for i, t in enumerate(table)}
 
