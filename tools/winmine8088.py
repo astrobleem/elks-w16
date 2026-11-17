@@ -277,7 +277,7 @@ def main():
     except (OSError, ValueError, KeyError, struct.error, subprocess.SubprocessError) as exc:
         sys.exit('winmine8088: ' + str(exc))
     print(counts)
-    print('Experimental relayout only. Runtime correctness and gameplay remain unverified.')
+    print('Wrote an experimental private copy. This tool does not execute or validate gameplay.')
 
 
 if __name__ == '__main__':

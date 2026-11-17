@@ -13,6 +13,9 @@ samples:
 
 test: host samples
 	bash tests/hosttest.sh
+	python3 tests/winminecputest.py
+	python3 tests/winmineshiftstest.py
+	python3 tests/winmine8088test.py
 	python3 tests/mappingtest.py
 	python3 tests/menucapacitytest.py
 	python3 tests/menustringtest.py

@@ -38,6 +38,7 @@ The project is deliberately small in scope. It runs the source-built examples he
 | **HELLO16** | Drawing, colours, text, mouse and keyboard input | [Source included](test/hello16) |
 | **DLGTEST** | Modal dialogs, resources, buttons, menus and string tables | [Source included](test/dlgtest) |
 | **MBTEST** | Message boxes, icons and button results | [Source included](test/mbtest) |
+| **Windows 3.1 Minesweeper** | Reveal cells, flag them and change board size on emulated 8086 | Bring your own supported WINMINE.EXE; convert a private copy as below |
 | **Windows 3.0 Paintbrush** | Line drawing in colour; opens indexed BMPs on the experimental VGA configuration | Bring your own EXE and companion DLL |
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
@@ -57,6 +58,18 @@ These results come from emulator runs. Tandy configurations have been exercised 
 </table>
 
 [See the gallery →](docs/gallery.md) for digital Clock, system menus, Reversi dialogs and the PCjr display.
+
+## Running the Windows 3.1 Minesweeper on an 8086-class guest
+
+Unlike the Windows 3.0 examples, this game's original code contains instructions introduced after the 8088. On the build host, install NASM's `ndisasm` on your PATH and run:
+
+```sh
+python3 tools/winmine8088.py /path/to/original/WINMINE.EXE /tmp/mine8086.exe
+```
+
+The output path must not already exist. Copy that private output into your ELKS guest, start the patched VGA Nano-X server and run `w16 /path/to/mine8086.exe`. Use a writable working directory if you want settings saved to `winmine.ini`. No Microsoft executable is distributed here. The transformer targets a specific two-segment layout, not arbitrary Windows programs.
+
+The converted game has run on ELKS in DOSBox-X's 8086 CPU mode. Mouse input revealed numbered squares and placed flags; the Game menu switched to an Intermediate board. This does not establish physical 8088 compatibility, original clock speed, or complete coverage of every game path. The legacy sound service reports no voices. The compact build retains API call tracing (`-t`) and error messages but omits detailed verbose logging and the allocation census to fit its two code segments.
 
 ## Build it from source
 
