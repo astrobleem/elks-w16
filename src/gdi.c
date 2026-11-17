@@ -267,6 +267,7 @@ u16 dc_create(struct wnd *w, int paint)
     }
     d->gc = gcs[i].gc;
     d->rop2 = R2_COPYPEN;
+    d->stretchmode = 1;
     d->pen = HSTOCK + 2 * 7;        /* BLACK_PEN */
     d->brush = HSTOCK + 2 * 0;      /* WHITE_BRUSH */
     d->font = HSTOCK + 2 * 13;      /* SYSTEM_FONT */

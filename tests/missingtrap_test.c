@@ -3,6 +3,8 @@
 int main(void) {
  int i;u16 s,o;
  assert(!opt_missing);
+ assert(api_table[api_find_ord(MOD_GDI,35)].argbytes==24);
+ assert(api_table[api_find_ord(MOD_GDI,7)].argbytes==4);
  assert(api_table[api_find_ord(MOD_USER,56)].argbytes==12);
  assert(api_table[api_find_ord(MOD_USER,62)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,63)].argbytes==4);
@@ -14,7 +16,7 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_KERNEL,20)].argbytes==2);
  assert(api_table[api_find_ord(MOD_KERNEL,6)].argbytes==6);
  assert(api_table[api_find_ord(MOD_KERNEL,154)].argbytes==4);
- assert(api_find_ord(MOD_GDI,35)<0);
+ assert(api_find_ord(MOD_GDI,28)<0);
  assert(api_find_ord(MOD_USER,175)>=0);
  assert(api_table[api_find_ord(MOD_USER,175)].argbytes==6);
  assert(api_table[api_find_ord(MOD_GDI,34)].argbytes==20);
@@ -39,11 +41,11 @@ int main(void) {
  assert(api_find_ord(MOD_PBRUSH,5)==i && !api_target(i,&s,&o) && o==8*i);
  i=api_find_ord(MOD_USER,414);assert(i>255 && api_table[i].flags==API_MISSING);
  assert(!api_target(i,&s,&o) && o==8*i);
- i=api_find_ord(MOD_GDI,35);
+ i=api_find_ord(MOD_GDI,28);
  assert(i>=0 && (api_table[i].flags&API_MISSING));
  assert(api_table[i].fn==0);
  assert(!api_target(i,&s,&o));assert(o==8*i);
- opt_missing=0;assert(api_find_ord(MOD_GDI,35)<0);
+ opt_missing=0;assert(api_find_ord(MOD_GDI,28)<0);
  assert(api_find_ord(MOD_GDI,65535)<0);
  assert(api_target(api_count,&s,&o)<0);
  return 0;

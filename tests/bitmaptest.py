@@ -17,10 +17,10 @@ static GR_PALETTE native_palette,scratch;
 #define w16_scratch (&scratch)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
 typedef struct{int foreground,mode;}GR_GC_INFO;
-struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;};
+struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
-static u16 args[10];
+static u16 args[12];
 #define AW(n) args[(n)/2]
 #define AL(n) ((u32)AW(n)|((u32)AW((n)+2)<<16))
 #define GR_MODE_COPY 0
@@ -127,7 +127,47 @@ static void object_check(u16 b,int w,int h,int depth){
  assert((output[106]|output[107]<<8)==stride&&output[108]==1&&output[109]==depth);
  assert(!output[110]&&!output[111]&&!output[112]&&!output[113]&&output[114]==0xa5);
 }
+static int stretch(u16 dc,int dx,int dy,int dw,int dh,int sx,int sy,int sw,int sh,u32 rop){
+ args[0]=rop;args[1]=rop>>16;args[2]=sh;args[3]=sw;args[4]=sy;args[5]=sx;
+ args[6]=dc;args[7]=dh;args[8]=dw;args[9]=dy;args[10]=dx;args[11]=9;
+ return g_StretchBlt(0,0);
+}
+static void stretch_tests(void){
+ int dw,dh,x,y,dx,dy;u16 b,d;u32 want;
+ setup(13,11,1);b=load();d=dcnew();assert(bitmap_select(d,b));
+ dest.stretchmode=1;args[0]=3;args[1]=9;assert(g_SetStretchBltMode(0,0)==1);
+ args[0]=4;assert(!g_SetStretchBltMode(0,0)&&dest.stretchmode==3);
+ args[0]=2;args[1]=d;assert(g_SetStretchBltMode(0,0)==1);
+ for(dw=1;dw<=29;dw+=4)for(dh=1;dh<=25;dh+=3)
+ for(dx=-7;dx<=98;dx+=21)for(dy=-3;dy<=99;dy+=17){
+  for(x=0;x<10000;x++)surface[x]=0xabcdef;
+  foreground=77;mode=3;
+  assert(stretch(d,dx,dy,dw,dh,2,1,9,8,0x00cc0020UL));
+  assert(foreground==77&&mode==3);
+  for(y=0;y<100;y++)for(x=0;x<100;x++){
+   want=0xabcdef;
+   if(x>=dx&&x<dx+dw&&y>=dy&&y<dy+dh)
+    want=pattern(2+(x-dx)*9/dw,1+(y-dy)*8/dh)?dest.bkcolor:dest.textcolor;
+   assert(surface[y*100+x]==want);
+  }
+ }
+ for(x=0;x<10000;x++)surface[x]=0xabcdef;
+ assert(!stretch(d,0,0,10,10,0,0,13,11,0x008800c6UL));
+ assert(!stretch(d,0,0,10,10,-1,0,13,11,0x00cc0020UL));
+ assert(!stretch(d,0,0,-1,10,0,0,13,11,0x00cc0020UL));
+ dest.stretchmode=1;assert(!stretch(d,0,0,10,10,0,0,13,11,0x00cc0020UL));
+ for(x=0;x<10000;x++)assert(surface[x]==0xabcdef);
+ bitmap_shutdown();clean();
+ setup(13,11,4);b=load();d=dcnew();assert(bitmap_select(d,b));dest.stretchmode=3;
+ for(x=0;x<16;x++){bitmaps[bi(b)].palette[x].r=x*13;bitmaps[bi(b)].palette[x].g=x*7;bitmaps[bi(b)].palette[x].b=x*17;}
+ for(y=0;y<11;y++)for(x=0;x<13;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y*3)&15);
+ assert(stretch(d,0,0,39,22,0,0,13,11,0x00cc0020UL));
+ for(y=0;y<22;y++)for(x=0;x<39;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],(x/3+(y/2)*3)&15));
+ bitmap_shutdown();clean();
+ puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");
+}
 int main(int argc,char**argv){
+ stretch_tests();
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
  u16 b,d,e;
  native_palette.count=16;for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*17;}

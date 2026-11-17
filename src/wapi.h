@@ -123,7 +123,7 @@ struct dc {
     u16  pen, brush, font;
     u32  textcolor, bkcolor;
     u16  bkmode, textalign;
-    u8   rop2;
+    u8   rop2, stretchmode;
     int  curx, cury;
     i16 brushx, brushy;
 };

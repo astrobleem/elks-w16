@@ -48,6 +48,7 @@ u32 u_MessageBox(u16, u16), u_SetTimer(u16, u16), u_KillTimer(u16, u16), u_GetDC
 u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_FillRect(u16, u16);
 u32 u_CheckMenuItem(u16, u16), u_EnableMenuItem(u16, u16), u_GetMenu(u16, u16), u_GetSubMenu(u16, u16);
 u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
+u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
 u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g_DeleteDC(u16, u16);
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
@@ -77,7 +78,7 @@ const struct api api_table[] = {
     /* Optional diagnostic traps for the remaining Solitaire imports.
      * Strict default lookup rejects these. -u binds a terminating thunk. */
     { G,31,"SetPixel",10,0,H(g_SetPixel) },
-    { G,35,"StretchBlt",0,API_MISSING,0 },
+    { G,35,"StretchBlt",24,0,H(g_StretchBlt) },
     { G,51,"CreateCompatibleBitmap",6,0,H(g_CreateCompatibleBitmap) },
     { G,79,"GetDCOrg",2,0,H(g_GetDCOrg) },
     { G,82,"GetObject",8,0,H(g_GetObject) },
@@ -246,7 +247,7 @@ const struct api api_table[] = {
      * these terminate if executed; ordinary loads reject them. */
     { G,   3, "SETMAPMODE", 0, API_MISSING, 0 },
     { G,   6, "SETPOLYFILLMODE", 0, API_MISSING, 0 },
-    { G,   7, "SETSTRETCHBLTMODE", 0, API_MISSING, 0 },
+    { G,7,"SetStretchBltMode",4,0,H(g_SetStretchBltMode) },
     { G,  11, "SETWINDOWORG", 0, API_MISSING, 0 },
     { G,  12, "SETWINDOWEXT", 0, API_MISSING, 0 },
     { G,  13, "SETVIEWPORTORG", 0, API_MISSING, 0 },

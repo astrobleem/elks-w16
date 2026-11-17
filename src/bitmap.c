@@ -12,7 +12,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-static struct {u16 bitmap;u8 used;i16 brushx,brushy;u32 textcolor,bkcolor;} memory[ND];
+static struct {u16 bitmap;u8 used,stretchmode;i16 brushx,brushy;u32 textcolor,bkcolor;} memory[ND];
 static int bi(u16 h){u16 n=(h-BBASE)/2;return h>=BBASE&&!(h&1)&&n<NB&&bitmaps[n].used?n:-1;}
 static int di(u16 h){u16 n=(h-DBASE)/2;return h>=DBASE&&!(h&1)&&n<ND&&memory[n].used?n:-1;}
 static void release_pixels(struct bitmap*b)
@@ -43,7 +43,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h),j;if(i<0)return -1;for(j=0;j<ND;j++)if(memory[j].used&&memory[j].bitmap==h)return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h),k;u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;for(k=0;k<ND;k++)if(k!=i&&memory[k].used&&memory[k].bitmap==h&&h!=DEFAULT_BITMAP)return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory[i].used=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory[i].used=1;memory[i].stretchmode=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
@@ -248,4 +248,49 @@ int bitmap_brushorg(u16 h,i16 x,i16 y,u32 *old)
  int i=di(h);if(i<0)return 0;
  *old=(u16)memory[i].brushx|((u32)(u16)memory[i].brushy<<16);
  memory[i].brushx=x;memory[i].brushy=y;return 1;
+}
+
+/* SetStretchBltMode: state belongs to the destination DC, including memory DCs.
+ * Unsupported modes leave the old value untouched. */
+u32 g_SetStretchBltMode(u16 ss,u16 ap)
+{
+ u16 h=AW(2),mode=AW(0);struct dc*d=dc_get(h);int m=di(h);u8 old;
+ if((!d&&m<0)||mode<1||mode>3)return 0;
+ if(d){old=d->stretchmode;d->stretchmode=mode;}
+ else{old=memory[m].stretchmode;memory[m].stretchmode=mode;}
+ return old;
+}
+
+/* Bounded COLORONCOLOR memory-to-display nearest-neighbour scaling. Destination
+ * clipping never resets sampling phase. Reject unsupported paths before drawing;
+ * in particular do not silently approximate BLACKONWHITE/WHITEONBLACK shrink. */
+u32 g_StretchBlt(u16 ss,u16 ap)
+{
+ struct dc*d=dc_get(AW(22));int m=di(AW(12)),b,x,y,end,limitx,limity;
+ long dx=(i16)AW(20),dy=(i16)AW(18),dw=(i16)AW(16),dh=(i16)AW(14);
+ long sx=(i16)AW(10),sy=(i16)AW(8),sw=(i16)AW(6),sh=(i16)AW(4),left,top,right,bottom;
+ struct bitmap*s;GR_SCREEN_INFO si;GR_GC_INFO old;
+ if(!d||m<0||AL(0)!=0x00cc0020UL||d->stretchmode!=3||
+    dw<=0||dh<=0||sw<=0||sh<=0||(b=bi(memory[m].bitmap))<0)return 0;
+ s=&bitmaps[b];
+ if(sx<0||sy<0||sx+sw>s->w||sy+sh>s->h)return 0;
+ if(d->w){limitx=d->w->cw;limity=d->w->ch;}
+ else{GrGetScreenInfo(&si);limitx=si.cols;limity=si.rows;}
+ left=dx<0?0:dx;top=dy<0?0:dy;right=dx+dw;bottom=dy+dh;
+ if(right>limitx)right=limitx;if(bottom>limity)bottom=limity;
+ if(left>=right||top>=bottom)return 1;
+ GrGetGCInfo(d->gc,&old);GrSetGCMode(d->gc,GR_MODE_COPY);
+ for(y=(int)top;y<bottom;y++){
+  u16 yy=(u16)(sy+((long)y-dy)*sh/dh);
+  for(x=(int)left;x<right;x=end){
+   u8 index=bitmap_index(s,(u16)(sx+((long)x-dx)*sw/dw),yy);u32 rgb;
+   for(end=x+1;end<right;end++)
+    if(bitmap_index(s,(u16)(sx+((long)end-dx)*sw/dw),yy)!=index)break;
+   rgb=s->bpp==1?(index?d->bkcolor:d->textcolor):bitmap_rgb(s,index);
+   GrSetGCForeground(d->gc,rgb_to_gr(rgb));
+   GrFillRect(d->wid,d->gc,x,y,end-x,1);
+  }
+ }
+ GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);
+ return 1;
 }
