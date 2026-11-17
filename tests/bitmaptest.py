@@ -20,7 +20,7 @@ typedef struct{int foreground,mode;}GR_GC_INFO;
 struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
-static u16 args[12];
+static u16 args[14];
 #define AW(n) args[(n)/2]
 #define AL(n) ((u32)AW(n)|((u32)AW((n)+2)<<16))
 #define GR_MODE_COPY 0
@@ -251,6 +251,46 @@ static void dib_band_test(void){
  puts("DIB 640x480 exact native palette and bounded bands, CORE, padding, atomic failures passed");
 }
 
+
+static void dib_create_device_test(void){
+ u16 info,bits,b,d,c;int i,x,y,live;u32 oldfg;int oldmode;
+ bitmap_shutdown();clean();
+ native_palette.count=16;
+ for(i=0;i<16;i++){native_palette.palette[i].r=i*17;native_palette.palette[i].g=i*7;native_palette.palette[i].b=i*3;}
+ assert(!seg_alloc(1024,&info)&&!seg_alloc(1024,&bits));
+ fzero(info,0,104);dib_wlong(info,0,40);dib_wlong(info,4,7);dib_wlong(info,8,3);
+ wr16(info,12,1);wr16(info,14,4);
+ for(i=0;i<16;i++){wr8(info,40+i*4,native_palette.palette[i].b);wr8(info,41+i*4,native_palette.palette[i].g);wr8(info,42+i*4,native_palette.palette[i].r);}
+ for(y=0;y<3;y++){wr8(bits,y*4,0x12+y*0x11);wr8(bits,y*4+1,0x34);wr8(bits,y*4+2,0x56);wr8(bits,y*4+3,0x70);}
+ memset(args,0,sizeof args);args[9]=9;args[8]=info;args[5]=4;args[4]=bits;args[2]=info;
+ live=seglive;b=g_CreateDIBitmap(0,0);assert(b&&seglive==live+1);
+ assert(bitmaps[bi(b)].w==7&&bitmaps[bi(b)].h==3&&bitmaps[bi(b)].bpp==4);
+ for(y=0;y<3;y++)assert(bitmap_index(&bitmaps[bi(b)],0,y)==3-y);
+ bitmap_delete(b);assert(seglive==live);
+ /* Bad source index, compression, init bits, and a far wrap are atomic. */
+ dib_wlong(info,32,1);assert(!g_CreateDIBitmap(0,0)&&seglive==live);dib_wlong(info,32,0);
+ dib_wlong(info,16,1);assert(!g_CreateDIBitmap(0,0)&&seglive==live);dib_wlong(info,16,0);
+ args[5]=8;assert(!g_CreateDIBitmap(0,0));args[5]=4;
+ args[3]=65532;assert(!g_CreateDIBitmap(0,0)&&seglive==live);args[3]=0;
+ args[5]=0;args[2]=args[4]=0;b=g_CreateDIBitmap(0,0);assert(b);bitmap_delete(b);
+ /* Device draw: bottom-up DIB at 10,20, clipped scan band keeps its row. */
+ memset(args,0,sizeof args);args[13]=9;args[12]=10;args[11]=20;args[10]=7;args[9]=3;
+ args[5]=3;args[4]=bits;args[2]=info;oldfg=foreground;oldmode=mode;
+ assert(g_SetDIBitsToDevice(0,0)==3&&seglive==live&&foreground==oldfg&&mode==oldmode);
+ for(y=0;y<3;y++)assert(surface[(20+y)*100+10]==(u32)(native_palette.palette[3-y].r|((u32)native_palette.palette[3-y].g<<8)|((u32)native_palette.palette[3-y].b<<16)));
+ memset(surface,0,sizeof(surface));args[6]=1;args[5]=1;args[3]=4;
+ assert(g_SetDIBitsToDevice(0,0)==1&&surface[20*100+10]==0&&surface[22*100+10]==0);
+ assert(surface[21*100+10]!=0&&seglive==live);
+ /* Source crop: first two columns of bottom row go to top destination row. */
+ memset(surface,0,sizeof(surface));args[6]=0;args[5]=3;args[3]=0;args[9]=1;
+ assert(g_SetDIBitsToDevice(0,0)==1&&surface[20*100+10]==(u32)(17|((u32)7<<8)|((u32)3<<16)));
+ /* Memory destination and allocation failure have the same no-leak contract. */
+ d=dcnew();c=bitmap_create(20,30,1,4,0,0);assert(c&&bitmap_select(d,c));
+ args[13]=d;assert(g_SetDIBitsToDevice(0,0)==1&&bitmap_index(&bitmaps[bi(c)],10,20)==1);
+ live=seglive;failafter=0;assert(!g_SetDIBitsToDevice(0,0)&&seglive==live);failafter=-1;
+ bitmap_shutdown();seg_free(info);seg_free(bits);clean();
+ puts("CreateDIBitmap and SetDIBitsToDevice palette, orientation, scan bands, device/memory and rollback passed");
+}
 static void ddb_bits_test(void){
  u16 h;unsigned i;u32 n;
  native_palette.count=16;
@@ -296,7 +336,7 @@ int main(int argc,char**argv){
  small_ddb_bits_test();
  ddb_bits_test();
  origin_tests();
- dib_band_test();
+ dib_band_test();dib_create_device_test();
  stretch_tests();
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
  u16 b,d,e;

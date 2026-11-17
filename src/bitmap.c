@@ -473,14 +473,14 @@ static u32 dib_long(u16 s,u16 o)
 {return (u32)rd16(s,o)|((u32)rd16(s,o+2)<<16);}
 static void dib_wlong(u16 s,u16 o,u32 v)
 {wr16(s,o,(u16)v);wr16(s,o+2,(u16)(v>>16));}
-static u32 bitmap_dib(u16 ss,u16 ap,int get)
+static u32 bitmap_dib_transfer(u16 hdc,u16 hb,u16 start,u16 count,
+                               u16 bs,u16 bo,u16 is,u16 io,u16 usage,int get)
 {
- u16 is=AW(4),io=AW(2),bs=AW(8),bo=AW(6),count=AW(10),start=AW(12);
- int i=bi(AW(14)),core,query;struct bitmap*b;
+ int i=bi(hb),core,query;struct bitmap*b;
  u32 size,w,h,colors,stride,bytes,rgb;u16 depth,step,x,y,row,at,j;
  u8 map[16],v,index,shift,entry[4];u16 pal=0;struct dc*dc;
  GR_PALETTE*p=(GR_PALETTE*)w16_scratch;
- if(i<0||(!dc_get(AW(16))&&di(AW(16))<0)||AW(0)>1||(get&&AW(0))||!dib_span(is,io,4))return 0;
+ if(i<0||(!dc_get(hdc)&&di(hdc)<0)||usage>1||(get&&usage)||!dib_span(is,io,4))return 0;
  b=&bitmaps[i];size=dib_long(is,io);core=size==12;
  if((size!=40&&!core)||!dib_span(is,io,size))return 0;
  depth=rd16(is,io+(core?10:14));query=get&&!bs&&!bo&&!depth;
@@ -497,7 +497,7 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
  if(w!=b->w||h!=b->h||rd16(is,io+(core?8:12))!=1||(!core&&dib_long(is,io+16)))return 0;
  if(get&&depth!=b->bpp)return 0;
  colors=core?1U<<depth:dib_long(is,io+32);if(!colors)colors=1U<<depth;
- if(colors>(1U<<depth))return 0;step=AW(0)?2:core?3:4;
+ if(colors>(1U<<depth))return 0;step=usage?2:core?3:4;
  /* Get emits the complete native palette, not a silently truncated table. */
  if(get)colors=1U<<depth;
  if(!dib_span(is,io,size+colors*step))return 0;
@@ -514,13 +514,13 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
   if(!core){dib_wlong(is,io+20,stride*h);dib_wlong(is,io+32,colors);}
   if(!bs&&!bo)return b->h;
  }else{
-  if(AW(0)){
-   dc=dc_get(AW(16));pal=dc?dc->palette:memory[di(AW(16))].palette;
+  if(usage){
+   dc=dc_get(hdc);pal=dc?dc->palette:memory[di(hdc)].palette;
    memset(p,0,sizeof(*p));GrGetSystemPalette(p);
   }
   for(j=0;j<colors;j++){
    at=io+(u16)size+j*step;
-   if(AW(0)){
+   if(usage){
     if(!palette_entry(pal,rd16(is,at),entry))return 0;
     if(entry[3]&2){u16 k=entry[0]|((u16)entry[1]<<8);
      if(k>=p->count)return 0;rgb=(u32)p->palette[k].r|((u32)p->palette[k].g<<8)|((u32)p->palette[k].b<<16);
@@ -549,5 +549,89 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
  }
  return count;
 }
+static u32 bitmap_dib(u16 ss,u16 ap,int get)
+{return bitmap_dib_transfer(AW(16),AW(14),AW(12),AW(10),AW(8),AW(6),AW(4),AW(2),AW(0),get);}
 u32 g_SetDIBits(u16 ss,u16 ap){return bitmap_dib(ss,ap,0);}
 u32 g_GetDIBits(u16 ss,u16 ap){return bitmap_dib(ss,ap,1);}
+
+/* CreateDIBitmap produces a device-colour DDB. lpHeader and lpInfo can differ;
+ * the former supplies dimensions, the latter supplies the initialization data.
+ * Unsupported compression, depth, direction, or far span fails atomically. */
+static int dib_dimensions(u16 seg,u16 off,u16 *w,u16 *h)
+{
+ u32 size,x,y;int core;
+ if(!dib_span(seg,off,4))return 0;
+ size=dib_long(seg,off);core=size==12;
+ if((!core&&size!=40)||!dib_span(seg,off,size))return 0;
+ x=core?rd16(seg,off+4):dib_long(seg,off+4);
+ y=core?rd16(seg,off+6):dib_long(seg,off+8);
+ if(!x||!y||x>640||y>480||rd16(seg,off+(core?8:12))!=1)return 0;
+ if(rd16(seg,off+(core?10:14))!=1&&rd16(seg,off+(core?10:14))!=4)return 0;
+ if(!core&&dib_long(seg,off+16))return 0;
+ *w=x;*h=y;return 1;
+}
+static int dib_device_bitmap(u16 hdc,u16 width,u16 height)
+{
+ GR_PALETTE*p=(GR_PALETTE*)w16_scratch;int i,j;
+ if(!dc_get(hdc)&&di(hdc)<0)return -1;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return -1;
+ i=allocate_bitmap(width,height,4);if(i<0)return -1;
+ for(j=0;j<16;j++){
+  bitmaps[i].palette[j].r=p->palette[j].r;
+  bitmaps[i].palette[j].g=p->palette[j].g;
+  bitmaps[i].palette[j].b=p->palette[j].b;
+ }
+ bitmaps[i].used=1;return i;
+}
+u32 g_CreateDIBitmap(u16 ss,u16 ap)
+{
+ u16 width,height,hdc=AW(18),usage=AW(0);u32 init=AL(10);int i;
+ if(usage>1||(init!=0&&init!=4)||!dib_dimensions(AW(16),AW(14),&width,&height))return 0;
+ i=dib_device_bitmap(hdc,width,height);if(i<0)return 0;
+ if(init==4&&bitmap_dib_transfer(hdc,BBASE+2*i,0,height,AW(8),AW(6),AW(4),AW(2),usage,0)!=height){
+  release_bitmap(i);return 0;
+ }
+ return BBASE+2*i;
+}
+
+/* SetDIBitsToDevice consumes scan-band-local bits, with bottom-up source
+ * coordinates, and never changes a DC's selected bitmap or colours. */
+u32 g_SetDIBitsToDevice(u16 ss,u16 ap)
+{
+ u16 hdc=AW(26),width,height,count=AW(10),start=AW(12);
+ struct dc*d=dc_get(hdc);int dm=di(hdc),i,db=-1,row,col,end,x,y,dw,dh;
+ long dx=(i16)AW(24),dy=(i16)AW(22),sx=(i16)AW(16),sy,ww=AW(20),hh=AW(18),top,bottom,q;
+ GR_SCREEN_INFO screen;GR_GC_INFO old;struct bitmap*s;
+ if((!d&&dm<0)||!ww||!hh||AW(0)>1||!dib_dimensions(AW(4),AW(2),&width,&height)||start>=height||!count)return 0;
+ if(count>height-start)count=height-start;
+ sy=(long)height-(i16)AW(14)-hh;
+ x=dx;y=dy;if(!(dm>=0?memory_point(dm,&x,&y):gdi_map_point(d,&x,&y)))return 0;
+ dx=x;dy=y;
+ if(dm>=0){db=bi(memory[dm].bitmap);if(db<0)return 0;dw=bitmaps[db].w;dh=bitmaps[db].h;}
+ else if(d->w){dw=d->w->cw;dh=d->w->ch;}
+ else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
+ /* Only the supplied scan band is valid; clipping keeps destination phase. */
+ top=(long)height-start-count;bottom=(long)height-start;
+ if(sy<top){q=top-sy;sy+=q;dy+=q;hh-=q;}
+ if(sy+hh>bottom)hh=bottom-sy;
+ if(hh<=0||!clip_axis(&dx,&sx,&ww,dw,width)||!clip_axis(&dy,&sy,&hh,dh,height))return 0;
+ i=dib_device_bitmap(hdc,width,height);if(i<0)return 0;s=&bitmaps[i];
+ if(bitmap_dib_transfer(hdc,BBASE+2*i,start,count,AW(8),AW(6),AW(4),AW(2),AW(0),0)!=count){
+  release_bitmap(i);return 0;
+ }
+ if(dm>=0){
+  u8 map[16];for(col=0;col<16;col++)map[col]=bitmap_nearest(&bitmaps[db],bitmap_rgb(s,col));
+  for(row=0;row<hh;row++)for(col=0;col<ww;col++)
+   bitmap_put(&bitmaps[db],dx+col,dy+row,map[bitmap_index(s,sx+col,sy+row)]);
+ }else{
+  GrGetGCInfo(d->gc,&old);GrSetGCMode(d->gc,GR_MODE_COPY);
+  for(row=0;row<hh;row++)for(col=0;col<ww;col=end){
+   u8 index=bitmap_index(s,sx+col,sy+row);
+   for(end=col+1;end<ww&&bitmap_index(s,sx+end,sy+row)==index;end++);
+   GrSetGCForeground(d->gc,rgb_to_gr(bitmap_rgb(s,index)));
+   GrFillRect(d->wid,d->gc,dx+col,dy+row,end-col,1);
+  }
+  GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);
+ }
+ release_bitmap(i);return hh;
+}

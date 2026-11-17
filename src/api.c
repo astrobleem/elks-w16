@@ -29,6 +29,7 @@ u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16), k_GlobalLRUNewest(u16,u16);
 u32 u_SetDlgItemInt(u16,u16), u_GetDlgItemInt(u16,u16), sh_ShellAbout(u16,u16);
+u32 g_CreateDIBitmap(u16,u16),g_SetDIBitsToDevice(u16,u16);
 u32 s_OpenSound(u16,u16), s_CloseSound(u16,u16), s_Unavailable(u16,u16);
 u32 k_FatalExit(u16,u16), k_FatalAppExit(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
@@ -323,7 +324,7 @@ const struct api api_table[] = {
     { G, 372, "EXTFLOODFILL", 0, API_MISSING, 0 },
     { G, 440, "SetDIBits", 18, 0, H(g_SetDIBits) },
     { G, 441, "GetDIBits", 18, 0, H(g_GetDIBits) },
-    { G, 443, "SETDIBITSTODEVICE", 28, API_MISSING, 0 },
+    { G, 443, "SetDIBitsToDevice", 28, 0, H(g_SetDIBitsToDevice) },
     { K,  50, "GETPROCADDRESS", 0, API_MISSING, 0 },
     { K, 74, "OpenFile", 10, 0, H(k_OpenFile) },
     { K, 81, "_lclose", 2, 0, H(k_lclose) },
@@ -406,7 +407,7 @@ const struct api api_table[] = {
     { K, 115, "OutputDebugString", 4, API_MISSING, 0 },
     /* These bind only with -u and terminate if called. */
     { L, 22, "ShellAbout", 12, 0, H(sh_ShellAbout) },
-    { G, 442, "CreateDIBitmap", 20, API_MISSING, 0 },
+    { G, 442, "CreateDIBitmap", 20, 0, H(g_CreateDIBitmap) },
     { U, 50, "FindWindow", 8, API_MISSING, 0 },
 
 };
