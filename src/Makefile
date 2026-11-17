@@ -12,7 +12,7 @@ CC      = ia16-elf-gcc
 NANOX_LIB ?= $(MWDIR)/src/lib/libnano-X-medium.a
 CFLAGS  = -mcmodel=medium -melks-libc -march=i8086 -mtune=i8086 -Os -Wall -Wno-unused-function \
           -I$(TOPDIR)/include -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include \
-          -I$(MWDIR)/src/include -DELKS=1 -DMWCONFIG_FILE='"mwconfig.elks"'
+          -I$(MWDIR)/src/include -DELKS=1 -DW16_COMPACT_LOG -DMWCONFIG_FILE='"mwconfig.elks"'
 LDFLAGS = -mcmodel=medium -melks-libc -maout-heap=0x2800 -maout-stack=0x1800
 OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o palette.o global.o clipboard.o user.o scrollbar.o menu.o cursor.o pointer.o gdi.o mapping.o bitmap.o dib.o rect.o registered.o textlayout.o linedda.o enumobj.o enumfont.o displayic.o ansistr.o dlgtmpl.o profile.o thunk.o
 

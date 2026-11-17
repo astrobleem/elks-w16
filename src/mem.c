@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#define W16_LOG_IMPLEMENTATION
 #include "w16.h"
 
 int opt_verbose, opt_trace, opt_debugport;

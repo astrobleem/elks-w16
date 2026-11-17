@@ -83,6 +83,11 @@ u16 palette_nearest(u16 h,u32 rgb,const u32 *device,u16 count);
 extern int opt_verbose, opt_trace, opt_debugport;
 void wlog(const char *fmt, ...);        /* stderr (and port 0xE9 with -e) */
 void vlog(const char *fmt, ...);       /* only with -v */
+/* The ELKS image has two 64K text banks. Keep API call tracing and actual
+ * errors in the compact build, but omit the per-operation verbose strings. */
+#if defined(W16_COMPACT_LOG) && !defined(W16_LOG_IMPLEMENTATION)
+#define vlog(...) ((void)0)
+#endif
 void e9puts(const char *s);             /* debug port only */
 
 /* ---------------------------------------------------------------- NE module */

@@ -238,7 +238,11 @@ int main(int argc, char **argv)
         }
         for (; *o; o++)
             switch (*o) {
-            case 'v': opt_verbose = 1; break;
+            case 'v': opt_verbose = 1;
+#ifdef W16_COMPACT_LOG
+                wlog("w16: compact build: use -t for API calls; detailed verbose logs omitted\n");
+#endif
+                break;
             case 't': opt_trace = 1; break;
             case 'u': opt_missing = 1; break;
             case 'e': opt_debugport = 1; break;

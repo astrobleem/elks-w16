@@ -527,9 +527,12 @@ u32 w16_api_dispatch(u16 idx)
     w16_ret_es = ss;
     if (opt_trace)
         wlog("w16: call %s.%s\n", w16_modnames[a->mod], a->name);
+#ifndef W16_COMPACT_LOG
     if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
         wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
+#endif
     r = a->fn(ss, (u16)(sp + 12));
+#ifndef W16_COMPACT_LOG
     if (opt_trace && !r && a->mod == MOD_USER && a->ord == 175 && sp <= 0xffe8u)
         wlog("w16: LoadBitmap failed name=%04x:%04x instance=%04x\n",rd16(ss,sp+14),rd16(ss,sp+12),rd16(ss,sp+16));
     if (opt_trace && r == 0xffffffffUL && a->mod == MOD_GDI && (a->ord == 31 || a->ord == 83) && sp <= 0xffe8u)
@@ -545,6 +548,7 @@ u32 w16_api_dispatch(u16 idx)
         for(k=0;k<a->argbytes && k<12;k+=2)wlog(" %04x",rd16(ss,sp+12+k));
         wlog("\n");
     }
+#endif
     n = a->argbytes;
     if (n) {
         sp = w16_app_sp;                       /* restored by any nested calls */
