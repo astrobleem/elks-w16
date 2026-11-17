@@ -268,6 +268,7 @@ u16 dc_create(struct wnd *w, int paint)
     d->gc = gcs[i].gc;
     d->rop2 = R2_COPYPEN;
     d->stretchmode = 1;
+    gdi_map_init(d);
     d->pen = HSTOCK + 2 * 7;        /* BLACK_PEN */
     d->brush = HSTOCK + 2 * 0;      /* WHITE_BRUSH */
     d->font = HSTOCK + 2 * 13;      /* SYSTEM_FONT */
@@ -496,7 +497,7 @@ u32 g_Rectangle(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(8));
     GR_COLOR pc, bc;
     int pen, bi;
-    if (!d || r <= l || b <= t)
+    if (!d || !gdi_map_rect(d,&l,&t,&r,&b) || r <= l || b <= t)
         return 0;
     pen = pen_of(d, &pc);
     if ((bi = brush_pat(d)) >= 0) {             /* pattern brush inside the outline */
@@ -526,10 +527,10 @@ u32 g_Ellipse(u16 ss, u16 ap)
 {
     int b = (i16)AW(0), r = (i16)AW(2), t = (i16)AW(4), l = (i16)AW(6);
     struct dc *d = dc_get(AW(8));
-    int rx = (r - l - 1) / 2, ry = (b - t - 1) / 2;
+    int rx,ry;
     GR_COLOR c;
-    if (!d || rx < 0 || ry < 0)
-        return 0;
+    if(!d || !gdi_map_rect(d,&l,&t,&r,&b) || r<=l || b<=t)return 0;
+    rx=(r-l-1)/2;ry=(b-t-1)/2;
     if (brush_of(d, &c) && set_rop(d, c))
         GrFillEllipse(d->wid, d->gc, l + rx, t + ry, rx, ry);
     if (pen_of(d, &c) && set_rop(d, c))
@@ -556,18 +557,16 @@ u32 g_MoveTo(u16 ss, u16 ap)
  * screen it is drawn again to undo it. In plain copy modes on a stock server it stays drawn. */
 u32 g_LineTo(u16 ss, u16 ap)
 {
-    int y = (i16)AW(0), x = (i16)AW(2), k;
-    struct dc *d = dc_get(AW(4));
-    GR_COLOR c;
-    if (!d)
-        return 0;
-    if ((x != d->curx || y != d->cury) && pen_of(d, &c) && (k = set_rop(d, c)) != 0) {
-        GrLine(d->wid, d->gc, d->curx, d->cury, x, y);
-        if (k == 2 && !srv_exclend)
-            GrPoint(d->wid, d->gc, x, y);
+    int y=(i16)AW(0),x=(i16)AW(2),tx=x,ty=y,fx,fy,k;
+    struct dc*d=dc_get(AW(4));GR_COLOR c;
+    if(!d)return 0;
+    fx=d->curx;fy=d->cury;
+    if(!gdi_map_point(d,&fx,&fy)||!gdi_map_point(d,&tx,&ty))return 0;
+    if((fx!=tx||fy!=ty)&&pen_of(d,&c)&&(k=set_rop(d,c))!=0){
+        GrLine(d->wid,d->gc,fx,fy,tx,ty);
+        if(k==2&&!srv_exclend)GrPoint(d->wid,d->gc,tx,ty);
     }
-    d->curx = x; d->cury = y;
-    return 1;
+    d->curx=x;d->cury=y;return 1;
 }
 
 /* Display InvertRect: clip signed, exclusive Win16 bounds before computing
@@ -604,6 +603,7 @@ u32 u_FillRect(u16 ss, u16 ap)
     if (!d)
         return 0;
     l = (i16)rd16(seg, off); t = (i16)rd16(seg, off + 2); r = (i16)rd16(seg, off + 4); b = (i16)rd16(seg, off + 6);
+    if(!gdi_map_rect(d,&l,&t,&r,&b))return 0;
     c = brush_color(hbr, &isnull);
     if (isnull || r <= l || b <= t)
         return 1;

@@ -124,6 +124,8 @@ struct dc {
     u32  textcolor, bkcolor;
     u16  bkmode, textalign;
     u8   rop2, stretchmode;
+    u16 mapmode;
+    i16 wx,wy,vx,vy,wex,wey,vex,vey;
     int  curx, cury;
     i16 brushx, brushy;
 };
@@ -159,6 +161,9 @@ u32       brush_color(u16 hbrush, int *isnull);
 u16       dc_create(struct wnd *w, int paint);
 void      dc_release(u16 hdc);
 struct dc *dc_get(u16 hdc);
+void gdi_map_init(struct dc *d);
+int gdi_map_point(struct dc *d,int *x,int *y);
+int gdi_map_rect(struct dc *d,int *l,int *t,int *r,int *b);
 void      gdi_fill(GR_WINDOW_ID wid, GR_COLOR c, int x, int y, int w, int h);
 void      gdi_fg(GR_COLOR c);           /* scratch GC colour, sent only when it changes */
 void      gdi_usebg(int on);

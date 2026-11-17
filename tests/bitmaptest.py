@@ -17,7 +17,7 @@ static GR_PALETTE native_palette,scratch;
 #define w16_scratch (&scratch)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
 typedef struct{int foreground,mode;}GR_GC_INFO;
-struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;};
+struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode;i16 wx,wy,vx,vy,wex,wey,vex,vey;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
 static u16 args[12];
@@ -91,6 +91,8 @@ static void GrCopyArea(int p,int g,int dx,int dy,int w,int h,int s,int sx,int sy
 """
 code+=(root/'src/dib.h').read_text().replace('#include "w16.h"','')
 code+=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
+code+="static u16 rd16(u16 s,u16 o){return rd8(s,o)|((u16)rd8(s,o+1)<<8); }\nstatic void wr16(u16 s,u16 o,u16 v){wr8(s,o,v);wr8(s,o+1,v>>8); }\n"
+code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 code+=r"""
 static void wordput(int o,int v){resource[o]=v;resource[o+1]=v>>8;}
@@ -135,7 +137,7 @@ static int stretch(u16 dc,int dx,int dy,int dw,int dh,int sx,int sy,int sw,int s
 static void stretch_tests(void){
  int dw,dh,x,y,dx,dy;u16 b,d;u32 want;
  setup(13,11,1);b=load();d=dcnew();assert(bitmap_select(d,b));
- dest.stretchmode=1;args[0]=3;args[1]=9;assert(g_SetStretchBltMode(0,0)==1);
+ gdi_map_init(&dest);dest.stretchmode=1;args[0]=3;args[1]=9;assert(g_SetStretchBltMode(0,0)==1);
  args[0]=4;assert(!g_SetStretchBltMode(0,0)&&dest.stretchmode==3);
  args[0]=2;args[1]=d;assert(g_SetStretchBltMode(0,0)==1);
  for(dw=1;dw<=29;dw+=4)for(dh=1;dh<=25;dh+=3)
@@ -161,7 +163,8 @@ static void stretch_tests(void){
  setup(13,11,4);b=load();d=dcnew();assert(bitmap_select(d,b));dest.stretchmode=3;
  for(x=0;x<16;x++){bitmaps[bi(b)].palette[x].r=x*13;bitmaps[bi(b)].palette[x].g=x*7;bitmaps[bi(b)].palette[x].b=x*17;}
  for(y=0;y<11;y++)for(x=0;x<13;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y*3)&15);
- assert(stretch(d,0,0,39,22,0,0,13,11,0x00cc0020UL));
+ dest.mapmode=8;dest.wex=dest.wey=1;dest.vex=3;dest.vey=2;
+ assert(stretch(d,0,0,13,11,0,0,13,11,0x00cc0020UL));
  for(y=0;y<22;y++)for(x=0;x<39;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],(x/3+(y/2)*3)&15));
  bitmap_shutdown();clean();
  puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");

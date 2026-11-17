@@ -13,6 +13,7 @@ samples:
 
 test: host samples
 	bash tests/hosttest.sh
+	python3 tests/mappingtest.py
 	python3 tests/menucapacitytest.py
 	python3 tests/manysegtest.py
 	python3 tests/librarytest.py

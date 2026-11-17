@@ -270,8 +270,16 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  long dx=(i16)AW(20),dy=(i16)AW(18),dw=(i16)AW(16),dh=(i16)AW(14);
  long sx=(i16)AW(10),sy=(i16)AW(8),sw=(i16)AW(6),sh=(i16)AW(4),left,top,right,bottom;
  struct bitmap*s;GR_SCREEN_INFO si;GR_GC_INFO old;
+ int ax,ay,bx,by;
  if(!d||m<0||AL(0)!=0x00cc0020UL||d->stretchmode!=3||
     dw<=0||dh<=0||sw<=0||sh<=0||(b=bi(memory[m].bitmap))<0)return 0;
+ /* Logical destination extents are transformed without losing the source phase.
+  * Mirrored destination extents remain explicitly unsupported here. */
+ if(dx+dw>32767L||dy+dh>32767L)return 0;
+ ax=(int)dx;ay=(int)dy;bx=(int)(dx+dw);by=(int)(dy+dh);
+ if(!gdi_map_point(d,&ax,&ay)||!gdi_map_point(d,&bx,&by))return 0;
+ dx=ax;dy=ay;dw=(long)bx-ax;dh=(long)by-ay;
+ if(dw<=0||dh<=0)return 0;
  s=&bitmaps[b];
  if(sx<0||sy<0||sx+sw>s->w||sy+sh>s->h)return 0;
  if(d->w){limitx=d->w->cw;limity=d->w->ch;}

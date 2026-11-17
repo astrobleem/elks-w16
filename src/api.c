@@ -50,6 +50,8 @@ u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_Fill
 u32 u_CheckMenuItem(u16, u16), u_EnableMenuItem(u16, u16), u_GetMenu(u16, u16), u_GetSubMenu(u16, u16);
 u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
 u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
+u32 g_DPtoLP(u16,u16),g_LPtoDP(u16,u16);
+u32 g_SetMapMode(u16,u16),g_SetWindowOrg(u16,u16),g_SetViewportOrg(u16,u16),g_SetWindowExt(u16,u16),g_SetViewportExt(u16,u16),g_GetWindowOrg(u16,u16);
 u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g_DeleteDC(u16, u16);
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
@@ -241,18 +243,18 @@ const struct api api_table[] = {
     { G, 346, "SetTextAlign",      4, 0, H(g_SetTextAlign) },
     { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
     { G, 75, "GetBkColor", 0, API_MISSING, 0 },
-    { G, 97, "GetWindowOrg", 0, API_MISSING, 0 },
+    { G,97,"GetWindowOrg",2,0,H(g_GetWindowOrg) },
     { K, 97, "GetTempFileName", 0, API_MISSING, 0 },
     { K, 164, "GlobalLRUNewest", 0, API_MISSING, 0 },
     /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
      * these terminate if executed; ordinary loads reject them. */
-    { G,   3, "SETMAPMODE", 0, API_MISSING, 0 },
+    { G,3,"SetMapMode",4,0,H(g_SetMapMode) },
     { G,   6, "SETPOLYFILLMODE", 0, API_MISSING, 0 },
     { G,7,"SetStretchBltMode",4,0,H(g_SetStretchBltMode) },
-    { G,  11, "SETWINDOWORG", 0, API_MISSING, 0 },
-    { G,  12, "SETWINDOWEXT", 0, API_MISSING, 0 },
-    { G,  13, "SETVIEWPORTORG", 0, API_MISSING, 0 },
-    { G,  14, "SETVIEWPORTEXT", 0, API_MISSING, 0 },
+    { G,11,"SetWindowOrg",6,0,H(g_SetWindowOrg) },
+    { G,12,"SetWindowExt",6,0,H(g_SetWindowExt) },
+    { G,13,"SetViewportOrg",6,0,H(g_SetViewportOrg) },
+    { G,14,"SetViewportExt",6,0,H(g_SetViewportExt) },
     { G,  21, "EXCLUDECLIPRECT", 0, API_MISSING, 0 },
     { G,  28, "ROUNDRECT", 0, API_MISSING, 0 },
     { G,  30, "SAVEDC", 0, API_MISSING, 0 },
@@ -264,12 +266,12 @@ const struct api api_table[] = {
     { G,  58, "CREATEHATCHBRUSH", 0, API_MISSING, 0 },
     { G,  63, "CREATEPOLYGONRGN", 0, API_MISSING, 0 },
     { G,  64, "CREATERECTRGN", 0, API_MISSING, 0 },
-    { G,  67, "DPTOLP", 0, API_MISSING, 0 },
+    { G,99,"LPtoDP",8,0,H(g_LPtoDP) },
+    { G,67,"DPtoLP",8,0,H(g_DPtoLP) },
     { G,  70, "ENUMFONTS", 0, API_MISSING, 0 },
     { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
     { G,  74, "GETBITMAPBITS", 0, API_MISSING, 0 },
     { G,  85, "GETROP2", 0, API_MISSING, 0 },
-    { G,  99, "LPTODP", 0, API_MISSING, 0 },
     { G, 106, "SETBITMAPBITS", 0, API_MISSING, 0 },
     { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
