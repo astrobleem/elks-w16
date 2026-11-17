@@ -17,7 +17,7 @@ static GR_PALETTE native_palette,scratch;
 #define w16_scratch (&scratch)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
 typedef struct{int foreground,mode;}GR_GC_INFO;
-struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode;i16 wx,wy,vx,vy,wex,wey,vex,vey;};
+struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
 static u16 args[12];
@@ -62,6 +62,12 @@ static int nearest(u32 c){int i,best=0;long closest=0x7fffffff;
  for(i=0;i<16;i++){long r=(long)(c&255)-native_palette.palette[i].r,g=(long)((c>>8)&255)-native_palette.palette[i].g,b=(long)((c>>16)&255)-native_palette.palette[i].b,d=r*r+g*g+b*b;if(d<closest){closest=d;best=i;}}return best;
 }
 static struct dc*dc_get(u16 h){return h==9?&dest:0;}
+static int palette_entry(u16 h,u16 index,u8*out){
+ if(h!=0xe00||index>=16)return 0;
+ if(index==15){out[0]=3;out[1]=out[2]=0;out[3]=2;}
+ else{out[0]=native_palette.palette[index].r;out[1]=native_palette.palette[index].g;out[2]=native_palette.palette[index].b;out[3]=0;}
+ return 1;
+}
 static int rgb_to_gr(u32 c){return c;}
 static void res_name(u16 a,u16 b,char*n,u16*i){n[0]=0;*i=1;}
 static int ne_res_find(struct module*m,int t,char*n,u16 id,u32*o,u16*l){*o=0;*l=length;return 0;}
@@ -206,6 +212,14 @@ static void dib_band_test(void){
  for(y=0;y<3;y++){wr8(t,y*4,0x12);wr8(t,y*4+1,0x34);wr8(t,y*4+2,0x56);wr8(t,y*4+3,0x7f);}
  assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==1);
  assert(g_GetDIBits(0,0)==3);for(y=0;y<3;y++)assert(rd8(t,y*4+3)==0x70);
+ /* WORD palette references resolve via the DC logical palette, including
+  * PC_EXPLICIT native device references and invalid entry atomic refusal. */
+ dest.palette=0xe00;args[0]=1;
+ for(i=0;i<16;i++)wr16(s,12+i*2,i);
+ assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==1);
+ wr8(t,0,0xf2);assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==3);
+ wr16(s,12+15*2,99);assert(!g_SetDIBits(0,0));assert(bitmap_index(&bitmaps[bi(b)],0,2)==3);
+ args[0]=0;wr8(t,0,0x12);
  /* Reversed source RGB table must map colors, not blindly copy indices. */
  for(i=0;i<16;i++){wr8(s,12+i*3,native_palette.palette[15-i].b);wr8(s,13+i*3,native_palette.palette[15-i].g);wr8(s,14+i*3,native_palette.palette[15-i].r);}
  assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==14);

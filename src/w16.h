@@ -75,6 +75,7 @@ void files_directory_label(char *out);
 int palette_valid(u16 h);
 int palette_delete(u16 h);
 void palette_shutdown(void);
+int palette_entry(u16 h,u16 index,u8 *out);
 u16 palette_nearest(u16 h,u32 rgb,const u32 *device,u16 count);
 
 /* ---------------------------------------------------------------- logging */

@@ -6,11 +6,14 @@ u32 g_CreatePalette(u16,u16),g_GetPaletteEntries(u16,u16);
 extern int host_live;
 int main(void)
 {
- u16 ss,ds,p,i,n,handles[8];u32 fixed[2]={0,0xff};
+ u16 ss,ds,p,i,n,handles[8];u32 fixed[2]={0,0xff};u8 entry[4];
  assert(!seg_alloc(16,&ss));assert(!seg_alloc(80,&ds));
  wr16(ds,0,0x300);wr16(ds,2,3);
  wr32(ds,4,0);wr32(ds,8,0xff);wr32(ds,12,0x02000001UL);
  wr16(ss,0,0);wr16(ss,2,ds);p=g_CreatePalette(ss,0);assert(p&&palette_valid(p));
+ assert(palette_entry(p,1,entry)&&entry[0]==255&&entry[1]==0&&entry[2]==0&&entry[3]==0);
+ assert(palette_entry(p,2,entry)&&entry[0]==1&&entry[3]==2);
+ assert(!palette_entry(p,3,entry)&&!palette_entry(0xffff,0,entry));
  wr32(ds,8,0xff00); /* caller buffer ownership must not leak into palette */
  assert(palette_nearest(p,0xfd,fixed,2)==1);assert(palette_nearest(p,0,fixed,2)==0);
  wr16(ss,0,32);wr16(ss,2,ds);wr16(ss,4,8);wr16(ss,6,1);wr16(ss,8,p);

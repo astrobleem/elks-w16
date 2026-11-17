@@ -435,7 +435,7 @@ u32 g_StretchBlt(u16 ss,u16 ap)
 
 /* DIB scan bands use bottom-up numbering and a band-local far buffer. No
  * full-image staging allocation: a 640x480 DDB remains in its existing banks.
- * Only BI_RGB indexed RGB tables are supported; reject PAL_COLORS/compression. */
+ * BI_RGB indexed RGB and SetDIBits logical-palette tables are supported. */
 static int dib_span(u16 s,u16 o,u32 n)
 {return s && (u32)o+n<=65536UL && ((u32)s<<4)+o+n<=0x100000UL;}
 static u32 dib_long(u16 s,u16 o)
@@ -447,8 +447,9 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
  u16 is=AW(4),io=AW(2),bs=AW(8),bo=AW(6),count=AW(10),start=AW(12);
  int i=bi(AW(14)),core,query;struct bitmap*b;
  u32 size,w,h,colors,stride,bytes,rgb;u16 depth,step,x,y,row,at,j;
- u8 map[16],v,index,shift;
- if(i<0||(!dc_get(AW(16))&&di(AW(16))<0)||AW(0)||!dib_span(is,io,4))return 0;
+ u8 map[16],v,index,shift,entry[4];u16 pal=0;struct dc*dc;
+ GR_PALETTE*p=(GR_PALETTE*)w16_scratch;
+ if(i<0||(!dc_get(AW(16))&&di(AW(16))<0)||AW(0)>1||(get&&AW(0))||!dib_span(is,io,4))return 0;
  b=&bitmaps[i];size=dib_long(is,io);core=size==12;
  if((size!=40&&!core)||!dib_span(is,io,size))return 0;
  depth=rd16(is,io+(core?10:14));query=get&&!bs&&!bo&&!depth;
@@ -465,7 +466,7 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
  if(w!=b->w||h!=b->h||rd16(is,io+(core?8:12))!=1||(!core&&dib_long(is,io+16)))return 0;
  if(get&&depth!=b->bpp)return 0;
  colors=core?1U<<depth:dib_long(is,io+32);if(!colors)colors=1U<<depth;
- if(colors>(1U<<depth))return 0;step=core?3:4;
+ if(colors>(1U<<depth))return 0;step=AW(0)?2:core?3:4;
  /* Get emits the complete native palette, not a silently truncated table. */
  if(get)colors=1U<<depth;
  if(!dib_span(is,io,size+colors*step))return 0;
@@ -482,8 +483,18 @@ static u32 bitmap_dib(u16 ss,u16 ap,int get)
   if(!core){dib_wlong(is,io+20,stride*h);dib_wlong(is,io+32,colors);}
   if(!bs&&!bo)return b->h;
  }else{
+  if(AW(0)){
+   dc=dc_get(AW(16));pal=dc?dc->palette:memory[di(AW(16))].palette;
+   memset(p,0,sizeof(*p));GrGetSystemPalette(p);
+  }
   for(j=0;j<colors;j++){
-   at=io+(u16)size+j*step;rgb=((u32)rd8(is,at)<<16)|((u32)rd8(is,at+1)<<8)|rd8(is,at+2);map[j]=bitmap_nearest(b,rgb);
+   at=io+(u16)size+j*step;
+   if(AW(0)){
+    if(!palette_entry(pal,rd16(is,at),entry))return 0;
+    if(entry[3]&2){u16 k=entry[0]|((u16)entry[1]<<8);
+     if(k>=p->count)return 0;rgb=(u32)p->palette[k].r|((u32)p->palette[k].g<<8)|((u32)p->palette[k].b<<16);
+    }else rgb=(u32)entry[0]|((u32)entry[1]<<8)|((u32)entry[2]<<16);
+   }else rgb=((u32)rd8(is,at)<<16)|((u32)rd8(is,at+1)<<8)|rd8(is,at+2);map[j]=bitmap_nearest(b,rgb);
   }
   /* Validate every source index before modifying any destination pixel. */
   for(y=0;y<count;y++)for(x=0;x<w;x++){

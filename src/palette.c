@@ -69,3 +69,11 @@ u16 palette_nearest(u16 handle,u32 rgb,const u32 *device,u16 device_count)
  }
  return distance==0xffffffffUL?0xffff:best;
 }
+
+/* Resolve a DIB_PAL_COLORS WORD through the selected logical palette. */
+int palette_entry(u16 h,u16 index,u8 *out)
+{
+ u16 count;const u8 *data=palette_data(h,&count);
+ if(!data||index>=count)return 0;
+ memcpy(out,data+index*4,4);return 1;
+}
