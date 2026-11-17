@@ -33,6 +33,7 @@ u32 u_OpenClipboard(u16,u16),u_CloseClipboard(u16,u16),u_EmptyClipboard(u16,u16)
 u32 u_SetClipboardData(u16,u16),u_GetClipboardData(u16,u16),u_GetPriorityClipboardFormat(u16,u16);
 u32 u_GetDlgItemText(u16,u16),u_SendDlgItemMessage(u16,u16);
 u32 u_DlgDirList(u16,u16),u_DlgDirSelect(u16,u16);
+u32 u_GetDesktopHwnd(u16,u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
 u32 u_EndPaint(u16, u16), u_CreateWindow(u16, u16), u_ShowWindow(u16, u16), u_DestroyWindow(u16, u16);
 u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16), u_TranslateMessage(u16, u16);
@@ -363,7 +364,7 @@ const struct api api_table[] = {
     { U, 167, "SHOWCARET", 0, API_MISSING, 0 },
     { U, 232, "SETWINDOWPOS", 0, API_MISSING, 0 },
     { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
-    { U, 278, "GETDESKTOPHWND", 0, API_MISSING, 0 },
+    { U, 278, "GetDesktopHwnd", 0, 0, H(u_GetDesktopHwnd) },
     { U, 282, "SELECTPALETTE", 6, 0, H(u_SelectPalette) },
     { U, 283, "REALIZEPALETTE", 2, 0, H(u_RealizePalette) },
     { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 6, 0, H(u_GetPriorityClipboardFormat) },

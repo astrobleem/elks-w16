@@ -16,6 +16,7 @@
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
 
+#define DESKTOP_HWND 1
 #define QSIZE 24
 struct qmsg { u16 hwnd, msg, wp; u32 lp; i16 x, y; u32 time; u8 ch; };
 static struct qmsg queue[QSIZE];
@@ -59,11 +60,13 @@ struct wnd *win_get(u16 hwnd)
     return &wins[i];
 }
 
-u32 u_IsWindow(u16 ss,u16 ap) { return win_get(AW(0)) != 0; }
+u32 u_GetDesktopHwnd(u16 ss,u16 ap) { (void)ss;(void)ap;return DESKTOP_HWND; }
+u32 u_IsWindow(u16 ss,u16 ap) { return AW(0)==DESKTOP_HWND || win_get(AW(0)) != 0; }
 
 u32 u_IsWindowVisible(u16 ss,u16 ap)
 {
     struct wnd *w=win_get(AW(0)); int n=0;
+    if(AW(0)==DESKTOP_HWND)return 1;
     while(w && n++<MAXWIN) {
         if(!w->visible) return 0;
         if(!w->parent) return 1;
@@ -757,7 +760,7 @@ u32 u_GetClientRect(u16 ss, u16 ap)
     u16 off = AW(0), seg = AW(2);
     struct wnd *w = win_get(AW(4));
     wr16(seg, off, 0); wr16(seg, off + 2, 0);
-    wr16(seg, off + 4, w ? w->cw : 0); wr16(seg, off + 6, w ? w->ch : 0);
+    wr16(seg, off + 4, w ? w->cw : AW(4)==DESKTOP_HWND?scr_w:0); wr16(seg, off + 6, w ? w->ch : AW(4)==DESKTOP_HWND?scr_h:0);
     return 0;
 }
 
@@ -1437,7 +1440,12 @@ u32 u_GetWindowRect(u16 ss, u16 ap)
     struct wnd *w;
     if(ap > 0xfffa) return 0;
     off=AW(0); seg=AW(2); w=win_get(AW(4));
-    if(!w || !valid_coords(seg,off,8)) return 0;
+    if(!valid_coords(seg,off,8)) return 0;
+    if(AW(4)==DESKTOP_HWND){
+        wr16(seg,off,0);wr16(seg,off+2,0);
+        wr16(seg,off+4,scr_w);wr16(seg,off+6,scr_h);return 0;
+    }
+    if(!w)return 0;
     client_origin(w,&x,&y);
     left=(u16)x-(u16)w->cx; top=(u16)y-(u16)w->cy;
     wr16(seg,off,left); wr16(seg,off+2,top);
@@ -1539,7 +1547,7 @@ u32 u_GetDC(u16 ss, u16 ap)
 {
     u16 hwnd = AW(0);
     struct wnd *w = win_get(hwnd);
-    if (hwnd && !w)
+    if (hwnd && hwnd!=DESKTOP_HWND && !w)
         return 0;
     return dc_create(w, 0);
 }
