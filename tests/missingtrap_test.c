@@ -4,6 +4,10 @@ int main(void) {
  int i;u16 s,o;
  assert(!opt_missing);
  assert(api_table[api_find_ord(MOD_USER,56)].argbytes==12);
+ assert(api_table[api_find_ord(MOD_USER,62)].argbytes==8);
+ assert(api_table[api_find_ord(MOD_USER,63)].argbytes==4);
+ assert(api_table[api_find_ord(MOD_USER,64)].argbytes==10);
+ assert(api_table[api_find_ord(MOD_USER,65)].argbytes==12);
  assert(api_table[api_find_ord(MOD_KERNEL,15)].argbytes==6);
  assert(api_table[api_find_ord(MOD_KERNEL,16)].argbytes==8);
  assert(api_table[api_find_ord(MOD_KERNEL,17)].argbytes==2);

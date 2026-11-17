@@ -95,6 +95,8 @@ struct wclass {
 struct wnd {
     u8   used, visible, shown, invalid, erase, active;
     u16  hwnd, hinst, procoff, procseg;
+    i16 scroll_min[2], scroll_max[2], scroll_pos[2];
+    u8 scroll_init; /* per-axis state, cleared with the window */
     int  cls;
     u32  style;
     int  x, y, w, h;            /* frame: screen coordinates (controls: parent client coordinates) */

@@ -606,6 +606,68 @@ u32 u_PostQuitMessage(u16 ss, u16 ap)
     return 0;
 }
 
+/* Standard scrollbar state only: native scrollbar drawing and mouse/keyboard
+ * interaction are not yet provided. SB_CTL must not alias a window axis. */
+static struct wnd *scroll_window(u16 hwnd,u16 bar)
+{
+    struct wnd *w=win_get(hwnd);
+    if(!w || bar>1) return 0;
+    if(!(w->scroll_init & (1u<<bar))) {
+        w->scroll_min[bar]=0;w->scroll_max[bar]=100;w->scroll_pos[bar]=0;
+        w->scroll_init|=1u<<bar;
+    }
+    return w;
+}
+static void scroll_redraw(struct wnd *w,u16 redraw)
+{
+    /* Do not fake a scrollbar by resizing or painting over the guest canvas. */
+    if(redraw) vlog("w16: scrollbar state updated for %04x; native scrollbar rendering not implemented\n",w->hwnd);
+}
+u32 u_SetScrollRange(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    u16 bar;
+    i16 min,max;
+    if(ap>0xfff6) return 0;
+    bar=AW(6);min=(i16)AW(4);max=(i16)AW(2);
+    if(min>max || (long)max-(long)min>32767L) return 0;
+    w=scroll_window(AW(8),bar);if(!w)return 0;
+    w->scroll_min[bar]=min;w->scroll_max[bar]=max;
+    if(w->scroll_pos[bar]<min)w->scroll_pos[bar]=min;
+    if(w->scroll_pos[bar]>max)w->scroll_pos[bar]=max;
+    scroll_redraw(w,AW(0));return 0; /* Win16 void Pascal */
+}
+u32 u_SetScrollPos(u16 ss,u16 ap)
+{
+    struct wnd *w;u16 bar; i16 pos,old;
+    if(ap>0xfff8)return 0;
+    bar=AW(4);w=scroll_window(AW(6),bar);if(!w)return 0;
+    pos=(i16)AW(2);old=w->scroll_pos[bar];
+    if(pos<w->scroll_min[bar])pos=w->scroll_min[bar];
+    if(pos>w->scroll_max[bar])pos=w->scroll_max[bar];
+    w->scroll_pos[bar]=pos;scroll_redraw(w,AW(0));return (u16)old;
+}
+u32 u_GetScrollPos(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    if(ap>0xfffc)return 0;
+    w=scroll_window(AW(2),AW(0));return w?(u16)w->scroll_pos[AW(0)]:0;
+}
+static int scroll_word(u16 seg,u16 off)
+{
+    return (seg||off) && off<=0xfffe && (((u32)seg<<4)+off)<=0xffffeUL;
+}
+u32 u_GetScrollRange(u16 ss,u16 ap)
+{
+    struct wnd *w;u16 bar,lo,ls,hi,hs;
+    if(ap>0xfff4)return 0;
+    hi=AW(0);hs=AW(2);lo=AW(4);ls=AW(6);bar=AW(8);
+    if(!scroll_word(ls,lo)||!scroll_word(hs,hi))return 0;
+    w=scroll_window(AW(10),bar);if(!w)return 0;
+    wr16(ls,lo,(u16)w->scroll_min[bar]);wr16(hs,hi,(u16)w->scroll_max[bar]);
+    return 0; /* Win16 void Pascal */
+}
+
 /* GetClientRect(hwnd, lpRect) */
 u32 u_GetClientRect(u16 ss, u16 ap)
 {

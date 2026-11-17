@@ -54,6 +54,7 @@ u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_MoveWindow(u16,u16);
+u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
 u32 u_LoadAccelerators(u16, u16), u_TranslateAccelerator(u16, u16), u_WinHelp(u16, u16);
@@ -100,6 +101,7 @@ const struct api api_table[] = {
     { U,98,"IsDlgButtonChecked",4,0,H(u_IsDlgButtonChecked) },
     { U,118,"RegisterWindowMessage",4,0,H(u_RegisterWindowMessage) },
 
+    { U,65,"GetScrollRange",12,0,H(u_GetScrollRange) },
     /* KERNEL */
     { K,20,"GlobalSize",2,0,H(k_GlobalSize) },
     { K, 154, "GlobalNotify", 4, 0, H(k_GlobalNotify) },
@@ -297,9 +299,9 @@ const struct api api_table[] = {
     { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
     { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
     { U,  61, "SCROLLWINDOW", 0, API_MISSING, 0 },
-    { U,  62, "SETSCROLLPOS", 0, API_MISSING, 0 },
-    { U,  63, "GETSCROLLPOS", 0, API_MISSING, 0 },
-    { U,  64, "SETSCROLLRANGE", 0, API_MISSING, 0 },
+    { U,  62, "SetScrollPos", 8, 0, H(u_SetScrollPos) },
+    { U,  63, "GetScrollPos", 4, 0, H(u_GetScrollPos) },
+    { U,  64, "SetScrollRange", 10, 0, H(u_SetScrollRange) },
     { U,  89, "CREATEDIALOG", 0, API_MISSING, 0 },
     { U,  90, "ISDIALOGMESSAGE", 0, API_MISSING, 0 },
     { U,  93, "GETDLGITEMTEXT", 0, API_MISSING, 0 },
