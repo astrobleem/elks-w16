@@ -116,7 +116,7 @@ static int modindex(const char *name)
 {
     int i;
     for (i = 0; i < NMODS; i++)
-        if (!strcmp(name, w16_modnames[i]))
+        if ((i != MOD_PBRUSH || opt_missing) && !strcmp(name, w16_modnames[i]))
             return i;
     return -1;
 }

@@ -192,7 +192,8 @@ int  prof_put(const char *path, const char *app, const char *key, const char *va
 #define MOD_KERNEL 0
 #define MOD_USER   1
 #define MOD_GDI    2
-#define NMODS      3
+#define MOD_PBRUSH 3       /* diagnostic-only table; no DLL loading implied */
+#define NMODS      4
 extern const char *const w16_modnames[NMODS];
 
 #define API_MISSING 0x08   /* diagnostic trap, disabled by default */
