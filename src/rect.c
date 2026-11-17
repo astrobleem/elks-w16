@@ -45,3 +45,42 @@ u32 u_IntersectRect(u16 ss,u16 ap)
     if(!nonempty) for(i=0;i<4;i++) a[i]=0;
     put(ds,doff,a); return nonempty;
 }
+
+static int empty(const i16 *r)
+{
+    return r[0] >= r[2] || r[1] >= r[3];
+}
+
+u32 u_IsRectEmpty(u16 ss,u16 ap)
+{
+    i16 r[4];
+    if(ap>0xfffc || !valid(AW(2),AW(0))) return 1;
+    get(AW(2),AW(0),r);
+    return empty(r);
+}
+
+u32 u_SetRectEmpty(u16 ss,u16 ap)
+{
+    static const i16 zero[4]={0,0,0,0};
+    if(ap>0xfffc || !valid(AW(2),AW(0))) return 0;
+    put(AW(2),AW(0),zero);
+    return 1;
+}
+
+u32 u_UnionRect(u16 ss,u16 ap)
+{
+    i16 a[4],b[4]; u16 ao,as,bo,bs,doff,ds,i;
+    if(ap>0xfff4u) return 0;
+    bo=AW(0); bs=AW(2); ao=AW(4); as=AW(6); doff=AW(8); ds=AW(10);
+    if(!valid(as,ao)||!valid(bs,bo)||!valid(ds,doff)) return 0;
+    get(as,ao,a); get(bs,bo,b);
+    if(empty(a)) {
+        int eb=empty(b);
+        for(i=0;i<4;i++) a[i]=eb?0:b[i];
+    } else if(!empty(b)) {
+        for(i=0;i<2;i++) if(b[i]<a[i]) a[i]=b[i];
+        for(i=2;i<4;i++) if(b[i]>a[i]) a[i]=b[i];
+    }
+    put(ds,doff,a);
+    return !empty(a);
+}

@@ -6,6 +6,7 @@ u8 host_mem[0x110000];
 u8 *host_ptr(u16 s,u16 o,u16 n)
 { u32 p=LIN(s,o); assert((u32)o+n<=65536 && p+n<=0x100000); return host_mem+p; }
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
+u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
 static void args(u16 a,u16 b,u16 c,u16 d,u16 e,u16 f)
 { wr16(0x1000,0,a);wr16(0x1000,2,b);wr16(0x1000,4,c);wr16(0x1000,6,d);wr16(0x1000,8,e);wr16(0x1000,10,f); }
 static void rect(u16 s,u16 o,i16 l,i16 t,i16 r,i16 b)
@@ -52,5 +53,18 @@ int main(void)
     rect(0x2000,16,4,4,-4,-4); args(0,0,16,0x2000,0,0);
     assert(!u_PtInRect(0x1000,0));
     assert(!u_IntersectRect(0x1000,0xfff5));
+    rect(0x2000,16,-10,2,8,9); rect(0x3000,0,12,-5,13,3);
+    args(0,0x3000,16,0x2000,16,0x2000);
+    assert(u_UnionRect(0x1000,0));
+    assert((i16)rd16(0x2000,16)==-10 && (i16)rd16(0x2000,18)==-5);
+    assert(rd16(0x2000,20)==13 && rd16(0x2000,22)==9);
+    args(16,0x2000,0,0,0,0);
+    assert(!u_IsRectEmpty(0x1000,0)); assert(u_SetRectEmpty(0x1000,0));
+    assert(u_IsRectEmpty(0x1000,0)); assert(!rd32(0x2000,16)&&!rd32(0x2000,20));
+    args(0,0x3000,16,0x2000,16,0x2000);
+    assert(u_UnionRect(0x1000,0));
+    assert(!memcmp(host_ptr(0x2000,16,8),host_ptr(0x3000,0,8),8));
+    rect(0x2000,16,10,10,1,1); rect(0x3000,0,3,4,3,6);
+    assert(!u_UnionRect(0x1000,0)); assert(!rd32(0x2000,16)&&!rd32(0x2000,20));
     puts("RECT boundary, exclusive edges, overlap and alias checks passed"); return 0;
 }

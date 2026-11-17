@@ -24,6 +24,7 @@ u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16)
 u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16, u16), u_LoadCursor(u16, u16);
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
+u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
 u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16),g_PtVisible(u16,u16),g_LineDDA(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
@@ -77,6 +78,9 @@ const struct api api_table[] = {
     { K,17,"GlobalFree",0,API_MISSING,0 },
     { U,34,"EnableWindow",0,API_MISSING,0 },
     { U,56,"MoveWindow",0,API_MISSING,0 },
+    { U,73,"SetRectEmpty",4,0,H(u_SetRectEmpty) },
+    { U,75,"IsRectEmpty",4,0,H(u_IsRectEmpty) },
+    { U,80,"UnionRect",12,0,H(u_UnionRect) },
     { U,74,"CopyRect",8,0,H(u_CopyRect) },
     { U,76,"PtInRect",8,0,H(u_PtInRect) },
     { U,79,"IntersectRect",12,0,H(u_IntersectRect) },
