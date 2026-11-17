@@ -721,6 +721,35 @@ static void menu_changed(struct menu *mn)
         menu_draw_bar(w, mn->bar_y);
 }
 
+/* ModifyMenu: update existing string commands/separators. Popup replacement
+ * and bitmap/owner-drawn items need different ownership and are refused. */
+u32 u_ModifyMenu(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it;
+    u16 flags=AW(6),off=AW(0),seg=AW(2),i;
+    char text[sizeof(mn->t.it[0].text)];
+    if(flags&~(MF_BYPOSITION|MF_CHECKED|MF_DISABLED|MF_GRAYED|MF_SEPARATOR)) return 0;
+    it=find_item(AW(10),AW(8),flags,&mn);
+    if(!it || (it->flags&MF_POPUP)) return 0;
+    text[0]=0;
+    if(!(flags&MF_SEPARATOR)) {
+        if(!(seg||off)) return 0;
+        for(i=0;i<sizeof(text);i++) {
+            if((u32)off+i>0xffffUL || ((u32)seg<<4)+off+i>0xfffffUL) return 0;
+            text[i]=rd8(seg,off+i);
+            if(!text[i]) break;
+        }
+        if(i==sizeof(text)) return 0;
+    }
+    it->id=flags&MF_SEPARATOR?0:AW(4);
+    it->flags=(it->flags&MF_END)|(flags&~MF_BYPOSITION);
+    strcpy(it->text,text);
+    measure(mn,mn->x0[0]);
+    menu_changed(mn);
+    return 1;
+}
+
 /* CheckMenuItem(hMenu, wIDCheckItem, wCheck): previous state, or -1 */
 u32 u_CheckMenuItem(u16 ss, u16 ap)
 {

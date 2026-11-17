@@ -19,7 +19,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) f
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
-u32 u_GetMenuString(u16,u16);
+u32 u_GetMenuString(u16,u16),u_ModifyMenu(u16,u16);
 u32 g_EnumFonts(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
@@ -359,7 +359,7 @@ const struct api api_table[] = {
     { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 0, API_MISSING, 0 },
     { U, 410, "INSERTMENU", 0, API_MISSING, 0 },
     { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
-    { U, 414, "MODIFYMENU", 0, API_MISSING, 0 },
+    { U, 414, "ModifyMenu", 12, 0, H(u_ModifyMenu) },
     { U, 430, "lstrcmp", 8, 0, H(u_lstrcmp) },
     { U, 431, "ANSIUPPER", 0, API_MISSING, 0 },
     { U, 471, "lstrcmpi", 8, 0, H(u_lstrcmpi) },

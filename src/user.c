@@ -2127,6 +2127,7 @@ u32 u_MessageBox(u16 ss, u16 ap)
     else
         strcpy(caption, "Error");
     fstrncpy_in(text, AW(8), AW(6), sizeof(text));
+    vlog("w16: MessageBox caption=\"%s\" text=\"%s\" type=%04x\n",caption,text,AW(0));
     return message_box(text, caption, AW(0));
 }
 

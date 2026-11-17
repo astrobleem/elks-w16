@@ -20,6 +20,8 @@ pre=r"""
 """
 pre+=re.search(r'struct menu \{.*?\n\};',source,re.S)[0]
 pre+=r"""
+static void measure(struct menu *m,int x){(void)m;(void)x;}
+static void menu_changed(struct menu *m){(void)m;}
 static struct menu *menus[3];
 #define USED(i) (menus[i]&&menus[i]->used)
 static u8 ram[65536];
@@ -43,10 +45,18 @@ args(HMENU_BASE+1,301,28,0);assert(!u_GetMenuString(0x1000,0)&&!ram[200]);
 args(HMENU_BASE,301,1,0);assert(!u_GetMenuString(0x1000,0)&&!ram[200]);
 args(HMENU_BASE,301,28,0);wr16(0x1000,4,65530);ram[65530]=99;
 assert(!u_GetMenuString(0x1000,0)&&ram[65530]==99);
+strcpy((char*)ram+400,"System");
+wr16(0x1000,0,400);wr16(0x1000,2,0x1000);wr16(0x1000,4,333);
+wr16(0x1000,6,MF_CHECKED);wr16(0x1000,8,301);wr16(0x1000,10,HMENU_BASE);
+assert(u_ModifyMenu(0x1000,0));assert(m.t.it[1].id==333&&m.t.it[1].flags==MF_CHECKED);
+assert(!strcmp(m.t.it[1].text,"System")&&m.t.it[1].parent==0);
+memset(ram+400,'x',30);wr16(0x1000,8,333);
+assert(!u_ModifyMenu(0x1000,0)&&!strcmp(m.t.it[1].text,"System"));
+wr16(0x1000,6,MF_POPUP);assert(!u_ModifyMenu(0x1000,0));
 puts("Raw menu strings, id/position lookup, truncation, terminators and far bounds passed");return 0;
 }
 """
 with tempfile.TemporaryDirectory() as td:
-    p=pathlib.Path(td);(p/'test.c').write_text(pre+''.join(func(n) for n in ['menu_of','find_item','u_GetMenuString'])+test)
+    p=pathlib.Path(td);(p/'test.c').write_text(pre+''.join(func(n) for n in ['menu_of','find_item','u_GetMenuString','u_ModifyMenu'])+test)
     subprocess.run(['cc','-DW16_HOST','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-no-pie','-I'+str(root/'src'),str(p/'test.c'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))
