@@ -4,7 +4,13 @@
 
 **Windows 3.0 applications on ELKS, in 16 colours.**
 
-An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics for Tandy and PCjr.
+An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics on VGA, Tandy and PCjr displays.
+
+<a href="docs/screenshots/paintbrush-elks-logo-qemu-vga.png"><img src="docs/screenshots/paintbrush-elks-logo-qemu-vga.png" width="640" alt="Windows 3.0 Paintbrush on ELKS with a dark-blue ELKS logo drawn on its white canvas"></a>
+
+**Windows 3.0 Paintbrush on ELKS · 640×480 VGA · QEMU**
+
+The logo was drawn with Paintbrush’s line tool using emulated mouse input. This is an emulator capture, not a physical-hardware test. Paintbrush support is experimental: this drawing does not establish that every tool or file operation works.
 
 [Get started](docs/build.md) · [Screenshots](docs/gallery.md) · [Technical guide](docs/technical.md) · [MIT license](LICENSE)
 
@@ -32,6 +38,7 @@ The project is deliberately small in scope. It runs the source-built examples he
 | **HELLO16** | Drawing, colours, text, mouse and keyboard input | [Source included](test/hello16) |
 | **DLGTEST** | Modal dialogs, resources, buttons, menus and string tables | [Source included](test/dlgtest) |
 | **MBTEST** | Message boxes, icons and button results | [Source included](test/mbtest) |
+| **Windows 3.0 Paintbrush** | Line drawing in colour; opens indexed BMPs on the experimental VGA configuration | Bring your own EXE and companion DLL |
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
 | **Windows 3.0 REVERSI** | Play against the computer, menus, hints, cursors, accelerators and About | Bring your own copy |
