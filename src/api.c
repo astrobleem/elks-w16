@@ -57,6 +57,7 @@ u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_Fill
 u32 u_CheckMenuItem(u16, u16), u_EnableMenuItem(u16, u16), u_GetMenu(u16, u16), u_GetSubMenu(u16, u16);
 u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
 u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
+u32 g_SetDIBits(u16,u16),g_GetDIBits(u16,u16);
 u32 g_DPtoLP(u16,u16),g_LPtoDP(u16,u16);
 u32 g_SetMapMode(u16,u16),g_SetWindowOrg(u16,u16),g_SetViewportOrg(u16,u16),g_SetWindowExt(u16,u16),g_SetViewportExt(u16,u16),g_GetWindowOrg(u16,u16);
 u32 g_SaveDC(u16,u16),g_RestoreDC(u16,u16),g_GetROP2(u16,u16);
@@ -294,8 +295,8 @@ const struct api api_table[] = {
     { G, 366, "UPDATECOLORS", 0, API_MISSING, 0 },
     { G, 370, "GETNEARESTPALETTEINDEX", 0, API_MISSING, 0 },
     { G, 372, "EXTFLOODFILL", 0, API_MISSING, 0 },
-    { G, 440, "SETDIBITS", 0, API_MISSING, 0 },
-    { G, 441, "GETDIBITS", 0, API_MISSING, 0 },
+    { G, 440, "SetDIBits", 18, 0, H(g_SetDIBits) },
+    { G, 441, "GetDIBits", 18, 0, H(g_GetDIBits) },
     { G, 443, "SETDIBITSTODEVICE", 0, API_MISSING, 0 },
     { K,  50, "GETPROCADDRESS", 0, API_MISSING, 0 },
     { K, 74, "OpenFile", 10, 0, H(k_OpenFile) },

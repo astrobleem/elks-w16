@@ -414,3 +414,80 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);
  return 1;
 }
+
+/* DIB scan bands use bottom-up numbering and a band-local far buffer. No
+ * full-image staging allocation: a 640x480 DDB remains in its existing banks.
+ * Only BI_RGB indexed RGB tables are supported; reject PAL_COLORS/compression. */
+static int dib_span(u16 s,u16 o,u32 n)
+{return s && (u32)o+n<=65536UL && ((u32)s<<4)+o+n<=0x100000UL;}
+static u32 dib_long(u16 s,u16 o)
+{return (u32)rd16(s,o)|((u32)rd16(s,o+2)<<16);}
+static void dib_wlong(u16 s,u16 o,u32 v)
+{wr16(s,o,(u16)v);wr16(s,o+2,(u16)(v>>16));}
+static u32 bitmap_dib(u16 ss,u16 ap,int get)
+{
+ u16 is=AW(4),io=AW(2),bs=AW(8),bo=AW(6),count=AW(10),start=AW(12);
+ int i=bi(AW(14)),core,query;struct bitmap*b;
+ u32 size,w,h,colors,stride,bytes,rgb;u16 depth,step,x,y,row,at,j;
+ u8 map[16],v,index,shift;
+ if(i<0||(!dc_get(AW(16))&&di(AW(16))<0)||AW(0)||!dib_span(is,io,4))return 0;
+ b=&bitmaps[i];size=dib_long(is,io);core=size==12;
+ if((size!=40&&!core)||!dib_span(is,io,size))return 0;
+ depth=rd16(is,io+(core?10:14));query=get&&!bs&&!bo&&!depth;
+ if(query){
+  if(core){wr16(is,io+4,b->w);wr16(is,io+6,b->h);wr16(is,io+8,1);wr16(is,io+10,b->bpp);}
+  else{
+   dib_wlong(is,io+4,b->w);dib_wlong(is,io+8,b->h);wr16(is,io+12,1);wr16(is,io+14,b->bpp);
+   dib_wlong(is,io+16,0);dib_wlong(is,io+20,(u32)(((b->w*b->bpp+31)/32)*4)*b->h);
+   dib_wlong(is,io+24,0);dib_wlong(is,io+28,0);dib_wlong(is,io+32,1U<<b->bpp);dib_wlong(is,io+36,0);
+  }return b->h;
+ }
+ if(depth!=1&&depth!=4)return 0;
+ w=core?rd16(is,io+4):dib_long(is,io+4);h=core?rd16(is,io+6):dib_long(is,io+8);
+ if(w!=b->w||h!=b->h||rd16(is,io+(core?8:12))!=1||(!core&&dib_long(is,io+16)))return 0;
+ if(get&&depth!=b->bpp)return 0;
+ colors=core?1U<<depth:dib_long(is,io+32);if(!colors)colors=1U<<depth;
+ if(colors>(1U<<depth))return 0;step=core?3:4;
+ /* Get emits the complete native palette, not a silently truncated table. */
+ if(get)colors=1U<<depth;
+ if(!dib_span(is,io,size+colors*step))return 0;
+ stride=((w*depth+31)/32)*4;
+ if(start>=h)return 0;if(count>h-start)count=(u16)(h-start);
+ bytes=stride*count;
+ if((bs||bo)&&!dib_span(bs,bo,bytes))return 0;
+ if(!get&&(!count||(!bs&&!bo)))return 0;
+ if(get){
+  for(j=0;j<colors;j++){
+   rgb=bitmap_rgb(b,j);at=io+(u16)size+j*step;
+   wr8(is,at,(u8)(rgb>>16));wr8(is,at+1,(u8)(rgb>>8));wr8(is,at+2,(u8)rgb);if(!core)wr8(is,at+3,0);
+  }
+  if(!core){dib_wlong(is,io+20,stride*h);dib_wlong(is,io+32,colors);}
+  if(!bs&&!bo)return b->h;
+ }else{
+  for(j=0;j<colors;j++){
+   at=io+(u16)size+j*step;rgb=((u32)rd8(is,at)<<16)|((u32)rd8(is,at+1)<<8)|rd8(is,at+2);map[j]=bitmap_nearest(b,rgb);
+  }
+  /* Validate every source index before modifying any destination pixel. */
+  for(y=0;y<count;y++)for(x=0;x<w;x++){
+   v=rd8(bs,bo+(u16)((u32)y*stride)+x/(8/depth));shift=depth==1?7-(x&7):(x&1)?0:4;
+   if(((v>>shift)&((1U<<depth)-1))>=colors)return 0;
+  }
+ }
+ for(y=0;y<count;y++){
+  row=b->h-1-start-y;at=bo+(u16)((u32)y*stride);
+  if(get){
+   /* Zero alignment and unused tail bits, then pack high nibble/bit first. */
+   for(j=0;j<stride;j++)wr8(bs,at+j,0);
+   for(x=0;x<w;x++){
+    j=at+x/(8/depth);shift=depth==1?7-(x&7):(x&1)?0:4;
+    index=bitmap_index(b,x,row);wr8(bs,j,rd8(bs,j)|(index<<shift));
+   }
+  }else for(x=0;x<w;x++){
+   v=rd8(bs,at+x/(8/depth));shift=depth==1?7-(x&7):(x&1)?0:4;
+   bitmap_put(b,x,row,map[(v>>shift)&((1U<<depth)-1)]);
+  }
+ }
+ return count;
+}
+u32 g_SetDIBits(u16 ss,u16 ap){return bitmap_dib(ss,ap,0);}
+u32 g_GetDIBits(u16 ss,u16 ap){return bitmap_dib(ss,ap,1);}

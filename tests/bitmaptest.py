@@ -169,7 +169,54 @@ static void stretch_tests(void){
  bitmap_shutdown();clean();
  puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");
 }
+static void dib_band_test(void){
+ u16 b,s,t,start,n,x,y;int i,live;u8 saved;
+ for(i=0;i<16;i++){native_palette.palette[i].r=i*17;native_palette.palette[i].g=255-i*17;native_palette.palette[i].b=(i^7)*17;}
+ native_palette.count=16;b=bitmap_create(640,480,1,4,0,0);assert(b);
+ assert(!seg_alloc(1024,&s)&&!seg_alloc(1024,&t));
+ memset(args,0,sizeof args);args[8]=9;args[7]=b;args[2]=s;
+ fzero(s,0,104);dib_wlong(s,0,40);assert(g_GetDIBits(0,0)==480);
+ assert(rd16(s,14)==4&&dib_long(s,20)==153600);
+ assert(g_GetDIBits(0,0)==480);
+ for(i=0;i<16;i++){assert(rd8(s,40+4*i)==native_palette.palette[i].b);assert(rd8(s,42+4*i)==native_palette.palette[i].r);}
+ args[4]=t;live=seglive;
+ for(start=0;start<480;start+=n){
+  n=480-start;if(n>17)n=17;args[6]=start;args[5]=n;
+  for(y=0;y<n;y++)for(x=0;x<320;x++)wr8(t,y*320+x,(((2*x+start+y)&15)<<4)|((2*x+start+y+1)&15));
+  assert(g_SetDIBits(0,0)==n);assert(seglive==live);
+ }
+ for(start=0;start<480;start+=n){
+  n=480-start;if(n>23)n=23;args[6]=start;args[5]=n;
+  memset(rams[t-1],0xa5,16384);assert(g_GetDIBits(0,0)==n);
+  for(y=0;y<n;y++)for(x=0;x<320;x++)assert(rd8(t,y*320+x)==((((2*x+start+y)&15)<<4)|((2*x+start+y+1)&15)));
+  assert(rd8(t,n*320)==0xa5);
+ }
+ args[6]=0;args[5]=480;assert(!g_GetDIBits(0,0)); /* far span >64KiB */
+ args[5]=1;args[3]=65500;assert(!g_SetDIBits(0,0));args[3]=0;
+ dib_wlong(s,16,2);assert(!g_SetDIBits(0,0));dib_wlong(s,16,0);
+ saved=bitmap_index(&bitmaps[bi(b)],0,479);dib_wlong(s,32,1);wr8(t,0,0xf0);
+ assert(!g_SetDIBits(0,0));assert(bitmap_index(&bitmaps[bi(b)],0,479)==saved);
+ /* CORE BGR triples and odd-width, DWORD-padded native rows. */
+ release_bitmap(bi(b));b=bitmap_create(7,3,1,4,0,0);args[7]=b;args[5]=3;
+ fzero(s,0,100);dib_wlong(s,0,12);assert(g_GetDIBits(0,0)==0); /* non-null bits needs header */
+ args[4]=0;assert(g_GetDIBits(0,0)==3);assert(g_GetDIBits(0,0)==3);args[4]=t;
+ for(y=0;y<3;y++){wr8(t,y*4,0x12);wr8(t,y*4+1,0x34);wr8(t,y*4+2,0x56);wr8(t,y*4+3,0x7f);}
+ assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==1);
+ assert(g_GetDIBits(0,0)==3);for(y=0;y<3;y++)assert(rd8(t,y*4+3)==0x70);
+ /* Reversed source RGB table must map colors, not blindly copy indices. */
+ for(i=0;i<16;i++){wr8(s,12+i*3,native_palette.palette[15-i].b);wr8(s,13+i*3,native_palette.palette[15-i].g);wr8(s,14+i*3,native_palette.palette[15-i].r);}
+ assert(g_SetDIBits(0,0)==3);assert(bitmap_index(&bitmaps[bi(b)],0,2)==14);
+ release_bitmap(bi(b));b=bitmap_create(9,2,1,1,0,0);args[7]=b;args[5]=2;args[4]=0;
+ fzero(s,0,104);dib_wlong(s,0,40);assert(g_GetDIBits(0,0)==2);assert(g_GetDIBits(0,0)==2);args[4]=t;
+ wr8(t,0,0xa5);wr8(t,1,0xff);wr8(t,4,0x5a);wr8(t,5,0);
+ assert(g_SetDIBits(0,0)==2);assert(g_GetDIBits(0,0)==2);
+ assert(rd8(t,0)==0xa5&&rd8(t,1)==0x80&&rd8(t,2)==0&&rd8(t,3)==0&&rd8(t,4)==0x5a);
+ release_bitmap(bi(b));seg_free(s);seg_free(t);
+ puts("DIB 640x480 exact native palette and bounded bands, CORE, padding, atomic failures passed");
+}
+
 int main(int argc,char**argv){
+ dib_band_test();
  stretch_tests();
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
  u16 b,d,e;
