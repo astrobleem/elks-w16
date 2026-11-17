@@ -286,6 +286,13 @@ w16_dos3call:
 	call	w16_int21		// emulate INT: FLAGS CS IP
 	lret
 
+// No Win16 debugger is attached. OutputDebugString is void and preserves
+// every register and FLAGS; even the generic dispatcher would clobber them.
+// The retail/no-debugger path consumes its far-string argument without reading.
+    .global w16_debugstring
+w16_debugstring:
+    lret $4
+
 // ---------------------------------------------------------------- calls into the program
 // u32 w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words)
 // Pushes words[0..n-1] on the program stack (Pascal order), sets AX = DS = ds, far-calls.

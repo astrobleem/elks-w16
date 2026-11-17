@@ -30,6 +30,7 @@ u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16), k_GlobalLRUNewest(u16,u16);
 u32 u_SetDlgItemInt(u16,u16), u_GetDlgItemInt(u16,u16), sh_ShellAbout(u16,u16);
 u32 g_CreateDIBitmap(u16,u16),g_SetDIBitsToDevice(u16,u16);
+u32 u_FindWindow(u16,u16),u_BringWindowToTop(u16,u16);
 u32 s_OpenSound(u16,u16), s_CloseSound(u16,u16), s_Unavailable(u16,u16);
 u32 k_FatalExit(u16,u16), k_FatalAppExit(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
@@ -346,7 +347,7 @@ const struct api api_table[] = {
     { P,   8, "DISCARDBAND", 0, API_MISSING, 0 },
     { U,  16, "CLIPCURSOR", 0, API_MISSING, 0 },
     { U,  17, "GETCURSORPOS", 0, API_MISSING, 0 },
-    { U,  45, "BRINGWINDOWTOTOP", 2, API_MISSING, 0 },
+    { U,  45, "BringWindowToTop", 2, 0, H(u_BringWindowToTop) },
     { U,  47, "IsWindow", 2, 0, H(u_IsWindow) },
     { U,  49, "IsWindowVisible", 2, 0, H(u_IsWindowVisible) },
     { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
@@ -404,11 +405,11 @@ const struct api api_table[] = {
     { S, 10, "StopSound", 0, 0, H(s_Unavailable) },
     { K, 1, "FatalExit", 2, 0, H(k_FatalExit) },
     { K, 137, "FatalAppExit", 6, 0, H(k_FatalAppExit) },
-    { K, 115, "OutputDebugString", 4, API_MISSING, 0 },
+    { K, 115, "OutputDebugString", 4, API_RAW, 0 },
     /* These bind only with -u and terminate if called. */
     { L, 22, "ShellAbout", 12, 0, H(sh_ShellAbout) },
     { G, 442, "CreateDIBitmap", 20, 0, H(g_CreateDIBitmap) },
-    { U, 50, "FindWindow", 8, API_MISSING, 0 },
+    { U, 50, "FindWindow", 8, 0, H(u_FindWindow) },
 
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
@@ -499,7 +500,9 @@ int api_target(int idx, u16 *seg, u16 *off)
     if (idx < 0 || idx >= api_count || (api_table[idx].flags & API_CONST))
         return -1;
     *seg = FSEG(w16_stubs);                 /* the stubs' own code segment */
-    *off = (api_table[idx].flags & API_RAW) ? FOFF(w16_dos3call) : (u16)(FOFF(w16_stubs) + 8 * idx);
+    *off = (api_table[idx].flags & API_RAW) ?
+        (api_table[idx].mod == MOD_KERNEL && api_table[idx].ord == 115 ? FOFF(w16_debugstring) : FOFF(w16_dos3call)) :
+        (u16)(FOFF(w16_stubs) + 8 * idx);
     return 0;
 }
 

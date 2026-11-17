@@ -15,19 +15,12 @@ int main(void)
     u16 seg;
     const u16 sound_ord[]={1,2,4,5,9,10};
     const u16 sound_args[]={0,0,8,10,0,0};
-    const int missing_mod[]={MOD_USER,MOD_KERNEL};
-    const u16 missing_ord[]={50,115};
     for(i=0;i<6;i++){
         int idx=api_find_ord(MOD_SOUND,sound_ord[i]);
         assert(idx>=0 && api_table[idx].argbytes==sound_args[i] && !api_table[idx].flags);
     }
-    for(i=0;i<2;i++){
-        assert(api_find_ord(missing_mod[i],missing_ord[i])<0);
-        opt_missing=1;
-        j=api_find_ord(missing_mod[i],missing_ord[i]);
-        assert(j>=0 && api_table[j].flags==API_MISSING);
-        opt_missing=0;
-    }
+    j=api_find_ord(MOD_KERNEL,115);
+    assert(j>=0 && api_table[j].flags==API_RAW && api_table[j].argbytes==4);
     for(i=0;i<3;i++){
         assert(s_OpenSound(0,0)==0);
         assert(s_Unavailable(0,0)==0xffff);

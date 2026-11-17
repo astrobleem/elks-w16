@@ -274,6 +274,7 @@ u32  w16_getvect(u16 vec);
 extern void w16_stubs(void);
 extern void w16_int21(void);
 extern void w16_dos3call(void);
+extern void w16_debugstring(void);
 int  w16_thunk_init(void);                  /* 0 ok, -1 another instance shares our text */
 
 /* argument access inside API handlers */

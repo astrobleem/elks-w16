@@ -851,6 +851,55 @@ u32 u_SetClassWord(u16 ss,u16 ap)
     return old;
 }
 
+
+/* Case-insensitive exact guest string comparison, with no truncated match. */
+static int window_name_matches(const char *name,u16 seg,u16 off)
+{
+    u16 i;
+    if(!seg)return 0;
+    for(i=0;;i++){
+        unsigned a=(unsigned char)name[i],b;
+        if((u32)off+i>0xfffful||((u32)seg<<4)+off+i>=0x100000ul)return 0;
+        b=rd8(seg,off+i);
+        if(a>='a'&&a<='z')a-='a'-'A';
+        if(b>='a'&&b<='z')b-='a'-'A';
+        if(a!=b)return 0;
+        if(!a)return 1;
+    }
+}
+
+/* FindWindow searches this task's top-level windows, never child controls.
+ * W16 has no cross-process Windows window manager. */
+u32 u_FindWindow(u16 ss,u16 ap)
+{
+    u16 co=AW(4),cs=AW(6),to=AW(0),ts=AW(2);int i,ci=-1;
+    if(!cs&&co)ci=find_class(co,0);
+    for(i=0;i<MAXWIN;i++){
+        struct wnd*w=&wins[i];
+        if(!w->used||w->parent||w->ctl)continue;
+        if(cs||co){
+            if(w->isdialog||w->cls<0||w->cls>=MAXCLASS)continue;
+            if(cs){if(!window_name_matches(classes[w->cls].name,cs,co))continue;}
+            else if(ci<0||ci!=w->cls)continue;
+        }
+        if((ts||to)&&!window_name_matches(w->title,ts,to))continue;
+        return w->hwnd;
+    }
+    return 0;
+}
+
+u32 u_BringWindowToTop(u16 ss,u16 ap)
+{
+    struct wnd*w=win_get(AW(0));
+    if(!w)return 0;
+    GrRaiseWindow(w->frame);
+    if(w->visible&&!(w->style&WS_DISABLED)&&!blocked(w)){
+        focus_hwnd=w->hwnd;
+        GrSetFocus(w->ctl?w->frame:w->client);
+    }
+    return 1;
+}
+
 /* RegisterClass(lpWndClass) */
 u32 u_RegisterClass(u16 ss, u16 ap)
 {
