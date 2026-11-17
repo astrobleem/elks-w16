@@ -32,7 +32,7 @@ u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObj
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
 u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
 u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
-u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16);
+u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16), u_EnableWindow(u16, u16);
 u32 u_CheckRadioButton(u16,u16), u_CheckDlgButton(u16,u16), u_IsDlgButtonChecked(u16,u16);
 u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
 u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
@@ -76,7 +76,7 @@ const struct api api_table[] = {
     { K,15,"GlobalAlloc",0,API_MISSING,0 },
     { K,16,"GlobalReAlloc",0,API_MISSING,0 },
     { K,17,"GlobalFree",0,API_MISSING,0 },
-    { U,34,"EnableWindow",0,API_MISSING,0 },
+    { U,34,"EnableWindow",4,0,H(u_EnableWindow) },
     { U,56,"MoveWindow",0,API_MISSING,0 },
     { U,74,"CopyRect",8,0,H(u_CopyRect) },
     { U,76,"PtInRect",8,0,H(u_PtInRect) },

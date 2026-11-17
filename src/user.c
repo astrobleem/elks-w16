@@ -439,7 +439,13 @@ static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x
 /* a modal dialog is up and w is not part of it (Windows disables the dialog's owner) */
 static int blocked(struct wnd *w)
 {
-    return modal_hwnd && top_window(w)->hwnd != modal_hwnd;
+    int n = 0;
+    if (modal_hwnd && top_window(w)->hwnd != modal_hwnd)
+        return 1;
+    for (; w && n++ < MAXWIN; w = win_get(w->parent))
+        if (w->style & WS_DISABLED)
+            return 1;
+    return 0;
 }
 
 static void translate_event(GR_EVENT *ev)
@@ -1521,6 +1527,8 @@ static void paint_control(struct wnd *w)
     txt[n] = 0;
     if (n)
         gdi_text_size(txt, n, &tw, &th, &tb);
+    if (w->style & WS_DISABLED)
+        black = dark;
     gdi_usebg(0);
     switch (w->ctl) {
     case CTL_STATIC:
@@ -1682,7 +1690,7 @@ static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
     int i;
     for (i = 0; i < MAXWIN; i++) {
         const char *a;
-        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || BUTTON_TYPE(&wins[i]) == BS_GROUPBOX || wins[i].parent != d->hwnd || !wins[i].visible)
+        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || BUTTON_TYPE(&wins[i]) == BS_GROUPBOX || wins[i].parent != d->hwnd || !wins[i].visible || (wins[i].style & WS_DISABLED))
             continue;
         for (a = wins[i].title; (a = strchr(a, '&')) != 0 && a[1] == '&'; a += 2)
             ;
@@ -1695,6 +1703,8 @@ static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
 static void dlg_command(struct wnd *d, u16 id)
 {
     struct wnd *c = find_ctl(d->hwnd, id);
+    if (c && (c->style & WS_DISABLED))
+        return;
     vlog("w16: dialog command %u\n", id);
     if (!d->procoff && !d->procseg) {           /* message box: its buttons end it */
         if (id == IDCANCEL && !c) {             /* Esc without a Cancel button works only with one button */
@@ -1980,6 +1990,34 @@ u32 u_EndDialog(u16 ss, u16 ap)
     d->result = AW(0);
     vlog("w16: EndDialog(%04x, %u)\n", d->hwnd, d->result);
     return 1;
+}
+
+/* EnableWindow(hWnd, enable) returns whether the window was disabled. */
+u32 u_EnableWindow(u16 ss, u16 ap)
+{
+    struct wnd *w = win_get(AW(2));
+    int enable = AW(0) != 0;
+    int was_disabled;
+    if (!w)
+        return 0;
+    was_disabled = (w->style & WS_DISABLED) != 0;
+    if (was_disabled == !enable)
+        return was_disabled;
+    if (enable)
+        w->style &= ~WS_DISABLED;
+    else {
+        w->style |= WS_DISABLED;
+        w->pressed = 0;
+        if (capture_hwnd == w->hwnd)
+            capture_hwnd = 0;
+    }
+    if (w->ctl) {
+        if (w->visible)
+            paint_control(w);
+    } else {
+        win_send(w, WM_ENABLE, enable, 0);
+    }
+    return was_disabled;
 }
 
 /* CheckDlgButton(hDlg, id, check) and IsDlgButtonChecked(hDlg, id). */

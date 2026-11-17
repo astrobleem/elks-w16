@@ -18,6 +18,7 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_USER,74)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,76)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,79)].argbytes==12);
+ assert(api_table[api_find_ord(MOD_USER,34)].argbytes==4);
  assert(api_table[api_find_ord(MOD_USER,96)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,97)].argbytes==6);
  assert(api_table[api_find_ord(MOD_USER,98)].argbytes==4);
