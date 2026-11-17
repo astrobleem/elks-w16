@@ -52,7 +52,7 @@ u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_GetBkColor(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
-u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
+u32 g_Polygon(u16, u16), g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
 u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
 u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
@@ -299,7 +299,7 @@ const struct api api_table[] = {
     { G,  21, "EXCLUDECLIPRECT", 0, API_MISSING, 0 },
     { G,  28, "ROUNDRECT", 0, API_MISSING, 0 },
     { G, 30, "SaveDC", 2, 0, H(g_SaveDC) },
-    { G,  36, "POLYGON", 0, API_MISSING, 0 },
+    { G,  36, "Polygon", 8, 0, H(g_Polygon) },
     { G,  37, "POLYLINE", 0, API_MISSING, 0 },
     { G,  38, "ESCAPE", 0, API_MISSING, 0 },
     { G, 39, "RestoreDC", 4, 0, H(g_RestoreDC) },

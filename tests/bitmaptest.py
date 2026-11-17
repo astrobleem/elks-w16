@@ -100,6 +100,7 @@ code+=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
 code+="static u16 rd16(u16 s,u16 o){return rd8(s,o)|((u16)rd8(s,o+1)<<8); }\nstatic void wr16(u16 s,u16 o,u16 v){wr8(s,o,v);wr8(s,o+1,v>>8); }\n"
 code+='u32 bitmap_origin(u16,int,int,i16,i16);\n'
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
+code+=(root/'src/polygon.c').read_text()
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
 code+="struct {u16 rows[16];u8 h;} bmps[1];\nstatic int bmp_index(u16 h){return h==0x700?0:-1;}\n"
@@ -710,6 +711,25 @@ int main(int argc,char**argv){
   assert(bitmap_index(&bitmaps[bi(b)],0,0)==expect);
  }
  bitmap_rop2(d,13);assert(bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0));
+ /* Polygon shares the memory DC translation and full ROP2 truth table. */
+ {struct poly_point square[4]={{2,2},{6,2},{6,6},{2,6}};
+  int rop,src,dst,xx,yy;
+  for(rop=1;rop<=16;rop++)for(src=0;src<16;src++)for(dst=0;dst<16;dst++){
+   for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,dst);
+   bitmap_rop2(d,rop);bitmap_moveto(d,8,9);
+   assert(bitmap_polygon(d,square,4,src*0x111111UL,0,src*0x111111UL,0));
+   assert(memory[di(d)].curx==8&&memory[di(d)].cury==9);
+   for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
+    int expected=dst,bit;
+    if(xx>=2&&xx<=6&&yy>=2&&yy<=6){
+     expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((src>>bit)&1)<<1)|((dst>>bit)&1)))&1)<<bit;
+    }
+    assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
+   }
+  }
+  bitmap_rop2(d,13);
+  for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,0);
+ }
  bitmap_moveto(d,0,0);assert(bitmap_lineto(d,5,5,0xffffff,0,1,0));
  for(k=0;k<5;k++)assert(bitmap_index(&bitmaps[bi(b)],k,k)==15);
  assert(!bitmap_index(&bitmaps[bi(b)],5,5));
@@ -777,7 +797,7 @@ int main(int argc,char**argv){
 """
 with tempfile.TemporaryDirectory() as td:
  p=Path(td);(p/'t.c').write_text(code)
- subprocess.run(['cc','-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),'-o',str(p/'t')],check=True)
+ subprocess.run(['cc','-I'+str(root/'src'),'-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),'-o',str(p/'t')],check=True)
  args=[str(p/'t')]
  if 'SOL_EXE' in os.environ:
   data=Path(os.environ['SOL_EXE']).read_bytes()

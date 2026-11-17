@@ -244,3 +244,6 @@ int scrollbar_input(struct wnd *w,int kind,int rx,int ry);
 void scrollbar_forget(u16 hwnd);
 
 u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set);
+
+struct poly_point;
+int bitmap_polygon(u16,struct poly_point *,int,u32,int,u32,int);

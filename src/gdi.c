@@ -13,6 +13,7 @@
 #define MEM_GETPCJR 15          /* expanded-PCjr kernels (pcjr-video-v0.9.2); the Tandy headers lack it */
 #endif
 #include "wapi.h"
+#include "polygon.h"
 
 #define OBJ_PEN   1
 #define OBJ_BRUSH 2
@@ -552,6 +553,43 @@ u32 g_SetROP2(u16 ss, u16 ap)
     if (r >= 1 && r <= 16)
         d->rop2 = (u8)r;
     return prev;
+}
+
+struct polygon_screen { struct dc *d; GR_COLOR pen,brush; };
+static void polygon_screen_span(void *ctx,int x,int y,int width,int kind)
+{
+ struct polygon_screen *s=ctx;
+ if(set_rop(s->d,kind==2?s->pen:s->brush))
+  GrFillRect(s->d->wid,s->d->gc,x,y,width,1);
+}
+/* Polygon(hdc, far POINT[], count). Does not change the current position. */
+u32 g_Polygon(u16 ss,u16 ap)
+{
+ u16 n,off,seg,h;int i,result,width,height;struct dc*d;
+ struct gobj *pen,*brush;struct poly_point *p;struct polygon_screen out;
+ GR_SCREEN_INFO si;
+ if(ap>0xfff8u)return 0;
+ n=AW(0);off=AW(2);seg=AW(4);h=AW(6);
+ if(n<2||n>128||(!seg&&!off)||(u32)off+4UL*n>65536UL||
+    ((u32)seg<<4)+off+4UL*n>0x100000UL)return 0;
+ d=dc_get(h);
+ pen=obj_get(d?d->pen:bitmap_object(h,OBJ_PEN,0));
+ brush=obj_get(d?d->brush:bitmap_object(h,OBJ_BRUSH,0));
+ if(!pen||!brush||(!pen->null&&(pen->style||pen->width>1))||
+    (!brush->null&&brush->style))return 0;
+ p=malloc(n*sizeof(*p));if(!p)return 0;
+ for(i=0;i<n;i++){
+  p[i].x=(i16)rd16(seg,off+4*i);p[i].y=(i16)rd16(seg,off+4*i+2);
+  if(d&&!gdi_map_point(d,&p[i].x,&p[i].y)){free(p);return 0;}
+ }
+ if(!d)result=bitmap_polygon(h,p,n,pen->color,pen->null,brush->color,brush->null);
+ else{
+  if(d->w){width=d->w->cw;height=d->w->ch;}
+  else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
+  out.d=d;out.pen=rgb_to_gr(pen->color);out.brush=rgb_to_gr(brush->color);
+  result=polygon_raster(p,n,width,height,!pen->null,!brush->null,polygon_screen_span,&out);
+ }
+ free(p);return result;
 }
 
 /* Rectangle(hdc, left, top, right, bottom): right/bottom exclusive */

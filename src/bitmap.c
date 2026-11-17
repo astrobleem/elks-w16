@@ -2,6 +2,7 @@
  * fail; screen capture commits only after a complete negotiated snapshot. */
 #include <string.h>
 #include "wapi.h"
+#include "polygon.h"
 #include "dib.h"
 #define BBASE 0x0a00
 #define DBASE 0x0c00
@@ -191,6 +192,21 @@ int bitmap_lineto(u16 h,i16 x,i16 y,u32 color,u16 style,u16 width,int nullpen)
   e2=2*err;if(e2>=dy){err+=dy;xx+=sx;}if(e2<=dx){err+=dx;yy+=sy;}
  }
  return 1;
+}
+struct polygon_memory {struct bitmap *b;u8 pen,brush,rop;};
+static void polygon_memory_span(void *ctx,int x,int y,int width,int kind)
+{
+ struct polygon_memory *s=ctx;int end=x+width;
+ for(;x<end;x++)memory_rop_pixel(s->b,x,y,kind==2?s->pen:s->brush,s->rop);
+}
+int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int np,u32 brush,int nb)
+{
+ int m=di(h),b,i;struct polygon_memory out;
+ if(m<0||(b=bi(memory[m].bitmap))<0)return 0;
+ for(i=0;i<n;i++)if(!memory_point(m,&p[i].x,&p[i].y))return 0;
+ out.b=&bitmaps[b];out.pen=bitmap_nearest(out.b,pen);
+ out.brush=bitmap_nearest(out.b,brush);out.rop=memory[m].rop2;
+ return polygon_raster(p,n,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out);
 }
 int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)
 {

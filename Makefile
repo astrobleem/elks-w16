@@ -42,6 +42,8 @@ test: host samples
 	python3 tests/filelisttest.py
 	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py
+	python3 tests/polygontest.py
+	python3 tests/polygonapitest.py
 	python3 tests/dcstacktest.py
 	python3 tests/palettetest.py
 	python3 tests/devicecapstest.py
