@@ -21,6 +21,8 @@ u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u1
 u32 u_InvertRect(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
+u32 k_GetTempDrive(u16,u16),k_GetTempFileName(u16,u16);
+u32 k_OpenFile(u16,u16),k_lclose(u16,u16),k_lread(u16,u16),k_lcreat(u16,u16),k_llseek(u16,u16),k_lopen(u16,u16),k_lwrite(u16,u16);
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16);
@@ -115,6 +117,7 @@ const struct api api_table[] = {
 
     { U,65,"GetScrollRange",12,0,H(u_GetScrollRange) },
     /* KERNEL */
+    { K, 83, "_lcreat", 6, 0, H(k_lcreat) },
     { K,20,"GlobalSize",2,0,H(k_GlobalSize) },
     { K, 4, "LocalInit", 6, 0, H(k_LocalInit) },
     { K, 154, "GlobalNotify", 4, 0, H(k_GlobalNotify) },
@@ -248,7 +251,7 @@ const struct api api_table[] = {
     { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
     { G, 75, "GetBkColor", 0, API_MISSING, 0 },
     { G,97,"GetWindowOrg",2,0,H(g_GetWindowOrg) },
-    { K, 97, "GetTempFileName", 0, API_MISSING, 0 },
+    { K,97,"GetTempFileName",12,0,H(k_GetTempFileName) },
     { K, 164, "GlobalLRUNewest", 0, API_MISSING, 0 },
     /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
      * these terminate if executed; ordinary loads reject them. */
@@ -290,13 +293,13 @@ const struct api api_table[] = {
     { G, 441, "GETDIBITS", 0, API_MISSING, 0 },
     { G, 443, "SETDIBITSTODEVICE", 0, API_MISSING, 0 },
     { K,  50, "GETPROCADDRESS", 0, API_MISSING, 0 },
-    { K,  74, "OPENFILE", 0, API_MISSING, 0 },
-    { K,  81, "_LCLOSE", 0, API_MISSING, 0 },
-    { K,  82, "_LREAD", 0, API_MISSING, 0 },
-    { K,  84, "_LLSEEK", 0, API_MISSING, 0 },
-    { K,  85, "_LOPEN", 0, API_MISSING, 0 },
-    { K,  86, "_LWRITE", 0, API_MISSING, 0 },
-    { K,  92, "GETTEMPDRIVE", 0, API_MISSING, 0 },
+    { K, 74, "OpenFile", 10, 0, H(k_OpenFile) },
+    { K, 81, "_lclose", 2, 0, H(k_lclose) },
+    { K, 82, "_lread", 8, 0, H(k_lread) },
+    { K, 84, "_llseek", 8, 0, H(k_llseek) },
+    { K, 85, "_lopen", 6, 0, H(k_lopen) },
+    { K, 86, "_lwrite", 8, 0, H(k_lwrite) },
+    { K,  92, "GetTempDrive", 2, 0, H(k_GetTempDrive) },
     { K,  95, "LOADLIBRARY", 0, API_MISSING, 0 },
     { K,  96, "FREELIBRARY", 0, API_MISSING, 0 },
 

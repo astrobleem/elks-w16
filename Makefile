@@ -18,6 +18,7 @@ test: host samples
 	python3 tests/manysegtest.py
 	python3 tests/librarytest.py
 	python3 tests/localheaptest.py
+	python3 tests/filestest.py
 	python3 tests/image_setup_test.py
 	python3 tests/dibtest.py
 	python3 tests/registeredtest.py

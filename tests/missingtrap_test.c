@@ -10,6 +10,14 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_USER,61)].argbytes==14);
  assert(api_table[api_find_ord(MOD_GDI,35)].argbytes==24);
  assert(api_table[api_find_ord(MOD_GDI,7)].argbytes==4);
+ assert(api_table[api_find_ord(MOD_KERNEL,74)].argbytes==10);
+ assert(api_table[api_find_ord(MOD_KERNEL,82)].argbytes==8);
+ assert(api_table[api_find_ord(MOD_KERNEL,83)].argbytes==6);
+ assert(api_table[api_find_ord(MOD_KERNEL,84)].argbytes==8);
+ assert(api_table[api_find_ord(MOD_KERNEL,85)].argbytes==6);
+ assert(api_table[api_find_ord(MOD_KERNEL,86)].argbytes==8);
+ assert(api_table[api_find_ord(MOD_KERNEL,92)].argbytes==2);
+ assert(api_table[api_find_ord(MOD_KERNEL,97)].argbytes==12);
  assert(api_table[api_find_ord(MOD_USER,56)].argbytes==12);
  assert(api_table[api_find_ord(MOD_USER,62)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,63)].argbytes==4);

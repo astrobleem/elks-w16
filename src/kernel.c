@@ -489,6 +489,7 @@ void rsrc_census(u16 *n, u32 *bytes)
 void kernel_shutdown(void)
 {
     int i, n = 0;
+    files_shutdown();
     global_shutdown();
     for (i = 0; i < MAXRSRC; i++) {
         if (rsrc[i].used && rsrc[i].seg) {
