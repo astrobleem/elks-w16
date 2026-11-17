@@ -596,9 +596,7 @@ u32 g_CreateBitmap(u16 ss, u16 ap)
     u16 off = AW(0), seg = AW(2), bpp = AW(4), planes = AW(6), h = AW(8), w = AW(10), y;
     int i;
     if (planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
-        wlog("w16: CreateBitmap %ux%u, %u planes, %u bits: only monochrome bitmaps up to 16x16 are provided\n",
-             w, h, planes, bpp);
-        return 0;
+        return bitmap_create(w,h,planes,bpp,seg,off);
     }
     for (i = 0; i < MAXBMP && bmps[i].used; i++)
         ;

@@ -200,6 +200,7 @@ void      paint_done(struct wnd *w);
 /* Resource bitmap/source-only memory DC support. */
 void registered_reset(void);
 void bitmap_shutdown(void);
+u16 bitmap_create(u16 w,u16 h,u16 planes,u16 bpp,u16 seg,u16 off);
 int bitmap_brushorg(u16 dc,i16 x,i16 y,u32 *old);
 u32 bitmap_getpixel(u16 dc,i16 x,i16 y);
 u32 bitmap_setpixel(u16 dc,i16 x,i16 y,u32 rgb);

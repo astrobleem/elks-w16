@@ -8,12 +8,37 @@
 #define NB 16
 #define ND 8
 #define DEFAULT_BITMAP 0x0aff
-struct bitmap {u16 w,h,seg,stride;u8 used,bpp;struct dib_rgb palette[16];};
+#define BITMAP_BANK_BYTES 16384UL
+#define BITMAP_BANKS 10
+struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
 static struct {u16 bitmap;u8 used;i16 brushx,brushy;u32 textcolor,bkcolor;} memory[ND];
 static int bi(u16 h){u16 n=(h-BBASE)/2;return h>=BBASE&&!(h&1)&&n<NB&&bitmaps[n].used?n:-1;}
 static int di(u16 h){u16 n=(h-DBASE)/2;return h>=DBASE&&!(h&1)&&n<ND&&memory[n].used?n:-1;}
-static void release_bitmap(int i){if(bitmaps[i].seg)seg_free(bitmaps[i].seg);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
+static void release_pixels(struct bitmap*b)
+{int j;for(j=0;j<BITMAP_BANKS;j++)if(b->bank[j]){seg_free(b->bank[j]);b->bank[j]=0;}}
+static void release_bitmap(int i){release_pixels(&bitmaps[i]);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
+static int allocate_pixels(struct bitmap*b,u32 bytes)
+{
+ int j;u16 n,seg;
+ if(!bytes||bytes>BITMAP_BANKS*BITMAP_BANK_BYTES)return 0;
+ for(j=0;bytes;j++){
+  n=bytes>BITMAP_BANK_BYTES?BITMAP_BANK_BYTES:(u16)bytes;
+  if(seg_alloc((n+15)/16,&seg)){release_pixels(b);return 0;}
+  b->bank[j]=seg;
+  fzero(b->bank[j],0,n);bytes-=n;
+ }
+ return 1;
+}
+static void bitmap_write(struct bitmap*b,u32 at,const u8*src,u16 n)
+{
+ u16 off,part;unsigned bank;
+ while(n){
+  bank=(unsigned)(at/BITMAP_BANK_BYTES);off=(u16)(at%BITMAP_BANK_BYTES);
+  part=(u16)(BITMAP_BANK_BYTES-off);if(part>n)part=n;
+  fcopy_out(b->bank[bank],off,src,part);src+=part;at+=part;n-=part;
+ }
+}
 void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memory,0,sizeof(memory));}
 int bitmap_delete(u16 h){int i=bi(h),j;if(i<0)return -1;for(j=0;j<ND;j++)if(memory[j].used&&memory[j].bitmap==h)return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));return 1;}
@@ -22,24 +47,26 @@ u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
- int i;u16 seg,stride=((w*bpp+15)/16)*2;
- if(!w||!h||w>640||h>480||(u32)stride*h>16384UL)return -1;
+ int i;u16 stride=((w*bpp+15)/16)*2;
+ if(!w||!h||w>640||h>480||(bpp!=1&&bpp!=4))return -1;
  for(i=0;i<NB&&bitmaps[i].used;i++);if(i==NB)return -1;
- if(seg_alloc(((u32)stride*h+15)/16,&seg))return -1;
- bitmaps[i].seg=seg;
+ if(!allocate_pixels(&bitmaps[i],(u32)stride*h))return -1;
  bitmaps[i].w=w;bitmaps[i].h=h;bitmaps[i].stride=stride;bitmaps[i].bpp=bpp;
- fzero(bitmaps[i].seg,0,stride*h);return i;
+ return i;
 }
 static u8 bitmap_index(struct bitmap*b,u16 x,u16 y)
 {
- u8 v=rd8(b->seg,y*b->stride+(b->bpp==1?x/8:x/2));
+ u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
+ u8 v=rd8(b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],(u16)(at%BITMAP_BANK_BYTES));
  return b->bpp==1?(v>>(7-(x&7)))&1:(v>>((x&1)?0:4))&15;
 }
 static void bitmap_put(struct bitmap*b,u16 x,u16 y,u8 index)
 {
- u16 at=y*b->stride+(b->bpp==1?x/8:x/2);u8 shift=b->bpp==1?7-(x&7):(x&1)?0:4;
+ u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
+ u16 seg=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],off=(u16)(at%BITMAP_BANK_BYTES);
+ u8 shift=b->bpp==1?7-(x&7):(x&1)?0:4;
  u8 mask=(b->bpp==1?1:15)<<shift;
- wr8(b->seg,at,(rd8(b->seg,at)&~mask)|(index<<shift));
+ wr8(seg,off,(rd8(seg,off)&~mask)|(index<<shift));
 }
 static u32 bitmap_rgb(struct bitmap*b,u8 index)
 {struct dib_rgb*c=&b->palette[index];return b->bpp==1?(index?0xffffffUL:0):(u32)c->r|((u32)c->g<<8)|((u32)c->b<<16);}
@@ -117,7 +144,7 @@ static void capture_row(void *ctx,unsigned row,const unsigned char *packed,unsig
 {
  struct capture_stage*c=ctx;
  if(!c->valid||row!=c->rows||row>=c->image.h||len!=c->image.stride){c->valid=0;return;}
- fcopy_out(c->image.seg,row*c->image.stride,packed,len);c->rows++;
+ bitmap_write(&c->image,(u32)row*c->image.stride,packed,len);c->rows++;
 }
 #endif
 static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,int h)
@@ -129,13 +156,13 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
  if(src->w){sw=src->w->cw;sh=src->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);sw=si.cols;sh=si.rows;}
  if(!clip_axis(&xx,&ax,&ww,d->w,sw)||!clip_axis(&yy,&ay,&hh,d->h,sh))return 1;
  memset(&c,0,sizeof(c));c.image.w=ww;c.image.h=hh;c.image.stride=(ww+1)/2;c.image.bpp=4;c.valid=1;
- if((u32)c.image.stride*c.image.h>16384UL)return 0;
+
  memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;
  for(j=0;j<16;j++){c.image.palette[j].r=p->palette[j].r;c.image.palette[j].g=p->palette[j].g;c.image.palette[j].b=p->palette[j].b;}
- if(seg_alloc(((u32)c.image.stride*c.image.h+15)/16,&c.image.seg))return 0;
+ if(!allocate_pixels(&c.image,(u32)c.image.stride*c.image.h))return 0;
  ok=GrCapturePixels(src->wid,src->gc,ax,ay,ww,hh,capture_row,&c)&&c.valid&&c.rows==c.image.h;
  if(ok)memory_copy(d,dm,xx,yy,&c.image,0,0,0,ww,hh);
- seg_free(c.image.seg);return ok;
+ release_pixels(&c.image);return ok;
 #else
  (void)src;(void)dm;(void)dx;(void)dy;(void)sx;(void)sy;(void)w;(void)h;return 0;
 #endif
@@ -192,6 +219,26 @@ u32 g_CreateCompatibleBitmap(u16 ss,u16 ap)
  i=allocate_bitmap(w,h,mono?1:4);if(i<0)return 0;
  if(!mono)for(j=0;j<16;j++){
   bitmaps[i].palette[j].r=p->palette[j].r;bitmaps[i].palette[j].g=p->palette[j].g;bitmaps[i].palette[j].b=p->palette[j].b;
+ }
+ bitmaps[i].used=1;return BBASE+2*i;
+}
+
+/* General 1-plane DDBs; small monochrome brush patterns retain their old path.
+ * lpBits is a bounded single far span, WORD-aligned rows, top row first. */
+u16 bitmap_create(u16 w,u16 h,u16 planes,u16 bpp,u16 seg,u16 off)
+{
+ int i,j;u16 stride,x,y;u32 bytes;GR_PALETTE*p=(GR_PALETTE*)w16_scratch;
+ if(planes!=1||(bpp!=1&&bpp!=4)||!w||!h||w>640||h>480)return 0;
+ stride=((w*bpp+15)/16)*2;bytes=(u32)stride*h;
+ if((seg||off)&&((u32)off+bytes>65536UL||((u32)seg<<4)+off+bytes>0x100000UL))return 0;
+ if(bpp==4){memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;}
+ i=allocate_bitmap(w,h,bpp);if(i<0)return 0;
+ if(bpp==4)for(j=0;j<16;j++){
+  bitmaps[i].palette[j].r=p->palette[j].r;bitmaps[i].palette[j].g=p->palette[j].g;bitmaps[i].palette[j].b=p->palette[j].b;
+ }
+ if(seg||off)for(y=0;y<h;y++)for(x=0;x<stride;x++){
+  u8 v=rd8(seg,(u16)(off+(u32)y*stride+x));
+  bitmap_write(&bitmaps[i],(u32)y*stride+x,&v,1);
  }
  bitmaps[i].used=1;return BBASE+2*i;
 }

@@ -27,14 +27,15 @@ static u16 args[10];
 #define GR_MODE_AND 1
 #define MWROP_COPY 0
 #define GR_RGB(r,g,b) ((r)|((g)<<8)|((b)<<16))
-static u8 resource[65536],rams[16][16384],output[65536];static u16 length;
+static u8 resource[65536],rams[32][16384],output[65536];static u16 length;
 #define ram rams[0]
-static int segused[16],pixused[16];
+static int segused[32],pixused[16];
 static int outputwrites;
 static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
  if(seg==99){assert((u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;}
- else{assert(seg>=1&&seg<=16&&segused[seg-1]&&(u32)off+n<=16384);memcpy(rams[seg-1]+off,p,n);}
+ else{assert(seg>=1&&seg<=32&&segused[seg-1]&&(u32)off+n<=16384);memcpy(rams[seg-1]+off,p,n);}
 }
+static int failafter=-1;
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[10000],pixdata[640*480],foreground=77;static int mode=3;
 
@@ -68,11 +69,11 @@ static int ne_read(struct module*m,u32 o,void*p,u16 n){
  if(++readcount==readfail)return -1;
  if(o+n>length)return -1;memcpy(p,resource+o,n);return 0;
 }
-static int seg_alloc(u16 n,u16*s){int i;if(segfail)return -1;assert(n*16<=sizeof ram);for(i=0;i<16&&segused[i];i++);assert(i<16);segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
-static void seg_free(u16 s){assert(s>=1&&s<=16&&segused[s-1]);segused[s-1]=0;seglive--;}
-static void fzero(u16 s,u16 o,u16 n){assert(s>=1&&s<=16&&segused[s-1]&&o+n<=sizeof ram);memset(rams[s-1]+o,0,n);}
-static u8 rd8(u16 s,u16 o){assert(s>=1&&s<=16&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
-static void wr8(u16 s,u16 o,u8 v){assert(s>=1&&s<=16&&segused[s-1]&&o<sizeof ram);rams[s-1][o]=v;}
+static int seg_alloc(u16 n,u16*s){int i;if(segfail||failafter==0)return -1;if(failafter>0)failafter--;assert(n*16<=sizeof ram);for(i=0;i<32&&segused[i];i++);if(i==32)return -1;segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
+static void seg_free(u16 s){assert(s>=1&&s<=32&&segused[s-1]);segused[s-1]=0;seglive--;}
+static void fzero(u16 s,u16 o,u16 n){assert(s>=1&&s<=32&&segused[s-1]&&o+n<=sizeof ram);memset(rams[s-1]+o,0,n);}
+static u8 rd8(u16 s,u16 o){assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
+static void wr8(u16 s,u16 o,u8 v){assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);rams[s-1][o]=v;}
 static int GrNewPixmap(int w,int h,void*p){assert(!"unexpected native allocation");return 0;}
 static void GrDestroyWindow(int p){assert(!"unexpected native destruction");}
 static int GrNewGC(void){assert(!"unexpected GC allocation");return 0;}
@@ -107,7 +108,7 @@ static void setup(int w,int h,int bpp){
  memset(args,0,sizeof args);args[2]=5;
 }
 static u16 load(void){args[2]=5;return u_LoadBitmap(0,0);}
-static void clean(void){int i;assert(!seglive&&!pixlive&&!gclive);for(i=0;i<NB;i++)assert(!bitmaps[i].used&&!bitmaps[i].seg);}
+static void clean(void){int i;assert(!seglive&&!pixlive&&!gclive);for(i=0;i<NB;i++)assert(!bitmaps[i].used&&!bitmaps[i].bank[0]);}
 static u16 dcnew(void){args[0]=0;return g_CreateCompatibleDC(0,0);}
 static int blit(u16 dc,int dx,int dy,int sx,int sy,int w,int h,u32 rop){
  args[0]=rop;args[1]=rop>>16;args[2]=sy;args[3]=sx;args[4]=dc;args[5]=h;args[6]=w;args[7]=dy;args[8]=dx;args[9]=9;return g_BitBlt(0,0);
@@ -238,8 +239,8 @@ int main(int argc,char**argv){
  }
  setup(1,1,1);
  for(k=0;k<3;k++){b=compatible(9,71,276);assert(b&&seglive==k+1&&!pixlive&&!gclive);object_check(b,71,276,4);
-  for(n=0;n<36*276;n++)assert(rams[bitmaps[bi(b)].seg-1][n]==0);
-  for(n=36*276;n<16384;n++)assert(rams[bitmaps[bi(b)].seg-1][n]==0xa5);
+  for(n=0;n<36*276;n++)assert(rams[bitmaps[bi(b)].bank[0]-1][n]==0);
+  for(n=36*276;n<16384;n++)assert(rams[bitmaps[bi(b)].bank[0]-1][n]==0xa5);
  }
  setup(1,1,1);native_palette.count=15;assert(!compatible(9,71,96));clean();
  native_palette.count=0;assert(!compatible(9,71,96));clean();native_palette.count=16;
@@ -258,8 +259,8 @@ int main(int argc,char**argv){
  assert(!compatible(0,1,1)&&!compatible(123,1,1));
  assert(!compatible(9,-1,1)&&!compatible(9,1,-1));
  assert(!compatible(9,641,1)&&!compatible(9,1,481));
- assert(!compatible(9,640,52)); /* color 320*52 >16KiB */
- assert(!compatible(d,640,205)); /* mono 80*205 >16KiB */
+ b=compatible(9,640,52);assert(b);assert(bitmap_delete(b)==1);
+ b=compatible(d,640,205);assert(b);assert(bitmap_delete(b)==1);
  clean();
  segfail=1;assert(!compatible(d,71,96));clean();segfail=0;
  segfail=1;assert(!compatible(9,71,96));clean();segfail=0;
@@ -357,9 +358,9 @@ int main(int argc,char**argv){
  for(k=0;k<4;k++){int xx=k==0?-1:k==1?16:0,yy=k==2?-1:k==3?4:0;
  assert(bitmap_getpixel(e,xx,yy)==0xffffffffUL&&bitmap_setpixel(e,xx,yy,0)==0xffffffffUL);}
  assert(bitmap_setpixel(e,0,0,0x01000000)==0xffffffffUL&&bitmap_getpixel(e,0,0)==text);
- {u8 saved[32];memcpy(saved,rams[bitmaps[bi(target)].seg-1],32);
+ {u8 saved[32];memcpy(saved,rams[bitmaps[bi(target)].bank[0]-1],32);
  assert(!memblit(e,d,0,0,0,0,16,4,0x008800c6));assert(!memblit(e,d,0,0,0,0,16,4,0x00660046));
- assert(!memcmp(saved,rams[bitmaps[bi(target)].seg-1],32));}
+ assert(!memcmp(saved,rams[bitmaps[bi(target)].bank[0]-1],32));}
  }
  /* Color->color remaps through owned RGB palettes, nearest tie is first. */
  setup(16,1,4);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
@@ -386,23 +387,23 @@ int main(int argc,char**argv){
  {struct bitmap*target=&bitmaps[bi(b)];u8 saved[3456];
   /* Reverse destination palette so capture must perform real palette remap. */
   for(k=0;k<16;k++){target->palette[k].r=(15-k)*13;target->palette[k].g=(15-k)*7;target->palette[k].b=(15-k)*11;}
-  memset(rams[target->seg-1],0x65,3456);memcpy(saved,rams[target->seg-1],3456);
+  memset(rams[target->bank[0]-1],0x65,3456);memcpy(saved,rams[target->bank[0]-1],3456);
   for(capture_mode=1;capture_mode<=6;capture_mode++){
    capture_calls=0;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
-   assert(capture_calls==1&&seglive==1&&!memcmp(saved,rams[target->seg-1],3456));
+   assert(capture_calls==1&&seglive==1&&!memcmp(saved,rams[target->bank[0]-1],3456));
   }
   capture_mode=0;segfail=1;capture_calls=0;
   assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
-  assert(!capture_calls&&seglive==1&&!memcmp(saved,rams[target->seg-1],3456));segfail=0;
+  assert(!capture_calls&&seglive==1&&!memcmp(saved,rams[target->bank[0]-1],3456));segfail=0;
   native_palette.count=15;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
-  assert(!capture_calls&&!memcmp(saved,rams[target->seg-1],3456));native_palette.count=16;
+  assert(!capture_calls&&!memcmp(saved,rams[target->bank[0]-1],3456));native_palette.count=16;
   capture_mode=7;assert(memblit(d,9,0,0,281,116,71,96,0x00cc0020));
   assert(capture_x==281&&capture_y==116&&capture_w==71&&capture_h==96&&seglive==1);
   for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(target,x,y)==15-((281+x+3*(116+y))&15));
-  for(y=0;y<96;y++)assert((rams[target->seg-1][y*36+35]&15)==5); /* pad nibble unchanged */
-  for(n=3456;n<16384;n++)assert(rams[target->seg-1][n]==0xa5);
+  for(y=0;y<96;y++)assert((rams[target->bank[0]-1][y*36+35]&15)==5); /* pad nibble unchanged */
+  for(n=3456;n<16384;n++)assert(rams[target->bank[0]-1][n]==0xa5);
   for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*11;}
-  capture_mode=0;memset(rams[target->seg-1],0x65,3456);
+  capture_mode=0;memset(rams[target->bank[0]-1],0x65,3456);
   assert(memblit(d,9,-2,-3,281,116,71,96,0x00cc0020));
   assert(capture_x==283&&capture_y==119&&capture_w==69&&capture_h==93);
   for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(target,x,y)==(x<69&&y<93?15-((283+x+3*(119+y))&15):(x&1?5:6)));
@@ -410,6 +411,33 @@ int main(int argc,char**argv){
  }
  bitmap_shutdown();clean();win.cw=win.ch=100;
 
+
+ /* Banked VGA surfaces and full capture keep destination atomic on failure. */
+ setup(1,1,1);win.cw=640;win.ch=480;
+ for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*11;}
+ for(k=0;k<10;k++){failafter=k;assert(!compatible(9,640,480));assert(!seglive);}
+ failafter=-1;b=compatible(9,640,480);assert(b&&seglive==10);d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ {struct bitmap*target=&bitmaps[bi(b)];
+  for(y=0;y<480;y++)for(x=0;x<640;x++)bitmap_put(target,x,y,(x+y)&15);
+  for(y=0;y<480;y++)for(x=0;x<640;x++)assert(bitmap_index(target,x,y)==((x+y)&15));
+  capture_mode=0;
+  for(k=0;k<10;k++){failafter=k;capture_calls=0;assert(!memblit(d,9,0,0,0,0,640,480,0x00cc0020));assert(!capture_calls&&seglive==10);}
+  failafter=-1;
+  for(capture_mode=1;capture_mode<=6;capture_mode++){
+   assert(!memblit(d,9,0,0,0,0,640,480,0x00cc0020));assert(seglive==10);
+   for(y=0;y<480;y++)for(x=0;x<640;x++)assert(bitmap_index(target,x,y)==((x+y)&15));
+  }
+  capture_mode=0;assert(memblit(d,9,0,0,0,0,640,480,0x00cc0020));assert(seglive==10);
+  for(y=0;y<480;y++)for(x=0;x<640;x++)assert(bitmap_index(target,x,y)==((x+3*y)&15));
+ }
+ bitmap_shutdown();clean();
+ b=bitmap_create(640,480,1,4,0,0);assert(b&&seglive==10);assert(bitmap_delete(b)==1);clean();
+ b=bitmap_create(640,480,1,1,0,0);assert(b&&seglive==3);assert(bitmap_delete(b)==1);clean();
+ assert(!bitmap_create(640,480,1,4,1,0));assert(!bitmap_create(640,480,4,1,0,0));
+ {u16 src;assert(!seg_alloc(2,&src));rams[src-1][0]=0x12;rams[src-1][1]=0x30;
+  b=bitmap_create(3,1,1,4,src,0);assert(b);assert(bitmap_index(&bitmaps[bi(b)],0,0)==1&&bitmap_index(&bitmaps[bi(b)],2,0)==3);
+  assert(bitmap_delete(b)==1);seg_free(src);clean();}
+ win.cw=win.ch=100;
  /* Colored one-bit resources preserve RGB instead of text/background expansion. */
  for(k=0;k<4;k++){
   u32 first,second;
