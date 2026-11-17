@@ -82,7 +82,8 @@ int main(void){u16 id;int x,y;unsigned frame;
  /* Five Paintbrush windows, one 17-control Save As, then a 4-control alert. */
  assert(MAXWIN>=5+1+17+1+4);
  {int j;for(j=0;j<23;j++)wins[j].used=1;assert(dialog_slots_available(4));
-  for(j=23;j<MAXWIN-4;j++)wins[j].used=1;assert(!dialog_slots_available(4));memset(wins,0,sizeof(wins));}
+  for(j=23;j<MAXWIN-4;j++)wins[j].used=1;
+  assert(!dialog_slots_available(4));memset(wins,0,sizeof(wins));}
  wins[0].used=1;wins[0].hwnd=HWND_BASE;wins[0].client=77;wins[0].frame=76;wins[0].x=10;wins[0].y=20;wins[0].cx=2;wins[0].cy=30;
  strcpy(classes[0].menu,"must-not-load");
  setup(0x40800003UL,HWND_BASE,-1,117,284,15);id=u_CreateWindow(0x1000,0);assert(id==HWND_BASE+4);assert(frame_parent==77);assert(createdx==0&&createdy==117&&moves==1&&movex==-1&&movey==117);
