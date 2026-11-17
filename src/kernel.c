@@ -309,6 +309,37 @@ u32 k_LocalAlloc(u16 ss, u16 ap)
     return 0;
 }
 
+/* LocalReAlloc(hMem,bytes,flags). Local handles are fixed offsets here.
+ * Grow only into adjacent free storage: neither a retained pointer nor a DLL's
+ * DS can be invalidated. Failure leaves both the block and free list intact. */
+u32 k_LocalReAlloc(u16 ss,u16 ap)
+{
+    struct ne_module *m=local_caller(ss,ap);
+    u16 flags=AW(0),bytes=AW(2),h=AW(4),b,old,size,need,next,rest;
+    if(!m || !bytes || bytes>0xfff0u || (flags&~0x0042u)) return 0;
+    b=lh_walk(m,h,0,0);
+    if(!b) return 0;
+    old=rd16(m->dgroup,b)&~1u;
+    need=(bytes+3u)&~1u;
+    if(need<4) need=4;
+    size=old;
+    while(size<need && (u32)b+size+2<=m->local_end) {
+        next=rd16(m->dgroup,b+size);
+        if((next&1) || (next&~1u)<2 || (u32)b+size+(next&~1u)>m->local_end)
+            return 0;
+        size+=next&~1u;
+    }
+    if(size<need) return 0;
+    rest=size-need;
+    if(rest>=4) {
+        wr16(m->dgroup,b+need,rest);
+        size=need;
+    }
+    wr16(m->dgroup,b,size|1);
+    if((flags&0x40) && size>old) fzero(m->dgroup,b+old,size-old);
+    return h;
+}
+
 /* LocalFree(hMem): 0 on success, the handle on failure */
 u32 k_LocalFree(u16 ss, u16 ap)
 {

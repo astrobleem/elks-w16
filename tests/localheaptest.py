@@ -37,6 +37,29 @@ int main(void)
     wr16(ss,24,0xffff);wr16(ss,32,20);assert(!k_LocalAlloc(ss,32));
     wr16(ss,24,dll.dgroup);wr16(ss,32,1025);wr16(ss,34,0);assert(!k_LocalInit(ss,32));
     wr16(ss,32,1248);wr16(ss,34,100);wr16(ss,36,dll.dgroup);assert(!k_LocalInit(ss,32));
+    /* Resize only the DLL heap, preserve handles and failure atomicity. */
+    lheap_init(&dll);wr16(ss,24,dll.dgroup);
+    wr16(ss,32,20);wr16(ss,34,0x40);h1=k_LocalAlloc(ss,32);
+    for(i=0;i<20;i++)wr8(dll.dgroup,h1+i,0xa5);
+    wr16(ss,32,0x40);wr16(ss,34,40);wr16(ss,36,h1);
+    assert(k_LocalReAlloc(ss,32)==h1);
+    for(i=0;i<20;i++)assert(rd8(dll.dgroup,h1+i)==0xa5);
+    for(i=20;i<40;i++)assert(!rd8(dll.dgroup,h1+i));
+    wr16(ss,32,0);wr16(ss,34,8);assert(k_LocalReAlloc(ss,32)==h1);
+    wr16(ss,32,20);wr16(ss,34,0);h2=k_LocalAlloc(ss,32);
+    assert(h2!=0 && h2!=h1);
+    wr16(ss,32,0x40);wr16(ss,34,40);wr16(ss,36,h1);
+    assert(!k_LocalReAlloc(ss,32)); /* live neighbor blocks growth */
+    assert(rd16(dll.dgroup,h1-2)==11);
+    for(i=0;i<8;i++)assert(rd8(dll.dgroup,h1+i)==0xa5);
+    wr16(ss,32,h2);assert(!k_LocalFree(ss,32));
+    wr16(ss,32,0x40);assert(k_LocalReAlloc(ss,32)==h1);
+    wr16(ss,34,2000);assert(!k_LocalReAlloc(ss,32)); /* exhaustion */
+    assert(rd16(dll.dgroup,h1-2)==43);
+    wr16(ss,34,0);assert(!k_LocalReAlloc(ss,32)); /* no discard support */
+    wr16(ss,32,0x80);wr16(ss,34,40);assert(!k_LocalReAlloc(ss,32));
+    wr16(ss,32,0x40);wr16(ss,36,h1+2);assert(!k_LocalReAlloc(ss,32));
+    wr16(ss,36,h1);wr16(ss,24,app.dgroup);assert(!k_LocalReAlloc(ss,32));
     seg_free(ss);seg_free(app.dgroup);seg_free(dll.dgroup);
     puts("Task and DLL local heap ownership, initialization, bounds and reuse passed");
     return 0;
