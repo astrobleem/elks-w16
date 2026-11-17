@@ -40,17 +40,18 @@ int polygon_raster(struct poly_point *p,int n,int width,int height,
    row[x-l]=inside?1:0;
   }
   if(pen)for(i=0,j=n-1;i<n;j=i++){
-   /* Bounds above keep differences and doubled error within signed 16 bits. */
+   /* Differences and error fit 16 bits; doubled error needs 32 bits. */
    int xx=p[j].x,yy=p[j].y,dx=p[i].x-xx,dy=p[i].y-yy;
-   int sx=dx<0?-1:1,sy=dy<0?-1:1,err,e2;
+   int sx=dx<0?-1:1,sy=dy<0?-1:1,err;long e2;
    if(dx<0)dx=-dx;
    if(dy>0)dy=-dy;
    err=dx+dy;
    /* Endpoints excluded; the next edge owns the shared vertex. */
    while(xx!=p[i].x||yy!=p[i].y){
     if(yy==y&&xx>=l&&xx<=r)row[(int)xx-l]=2;
-    e2=2*err;
-   if(e2>=dy){err+=dy;xx+=sx;}if(e2<=dx){err+=dx;yy+=sy;}
+    e2=2L*err;
+    if(e2>=dy){err+=dy;xx+=sx;}
+    if(e2<=dx){err+=dx;yy+=sy;}
    }
   }
   for(x=l;x<=r;){
