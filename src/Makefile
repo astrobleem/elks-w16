@@ -18,9 +18,13 @@ OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o p
 
 all: w16
 
-w16: $(OBJS) $(NANOX_LIB)
-	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(NANOX_LIB)
+w16: $(OBJS) $(NANOX_LIB) w16-medium.ld
+	$(CC) $(LDFLAGS) -T w16-medium.ld -Wl,--gc-sections -o $@ $(OBJS) $(NANOX_LIB)
 	ia16-elf-size $@ 2>/dev/null || true
+
+w16-medium.ld: ../scripts/w16-link-layout.sh
+	sh $< "$(CC)" > $@.tmp
+	mv $@.tmp $@
 
 %.o: %.c w16.h wapi.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -38,6 +42,6 @@ w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h wapi.h
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
-	rm -f *.o w16 w16host
+	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp
 
 .PHONY: all host clean

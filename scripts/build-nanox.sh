@@ -38,6 +38,7 @@ mkdir -p "$ROOT/build/nanox-medium"
 for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
     object="$ROOT/build/nanox-medium/$(basename "$source" .c).o"
     "$CC" -mcmodel=medium -melks-libc -march=i8086 -Os \
+        -ffunction-sections -fdata-sections \
         -DELKS=1 -DUNIX=1 -DNDEBUG=1 -DNONETWORK=0 \
         '-DMWCONFIG_FILE="mwconfig.elks"' -DMWPIXEL_FORMAT=MWPF_PALETTE \
         -DSCREEN_PIXTYPE=MWPF_PALETTE -DSCREEN_TANDY=1 -DMEM_GETPCJR=15 \
