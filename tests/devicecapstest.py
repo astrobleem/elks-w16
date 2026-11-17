@@ -9,6 +9,7 @@ code=r'''
 #include <string.h>
 typedef uint16_t u16;typedef uint32_t u32;
 typedef struct{int cols,rows;}GR_SCREEN_INFO;
+static int ic_handle(u16 h,int release){return h==0x241?0:-1;}
 static u16 args[2];static int width,height,calls;
 #define AW(n) args[(n)/2]
 static void GrGetScreenInfo(GR_SCREEN_INFO*p){p->cols=width;p->rows=height;calls++;}

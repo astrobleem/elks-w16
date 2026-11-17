@@ -868,7 +868,8 @@ u32 g_CreateDC(u16 ss, u16 ap)
 
 u32 g_DeleteDC(u16 ss, u16 ap)
 {
-    int r=bitmap_deletedc(AW(0));if(r>=0)return r;
+    int r=ic_handle(AW(0),1); if(r>=0)return r;
+    r=bitmap_deletedc(AW(0));if(r>=0)return r;
     if (!dc_get(AW(0)))
         return 0;
     dc_release(AW(0));
@@ -878,6 +879,7 @@ u32 g_DeleteDC(u16 ss, u16 ap)
 /* Pixel dimensions come from the display. Other legacy Tandy caps are unchanged. */
 u32 g_GetDeviceCaps(u16 ss, u16 ap)
 {
+    if(ic_handle(AW(2),0)==0) return 0;
     switch (AW(0)) {
     case 0:  return 0x0300;     /* DRIVERVERSION */
     case 2:  return 1;          /* TECHNOLOGY: DT_RASDISPLAY */

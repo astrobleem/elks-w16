@@ -17,7 +17,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) 0
 #else
 #define H(f) f
-u32 g_EnumObjects(u16,u16);
+u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_LocalInit(u16,u16);
 u32 k_GlobalNotify(u16,u16);
@@ -267,7 +267,7 @@ const struct api api_table[] = {
     { G,  99, "LPTODP", 0, API_MISSING, 0 },
     { G, 106, "SETBITMAPBITS", 0, API_MISSING, 0 },
     { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
-    { G, 153, "CREATEIC", 0, API_MISSING, 0 },
+    { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
     { G, 156, "CREATEDISCARDABLEBITMAP", 0, API_MISSING, 0 },
     { G, 163, "SETBITMAPDIMENSION", 0, API_MISSING, 0 },
     { G, 360, "CREATEPALETTE", 0, API_MISSING, 0 },
