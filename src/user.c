@@ -31,6 +31,7 @@ static u32 keyup_lp;
 static int keyup_pending, saw_real_keyup;
 static int npaints;
 int font_h = 13;
+static int scr_w = 320, scr_h = 200;
 static u16 modal_hwnd;                  /* the modal dialog running, or 0: other windows get no input */
 char opt_dump[40];
 int  opt_ready;
@@ -751,8 +752,12 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     w->hinst = c->hinst ? c->hinst : hinst;
     w->procoff = c->procoff; w->procseg = c->procseg;
     if (!pw) {
-        if (x == (int)(i16)0x8000) { x = 16; y = 12; }
-        if (wd == (int)(i16)0x8000) { wd = 288; h = 168; }
+        if (x == (int)(i16)0x8000) { x = scr_w >= 640 ? 0 : 16; y = 12; }
+        if (wd == (int)(i16)0x8000) {
+            /* VGA card layouts need the available width, not a 32px inset. */
+            wd = scr_w >= 640 ? scr_w - (x > 0 ? x : 0) : scr_w - 32;
+            h = scr_h - 32;
+        }
         if (wd < 40) wd = 40;
         if (h < 30) h = 30;
     }
@@ -772,8 +777,11 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
     if (w->cw <= 0 || w->ch <= 0) { w->used = 0; return 0; }
     w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
-                             x, y, wd, h, GR_RGB(170, 170, 170));
+                             x < 0 ? 0 : x, y < 0 ? 0 : y, wd, h, GR_RGB(170, 170, 170));
     if (!w->frame) { w->used = 0; return 0; }
+    /* Nano-X creation interprets any negative coordinate as auto-placement.
+     * Move the still-unmapped frame to preserve Win16 signed positions. */
+    if (x < 0 || y < 0) GrMoveWindow(w->frame, x, y);
     w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw, w->ch, 0, bg, 0);
     if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
@@ -1376,7 +1384,6 @@ u32 u_wsprintf(u16 ss, u16 ap)
 }
 
 /* ---------------------------------------------------------------- resources, icons, dialog boxes */
-static int scr_w = 320, scr_h = 200;
 static struct dlg_tmpl dtmpl;               /* one template is parsed at a time */
 static long dbx_num, dbx_den, dby_num, dby_den;
 #define DX(v) ((int)((long)(v) * dbx_num / dbx_den))

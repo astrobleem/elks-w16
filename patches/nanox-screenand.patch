@@ -1,0 +1,31 @@
+--- a/src/include/nano-X.h
++++ b/src/include/nano-X.h
+@@ -100,6 +100,7 @@
+ #define GR_MODE_DRAWMASK	0x00FF
+ #define GR_MODE_EXCLUDECHILDREN	0x0100		/* exclude children on clip*/
+ #define GR_MODE_EXCLUDEENDPOINT	0x0200		/* GrLine leaves out its end point (Windows LineTo)*/
++#define GR_MODE_HAVE_SCREENAND 0x2000 /* screen driver performs indexed AND */
+ #define GR_MODE_HAVE_READPIXEL 0x1000 /* bounded one-pixel ReadArea, failure value255 */
+ #define GR_MODE_HAVE_EXCLUDEENDPOINT 0x0400	/* set by a server that implements the flag above*/
+ 
+--- a/src/nanox/srvfunc.c
++++ b/src/nanox/srvfunc.c
+@@ -953,6 +953,9 @@
+ 
+ 	gcip->gcid = gc;
+ 	gcip->mode = gcp->mode;
++#if ELKS && defined(USE_VGA_XOR_CURSOR)
++	gcip->mode |= GR_MODE_HAVE_SCREENAND;
++#endif
+ #if ELKS && !MW_FEATURE_AREAS
+ 	gcip->mode |= GR_MODE_HAVE_READPIXEL;
+ #endif
+@@ -2329,7 +2332,7 @@
+ 
+ 	SERVER_LOCK();
+ 
+-	mode &= ~GR_MODE_HAVE_READPIXEL; /* query-only capability is never drawing state */
++	mode &= ~(GR_MODE_HAVE_READPIXEL|GR_MODE_HAVE_SCREENAND); /* query-only capability is never drawing state */
+ 	if (mode & GR_MODE_EXCLUDEENDPOINT)
+ 		mode |= GR_MODE_HAVE_EXCLUDEENDPOINT;	/* tell clients the flag is understood */
+ 	gcp = GsFindGC(gc);

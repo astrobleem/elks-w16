@@ -10,6 +10,8 @@ pre='''#include "w16.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+int opt_trace;
+void wlog(const char *fmt,...) {(void)fmt;}
 typedef unsigned char GR_PIXELVAL;
 typedef struct {unsigned gcid;int mode,region;} GR_GC_INFO;
 typedef struct {unsigned char r,g,b;} RGB;

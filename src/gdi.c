@@ -1091,23 +1091,38 @@ void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n)
 /* Negotiated visible native framebuffer readback; memory DCs are not accepted. */
 u32 g_GetPixel(u16 ss, u16 ap)
 {
-    struct dc *d;
-    i16 x,y;
+    struct dc *d = 0;
+    static u16 failures;
+    u16 why = 1;
+    i16 x=0,y=0;
     GR_GC_INFO gi;
     GR_PIXELVAL pixel = 255;
     GR_PALETTE *p = (GR_PALETTE *)w16_scratch;
-    if (ap > 0xfffa) return 0xffffffffUL;
+    memset(&gi,0,sizeof(gi));
+    if (ap > 0xfffa) goto failed;
     x=(i16)AW(2);y=(i16)AW(0);d=dc_get(AW(4));
+    why=2;
     if (!d || x<0 || y<0 || (d->w && (x>=d->w->cw || y>=d->w->ch)))
-        return 0xffffffffUL;
+        goto failed;
     memset(&gi,0,sizeof(gi));GrGetGCInfo(d->gc,&gi);
-    if (gi.gcid!=d->gc || gi.region || !(gi.mode & 0x1000)) return 0xffffffffUL;
+    why=3;
+    if (gi.gcid!=d->gc || gi.region || !(gi.mode & 0x1000)) goto failed;
     GrReadArea(d->wid,x,y,1,1,&pixel);
-    if (pixel>=16) return 0xffffffffUL;
+    why=4;
+    if (pixel>=16) goto failed;
     memset(p,0,sizeof(*p));GrGetSystemPalette(p);
-    if (p->count!=16) return 0xffffffffUL;
+    why=5;
+    if (p->count!=16) goto failed;
     return (u32)p->palette[pixel].r | ((u32)p->palette[pixel].g<<8) |
            ((u32)p->palette[pixel].b<<16);
+failed:
+    if (opt_trace && failures < 32) {
+        failures++;
+        wlog("w16: GetPixel refused reason=%u xy=%d,%d wid=%u client=%d,%d gc=%u mode=%04x region=%u pixel=%u\n",
+             why,x,y,d?(unsigned)d->wid:0,d&&d->w?d->w->cw:-1,d&&d->w?d->w->ch:-1,
+             (unsigned)gi.gcid,(unsigned)gi.mode,(unsigned)gi.region,(unsigned)pixel);
+    }
+    return 0xffffffffUL;
 }
 
 /* DC device origin in screen coordinates, including all ancestor clients.

@@ -62,11 +62,14 @@ u32 u_LoadBitmap(u16 ss,u16 ap)
 static int clip_axis(long *dst,long *src,long *n,long limit,long slimit){long q;if(*dst<0){q=-*dst;*dst=0;*src+=q;*n-=q;}if(*src<0){q=-*src;*src=0;*dst+=q;*n-=q;}if(*n>limit-*dst)*n=limit-*dst;if(*n>slimit-*src)*n=slimit-*src;return *n>0;}
 u32 g_BitBlt(u16 ss,u16 ap)
 {
- struct dc*d=dc_get(AW(18));int m=di(AW(8)),b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;
- if(!d||m<0||AL(0)!=0x00cc0020UL||w<=0||h<=0)return 0;b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
+ struct dc*d=dc_get(AW(18));int m=di(AW(8)),b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
+ if(!d||m<0||(rop!=0x00cc0020UL&&rop!=0x008800c6UL)||w<=0||h<=0)return 0;b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
  if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
  if(!clip_axis(&dx,&sx,&w,dw,s->w)||!clip_axis(&dy,&sy,&h,dh,s->h))return 1;
- GrGetGCInfo(d->gc,&old);GrSetGCMode(d->gc,GR_MODE_COPY);
+ GrGetGCInfo(d->gc,&old);
+ /* Query-only native screen-AND capability; old/Tandy backends refuse. */
+ if(rop==0x008800c6UL&&!(old.mode&0x2000))return 0;
+ GrSetGCMode(d->gc,rop==0x008800c6UL?GR_MODE_AND:GR_MODE_COPY);
  for(row=0;row<h;row++)for(col=0;col<w;col=end){
   u32 rgb;bit=bitmap_index(s,sx+col,sy+row);
   for(end=col+1;end<w&&bitmap_index(s,sx+end,sy+row)==bit;end++);

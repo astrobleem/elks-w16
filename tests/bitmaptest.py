@@ -24,6 +24,7 @@ static u16 args[10];
 #define AW(n) args[(n)/2]
 #define AL(n) ((u32)AW(n)|((u32)AW((n)+2)<<16))
 #define GR_MODE_COPY 0
+#define GR_MODE_AND 1
 #define MWROP_COPY 0
 #define GR_RGB(r,g,b) ((r)|((g)<<8)|((b)<<16))
 static u8 resource[20000],rams[16][16384],output[65536];static u16 length;
@@ -35,7 +36,10 @@ static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
 }
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[10000],pixdata[640*480],foreground=77;static int mode=3;
-static int checks;
+static int checks,indexed,capability;
+static int nearest(u32 c){int i,best=0;long closest=0x7fffffff;
+ for(i=0;i<16;i++){long r=(long)(c&255)-native_palette.palette[i].r,g=(long)((c>>8)&255)-native_palette.palette[i].g,b=(long)((c>>16)&255)-native_palette.palette[i].b,d=r*r+g*g+b*b;if(d<closest){closest=d;best=i;}}return best;
+}
 static struct dc*dc_get(u16 h){return h==9?&dest:0;}
 static int rgb_to_gr(u32 c){return c;}
 static void res_name(u16 a,u16 b,char*n,u16*i){n[0]=0;*i=1;}
@@ -53,11 +57,11 @@ static int GrNewPixmap(int w,int h,void*p){assert(!"unexpected native allocation
 static void GrDestroyWindow(int p){assert(!"unexpected native destruction");}
 static int GrNewGC(void){assert(!"unexpected GC allocation");return 0;}
 static void GrDestroyGC(int g){assert(!"unexpected GC destruction");}
-static void GrSetGCMode(int g,int m){mode=m;}
+static void GrSetGCMode(int g,int m){mode=m&~0x2000;}
 static void GrSetGCForeground(int g,int c){foreground=c;}
-static void GrGetGCInfo(int g,GR_GC_INFO*i){i->foreground=foreground;i->mode=mode;}
+static void GrGetGCInfo(int g,GR_GC_INFO*i){i->foreground=foreground;i->mode=mode|capability;}
 static void GrGetScreenInfo(GR_SCREEN_INFO*i){i->cols=i->rows=100;}
-static void GrPoint(int p,int g,int x,int y){assert(x>=0&&y>=0);if(p==3){assert(pixlive&&x<640&&y<480);pixdata[y*640+x]=foreground;}else{assert(p==1&&x<100&&y<100);surface[y*100+x]=foreground;}}
+static void GrPoint(int p,int g,int x,int y){assert(x>=0&&y>=0);if(p==3){assert(pixlive&&x<640&&y<480);pixdata[y*640+x]=foreground;}else{assert(p==1&&x<100&&y<100);surface[y*100+x]=indexed?(mode==GR_MODE_AND?(surface[y*100+x]&nearest(foreground)):nearest(foreground)):foreground;}}
 static void GrFillRect(int p,int g,int x,int y,int w,int h){int a,b;for(b=0;b<h;b++)for(a=0;a<w;a++)GrPoint(p,g,x+a,y+b);}
 static void GrCopyArea(int p,int g,int dx,int dy,int w,int h,int s,int sx,int sy,int op){
  int x,y;assert(p==1&&s==3&&pixlive&&op==0&&sx>=0&&sy>=0);
@@ -251,6 +255,48 @@ int main(void){
  d=dcnew();assert(bitmap_brushorg(d,1,2,&old)&&old==0);
  bitmap_shutdown();d=dcnew();assert(bitmap_brushorg(d,1,2,&old)&&old==0);
  }
+
+ /* Native AND combines palette indices, not RGB components. */
+ bitmap_shutdown();clean();indexed=1;capability=0x2000;mode=3;foreground=77;
+ for(k=0;k<16;k++){native_palette.palette[k].r=(k*43)%256;native_palette.palette[k].g=(k*67)%256;native_palette.palette[k].b=(k*109)%256;}
+ for(k=1;k<=4;k+=3){
+  int src,dst,remap;
+  for(remap=0;remap<2;remap++){
+   setup(16,16,k);
+   if(k==4){
+    for(n=0;n<16;n++){int pi=remap?15-n:n;resource[40+n*4]=native_palette.palette[pi].b;resource[41+n*4]=native_palette.palette[pi].g;resource[42+n*4]=native_palette.palette[pi].r;}
+    for(y=0;y<16;y++)for(x=0;x<16;x++){int at=104+(15-y)*8+x/2,shift=(x&1)?0:4;resource[at]=(resource[at]&~(15<<shift))|(x<<shift);}
+   }
+   b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+   for(src=0;src<16;src++)for(dst=0;dst<16;dst++){
+    u32 rgb=native_palette.palette[src].r|((u32)native_palette.palette[src].g<<8)|((u32)native_palette.palette[src].b<<16);
+    int sx=k==4?(remap?15-src:src):0;
+    dest.textcolor=dest.bkcolor=rgb;surface[0]=dst;
+    assert(blit(d,0,0,sx,0,1,1,0x008800c6));
+    assert(surface[0]==(u32)(src&dst)&&mode==3&&foreground==77);
+    if(k==1){
+     dest.bkcolor=0xffffff;dest.textcolor=rgb;surface[0]=dst;
+     assert(blit(d,0,0,2,0,1,1,0x008800c6));
+     assert(surface[0]==(u32)(src&dst)&&mode==3&&foreground==77);
+    }
+   }
+   for(n=0;n<10000;n++)surface[n]=n%16;
+   capability=0;assert(!blit(d,0,0,0,0,5,5,0x008800c6));
+   for(n=0;n<10000;n++)assert(surface[n]==(u32)(n%16));
+   assert(mode==3&&foreground==77);
+   capability=0x2000;assert(!blit(d,0,0,0,0,5,5,0x00660046));
+   for(n=0;n<10000;n++)assert(surface[n]==(u32)(n%16));
+   if(k==4){
+    assert(blit(d,-3,98,1,14,10,5,0x008800c6));
+    for(y=0;y<100;y++)for(x=0;x<100;x++){
+     u32 expected=(y*100+x)%16;
+     if(y>=98&&x<7)expected&=remap?15-(x+4):x+4;
+     assert(surface[y*100+x]==expected);
+    }
+   }
+  }
+ }
+ indexed=0;capability=0;
  bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
  return 0;
 }
