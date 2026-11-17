@@ -19,6 +19,7 @@ int main(void)
  struct poly_point clipped[]={{-3,-3},{4,-3},{4,4},{-3,4}};
  struct poly_point extreme[]={{-8191,-8191},{8191,-8191},{8191,8191},{-8191,8191}};
  struct poly_point reverse[6],line[]={{2,2},{8,8}};
+ struct poly_point shallow[]={{-8191,0},{8191,1}},steep[]={{0,-8191},{1,8191}};
  unsigned char saved[32][32];int x,y,i;
  clear();assert(draw(box,4,1,1));
  for(y=0;y<32;y++)for(x=0;x<32;x++){
@@ -35,6 +36,8 @@ int main(void)
  clear();assert(draw(clipped,4,1,1));assert(actual[0][0]==1&&actual[4][4]==2&&!actual[5][5]);
  clear();assert(draw(line,2,1,0));for(i=2;i<=8;i++)assert(actual[i][i]==2);
  clear();assert(draw(extreme,4,0,1));for(y=0;y<32;y++)for(x=0;x<32;x++)assert(actual[y][x]==1);
+ clear();assert(draw(shallow,2,1,0));for(i=1;i<32;i++)assert(actual[1][i]==2&&!actual[0][i]);
+ clear();assert(draw(steep,2,1,0));for(i=1;i<32;i++)assert(actual[i][1]==2&&!actual[i][0]);
  extreme[0].x=-8192;clear();assert(!draw(extreme,4,1,1));assert(!actual[0][0]);
  assert(!draw(box,1,1,1));assert(!draw(box,129,1,1));
  assert(!polygon_raster(box,4,2049,32,1,1,span,0));
