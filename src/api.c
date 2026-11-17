@@ -54,6 +54,7 @@ u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16
 u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
+u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_MoveWindow(u16,u16);
 u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
@@ -301,8 +302,8 @@ const struct api api_table[] = {
     { U,  16, "CLIPCURSOR", 0, API_MISSING, 0 },
     { U,  17, "GETCURSORPOS", 0, API_MISSING, 0 },
     { U,  45, "BRINGWINDOWTOTOP", 0, API_MISSING, 0 },
-    { U,  47, "ISWINDOW", 0, API_MISSING, 0 },
-    { U,  49, "ISWINDOWVISIBLE", 0, API_MISSING, 0 },
+    { U,  47, "IsWindow", 2, 0, H(u_IsWindow) },
+    { U,  49, "IsWindowVisible", 2, 0, H(u_IsWindowVisible) },
     { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
     { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
     { U,  61, "SCROLLWINDOW", 0, API_MISSING, 0 },

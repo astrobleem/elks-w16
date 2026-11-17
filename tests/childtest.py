@@ -67,7 +67,7 @@ void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','u_MoveWindow','u_ShowWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('win_get','u_IsWindow','u_IsWindowVisible','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','u_MoveWindow','u_ShowWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -82,6 +82,9 @@ int main(void){u16 id;int x,y;unsigned frame;
  wr16(0x1000,8,id);wr16(0x1000,6,0x400);wr16(0x1000,4,0x7192);wr32(0x1000,0,0x12345678);
  assert(u_SendMessage(0x1000,0)==0xface1234UL && senthw==id && sentm==0x400 && sentp==0x7192 && sentl==0x12345678);
  wr16(0x1000,8,0xffff);u_SendMessage(0x1000,0);assert(senthw==HWND_BASE);
+ wr16(0x1000,0,id);assert(u_IsWindow(0x1000,0));wins[1].visible=1;
+ assert(!u_IsWindowVisible(0x1000,0));wins[0].visible=1;assert(u_IsWindowVisible(0x1000,0));
+ wr16(0x1000,0,id+1);assert(!u_IsWindow(0x1000,0)&&!u_IsWindowVisible(0x1000,0));
  nx_focus=wins[2].client;assert(u_GetActiveWindow(0,0)==HWND_BASE);nx_focus=987;assert(!u_GetActiveWindow(0,0));
  wr16(0x1000,0,16);wr16(0x1000,2,0x2000);wr16(0x1000,4,id);
  u_GetWindowRect(0x1000,0);assert(rd16(0x2000,16)==11&&rd16(0x2000,18)==167);

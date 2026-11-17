@@ -58,6 +58,19 @@ struct wnd *win_get(u16 hwnd)
     return &wins[i];
 }
 
+u32 u_IsWindow(u16 ss,u16 ap) { return win_get(AW(0)) != 0; }
+
+u32 u_IsWindowVisible(u16 ss,u16 ap)
+{
+    struct wnd *w=win_get(AW(0)); int n=0;
+    while(w && n++<MAXWIN) {
+        if(!w->visible) return 0;
+        if(!w->parent) return 1;
+        w=win_get(w->parent);
+    }
+    return 0;
+}
+
 /* Child frame positions are relative to the parent's client, not the screen. */
 static void client_origin(struct wnd *w, int *x, int *y)
 {
