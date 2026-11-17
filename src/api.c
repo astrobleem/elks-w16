@@ -78,7 +78,7 @@ u32 u_SetClassWord(u16,u16);
 u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
-u32 u_MoveWindow(u16,u16);
+u32 u_MoveWindow(u16,u16),u_SetWindowPos(u16,u16);
 u32 u_ScrollWindow(u16,u16);
 u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
@@ -363,7 +363,7 @@ const struct api api_table[] = {
     { U, 165, "SETCARETPOS", 0, API_MISSING, 0 },
     { U, 166, "HIDECARET", 0, API_MISSING, 0 },
     { U, 167, "SHOWCARET", 0, API_MISSING, 0 },
-    { U, 232, "SETWINDOWPOS", 0, API_MISSING, 0 },
+    { U, 232, "SetWindowPos", 14, 0, H(u_SetWindowPos) },
     { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
     { U, 278, "GetDesktopHwnd", 0, 0, H(u_GetDesktopHwnd) },
     { U, 282, "SELECTPALETTE", 6, 0, H(u_SelectPalette) },

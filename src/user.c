@@ -1013,10 +1013,8 @@ u32 u_CreateWindow(u16 ss, u16 ap)
 
 /* MoveWindow(hwnd, x, y, width, height, repaint). Empty Win16 clients
  * retain a one-pixel Nano-X backing window which must stay unmapped. */
-u32 u_MoveWindow(u16 ss, u16 ap)
+static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
 {
-    u16 hwnd=AW(10), repaint=AW(0);
-    int x=(i16)AW(8), y=(i16)AW(6), wd=(i16)AW(4), h=(i16)AW(2);
     struct wnd *w=win_get(hwnd);
     int moved, resized, cw, ch;
     if(!w || wd<0 || h<0 || wd>32760 || h>32760) return 0;
@@ -1048,6 +1046,34 @@ u32 u_MoveWindow(u16 ss, u16 ap)
         win_invalidate_all(w,1);
         if(w->visible && w->invalid) win_send(w,WM_PAINT,0,0);
     }
+    return 1;
+}
+
+u32 u_MoveWindow(u16 ss,u16 ap)
+{
+    return move_window(AW(10),(i16)AW(8),(i16)AW(6),(i16)AW(4),(i16)AW(2),AW(0));
+}
+/* SetWindowPos(hwnd,insertAfter,x,y,cx,cy,flags). Screen top/bottom ordering
+ * is real Nano-X stacking; arbitrary sibling and topmost policies fail. */
+u32 u_SetWindowPos(u16 ss,u16 ap)
+{
+    u16 flags=AW(0),after=AW(10),hwnd=AW(12);
+    int x=(i16)AW(8),y=(i16)AW(6),width=(i16)AW(4),height=(i16)AW(2);
+    struct wnd*w=win_get(hwnd);
+    vlog("w16: SetWindowPos hwnd=%04x after=%04x xy=%d,%d size=%d,%d flags=%04x\n",hwnd,after,x,y,width,height,flags);
+    if(!w||(flags&~0x03df)||(!(flags&4)&&after!=0&&after!=1))return 0;
+    if(flags&2){x=w->x;y=w->y;}if(flags&1){width=w->w;height=w->h;}
+    if(!move_window(hwnd,x,y,width,height,!(flags&8)))return 0;
+    w=win_get(hwnd);if(!w)return 1;
+    if(!(flags&4)){if(after==0)GrRaiseWindow(w->frame);else GrLowerWindow(w->frame);}
+    if(flags&0x80){GrUnmapWindow(w->frame);w->visible=0;w->style&=~WS_VISIBLE;}
+    else if(flags&0x40){
+        if(w->cw&&w->ch)GrMapWindow(w->client);
+        if(w->w&&w->h)GrMapWindow(w->frame);
+        w->visible=1;w->style|=WS_VISIBLE;
+        if(!(flags&8))win_invalidate_all(w,1);
+    }
+    if(!(flags&0x10)&&w->visible){focus_hwnd=hwnd;GrSetFocus(w->client);}
     return 1;
 }
 

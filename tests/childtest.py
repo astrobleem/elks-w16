@@ -27,6 +27,7 @@ typedef unsigned GR_WINDOW_ID, GR_COLOR;
 #define GR_EVENT_MASK_BUTTON_UP 32
 #define GR_EVENT_MASK_MOUSE_POSITION 64
 #define CAPH 14
+#define DESKTOP_HWND 1
 #define MENUH 16\n#define SCROLLBAR_SIZE 16
 #define wlog(...) ((void)0)
 #define vlog(...) ((void)0)
@@ -60,6 +61,8 @@ void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
 void GrMapWindow(unsigned w){maps[w]++;}
 void GrUnmapWindow(unsigned w){unmaps[w]++;}
 void GrResizeWindow(unsigned w,int x,int y){assert(x>0&&y>0);sizes[w][0]=x;sizes[w][1]=y;}
+static unsigned raised,lowered;
+void GrRaiseWindow(unsigned w){raised=w;}void GrLowerWindow(unsigned w){lowered=w;}
 void GrSetFocus(unsigned w){(void)w;}
 
 static u16 senthw,sentm,sentp;static u32 sentl;
@@ -70,7 +73,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','u_IsWindow','u_IsWindowVisible','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','u_MoveWindow','u_ShowWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('win_get','u_IsWindow','u_IsWindowVisible','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','u_ShowWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -129,6 +132,14 @@ int main(void){u16 id;int x,y;unsigned frame;
    assert(z->cw==0&&z->ch==0&&unmaps[client]&&sizes[client][0]==1&&sizes[client][1]==1);
    assert(lastmsg==WM_SIZE&&!lastlp);
    wr16(0x1000,4,(u16)-1);assert(!u_MoveWindow(0x1000,0)&&z->w==2);
+   wr16(0x1000,0,0x15);wr16(0x1000,2,999);wr16(0x1000,4,999);
+   wr16(0x1000,6,40);wr16(0x1000,8,30);wr16(0x1000,10,0);wr16(0x1000,12,id);
+   assert(u_SetWindowPos(0x1000,0)&&z->x==30&&z->y==40&&z->w==2&&z->h==2);
+   wr16(0x1000,0,0x97);assert(u_SetWindowPos(0x1000,0)&&!z->visible);
+   wr16(0x1000,0,0x53);assert(u_SetWindowPos(0x1000,0)&&z->visible&&raised==z->frame);
+   wr16(0x1000,10,1);assert(u_SetWindowPos(0x1000,0)&&lowered==z->frame);
+   wr16(0x1000,10,0xffff);assert(!u_SetWindowPos(0x1000,0));
+   wr16(0x1000,0,0x20);assert(!u_SetWindowPos(0x1000,0));
    destroy_window(z);
    setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,0,0);id=u_CreateWindow(0x1000,0);
    assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
