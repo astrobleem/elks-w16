@@ -16,6 +16,9 @@ test: host samples
 	python3 tests/image_setup_test.py
 	python3 tests/dibtest.py
 	python3 tests/registeredtest.py
+	python3 tests/recttest.py
+	python3 tests/childtest.py
+	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py
 	python3 tests/devicecapstest.py
 	python3 tests/brushorgtest.py

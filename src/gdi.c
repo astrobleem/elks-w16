@@ -1077,3 +1077,13 @@ u32 g_SetPixel(u16 ss,u16 ap)
  }
  gs_mode(GS(d),GR_MODE_COPY);gs_fg(GS(d),rgb_to_gr(best));GrPoint(d->wid,d->gc,x,y);return best;
 }
+
+/* DrawText supplies explicit top-left coordinates independent of TextAlign. */
+void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n)
+{
+    gs_mode(GS(d), GR_MODE_COPY);
+    gs_fg(GS(d), rgb_to_gr(d->textcolor));
+    gs_bg(GS(d), rgb_to_gr(d->bkcolor));
+    gs_usebg(GS(d), d->bkmode == OPAQUE);
+    GrText(d->wid, d->gc, x, y, text, n, GR_TFASCII | GR_TFTOP);
+}

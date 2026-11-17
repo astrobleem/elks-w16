@@ -26,7 +26,7 @@ u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
 u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16);
-u32 u_RegisterWindowMessage(u16,u16);
+u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
@@ -82,7 +82,7 @@ const struct api api_table[] = {
     { U,79,"IntersectRect",12,0,H(u_IntersectRect) },
     { U,82,"InvertRect",0,API_MISSING,0 },
     { U,83,"FrameRect",0,API_MISSING,0 },
-    { U,85,"DrawText",0,API_MISSING,0 },
+    { U,85,"DrawText",14,0,H(u_DrawText) },
     { U,96,"CheckRadioButton",0,API_MISSING,0 },
     { U,97,"CheckDlgButton",0,API_MISSING,0 },
     { U,98,"IsDlgButtonChecked",0,API_MISSING,0 },

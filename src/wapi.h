@@ -158,6 +158,7 @@ void      gdi_fg(GR_COLOR c);           /* scratch GC colour, sent only when it 
 void      gdi_usebg(int on);
 void      gdi_text_size(const char *s, int n, GR_SIZE *w, GR_SIZE *h, GR_SIZE *base);  /* no round trip */
 int       gdi_draw_icon(GR_WINDOW_ID wid, int x, int y, const u8 *dib, u16 len);
+void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n);
 extern GR_GC_ID gdi_gc;     /* scratch GC for USER drawing */
 
 u32       gdi_sys_color(u16 idx);
