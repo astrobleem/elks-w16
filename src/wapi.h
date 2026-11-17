@@ -80,7 +80,7 @@
 #define R2_MERGEPEN     15
 #define R2_WHITE        16
 
-#define MAXWIN   24
+#define MAXWIN   32
 #define MAXCLASS 8
 #define MAXDC    6
 
