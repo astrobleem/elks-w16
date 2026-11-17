@@ -12,7 +12,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-struct memory_dc {u16 bitmap,pen,brush,font;u8 used,stretchmode,rop2;i16 brushx,brushy;u32 textcolor,bkcolor;};
+struct memory_dc {u16 bitmap,pen,brush,font;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
 #define MEMORY_SAVE_DEPTH 4
 static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
@@ -144,6 +144,49 @@ int bitmap_patblt(u16 h,i16 x,i16 y,i16 w,i16 height,u32 rop,u32 color,u16 style
   if(rop==0x00550009UL)out=bitmap_index(b,col,row)^mask;
   else if(rop==0x005a0049UL)out=bitmap_index(b,col,row)^index;
   bitmap_put(b,col,row,out);
+ }
+ return 1;
+}
+static void memory_rop_pixel(struct bitmap*b,int x,int y,u8 source,u8 rop)
+{
+ u8 dst,result=0,bit,table=rop-1;
+ if(x<0||y<0||x>=b->w||y>=b->h)return;
+ dst=bitmap_index(b,x,y);
+ for(bit=0;bit<(b->bpp==1?1:4);bit++)
+  result|=((table>>((((source>>bit)&1)<<1)|((dst>>bit)&1)))&1)<<bit;
+ bitmap_put(b,x,y,result);
+}
+u32 bitmap_moveto(u16 h,i16 x,i16 y)
+{
+ int m=di(h);u32 old;if(m<0)return 0;
+ old=(u16)memory[m].curx|((u32)(u16)memory[m].cury<<16);
+ memory[m].curx=x;memory[m].cury=y;return old;
+}
+int bitmap_lineto(u16 h,i16 x,i16 y,u32 color,u16 style,u16 width,int nullpen)
+{
+ int m=di(h),i;long xx,yy,dx,dy,err,e2,sx,sy;u8 index;struct bitmap*b;
+ if(m<0||(i=bi(memory[m].bitmap))<0)return 0;
+ if(!nullpen&&(style!=0||width>1))return 0;
+ b=&bitmaps[i];index=bitmap_nearest(b,color);
+ xx=memory[m].curx;yy=memory[m].cury;dx=(long)x-xx;dy=(long)y-yy;
+ sx=dx<0?-1:1;sy=dy<0?-1:1;if(dx<0)dx=-dx;if(dy>0)dy=-dy;err=dx+dy;
+ if(!nullpen)while(xx!=x||yy!=y){
+  memory_rop_pixel(b,(int)xx,(int)yy,index,memory[m].rop2);
+  e2=2*err;if(e2>=dy){err+=dy;xx+=sx;}if(e2<=dx){err+=dx;yy+=sy;}
+ }
+ memory[m].curx=x;memory[m].cury=y;return 1;
+}
+int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)
+{
+ int m=di(h),i,x,y,x0,y0,x1,y1;u8 pi,bindex;struct bitmap*b;
+ if(m<0||(i=bi(memory[m].bitmap))<0||r<=l||bot<=t)return 0;
+ if((!np&&(ps!=0||pw>1))||(!nb&&bs!=0))return 0;
+ b=&bitmaps[i];pi=bitmap_nearest(b,pen);bindex=bitmap_nearest(b,brush);
+ x0=l<0?0:l;y0=t<0?0:t;x1=(long)r>b->w?b->w:r;y1=(long)bot>b->h?b->h:bot;
+ for(y=y0;y<y1;y++)for(x=x0;x<x1;x++){
+  int edge=x==l||x==(long)r-1||y==t||y==(long)bot-1;
+  if(!np&&edge)memory_rop_pixel(b,x,y,pi,memory[m].rop2);
+  else if(!nb)memory_rop_pixel(b,x,y,bindex,memory[m].rop2);
  }
  return 1;
 }

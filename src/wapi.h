@@ -211,6 +211,9 @@ void      paint_done(struct wnd *w);
 /* Resource bitmap/source-only memory DC support. */
 void registered_reset(void);
 void bitmap_shutdown(void);
+u32 bitmap_moveto(u16 h,i16 x,i16 y);
+int bitmap_lineto(u16 h,i16 x,i16 y,u32 color,u16 style,u16 width,int nullpen);
+int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb);
 u16 bitmap_object(u16 h,u16 type,u16 object);
 int bitmap_object_used(u16 object);
 int bitmap_patblt(u16 h,i16 x,i16 y,i16 w,i16 height,u32 rop,u32 color,u16 style,int nullbrush);

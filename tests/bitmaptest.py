@@ -518,6 +518,36 @@ int main(int argc,char**argv){
  assert(bitmap_restoredc(d,-1));assert(bitmap_object(d,2,0)==0x444&&!bitmap_object_used(0x448));
  assert(bitmap_deletedc(d));assert(!bitmap_object_used(0x444)&&!bitmap_object_used(0x446));
  bitmap_shutdown();clean();win.cw=win.ch=100;
+
+ /* Memory line endpoints, all binary ROP2 truth tables and rectangle corners. */
+ setup(1,1,1);
+ for(k=0;k<16;k++){native_palette.palette[k].r=k*17;native_palette.palette[k].g=k*17;native_palette.palette[k].b=k*17;}
+ b=compatible(9,32,32);d=dcnew();bitmap_select(d,b);
+ for(k=1;k<=16;k++)for(x=0;x<16;x++)for(y=0;y<16;y++){
+  int z,expect=0;bitmap_put(&bitmaps[bi(b)],0,0,y);bitmap_rop2(d,k);bitmap_moveto(d,0,0);
+  assert(bitmap_lineto(d,1,0,x*0x111111UL,0,1,0));
+  for(z=0;z<4;z++)expect|=(((k-1)>>((((x>>z)&1)<<1)|((y>>z)&1)))&1)<<z;
+  assert(bitmap_index(&bitmaps[bi(b)],0,0)==expect);
+ }
+ bitmap_rop2(d,13);assert(bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0));
+ bitmap_moveto(d,0,0);assert(bitmap_lineto(d,5,5,0xffffff,0,1,0));
+ for(k=0;k<5;k++)assert(bitmap_index(&bitmaps[bi(b)],k,k)==15);
+ assert(!bitmap_index(&bitmaps[bi(b)],5,5));
+ assert(bitmap_moveto(d,-5,10)==0x00050005UL);assert(bitmap_lineto(d,5,10,0xffffff,0,1,0));
+ for(k=0;k<5;k++)assert(bitmap_index(&bitmaps[bi(b)],k,10)==15);assert(!bitmap_index(&bitmaps[bi(b)],5,10));
+ assert(!bitmap_lineto(d,20,20,0xffffff,1,1,0)&&memory[di(d)].curx==5);
+ assert(bitmap_lineto(d,20,20,0,5,1,1));assert(memory[di(d)].curx==20);
+ assert(bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0));bitmap_rop2(d,7);
+ assert(bitmap_rectangle(d,1,1,5,5,0xffffff,0,1,0,0x555555,0,0));
+ for(y=0;y<6;y++)for(x=0;x<6;x++){
+  int expect=x<1||x>=5||y<1||y>=5?0:x==1||x==4||y==1||y==4?15:5;
+  assert(bitmap_index(&bitmaps[bi(b)],x,y)==expect);
+ }
+ assert(bitmap_rectangle(d,-8,-8,-1,-1,0,0,1,0,0,0,0));
+ assert(!bitmap_rectangle(d,1,1,5,5,0,1,1,0,0,0,0));
+ assert(bitmap_index(&bitmaps[bi(b)],1,1)==15);
+ assert(bitmap_savedc(d));bitmap_moveto(d,29,30);assert(bitmap_restoredc(d,-1));assert(memory[di(d)].curx==20);
+ bitmap_shutdown();clean();
  /* Colored one-bit resources preserve RGB instead of text/background expansion. */
  for(k=0;k<4;k++){
   u32 first,second;

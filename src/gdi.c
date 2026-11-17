@@ -541,6 +541,11 @@ u32 g_Rectangle(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(8));
     GR_COLOR pc, bc;
     int pen, bi;
+    if(!d){
+        struct gobj*p=obj_get(bitmap_object(AW(8),OBJ_PEN,0)),*br=obj_get(bitmap_object(AW(8),OBJ_BRUSH,0));
+        if(!p||!br)return 0;
+        return bitmap_rectangle(AW(8),l,t,r,b,p->color,p->style,p->width,p->null,br->color,br->style,br->null);
+    }
     if (!d || !gdi_map_rect(d,&l,&t,&r,&b) || r <= l || b <= t)
         return 0;
     pen = pen_of(d, &pc);
@@ -588,7 +593,7 @@ u32 g_MoveTo(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(4));
     u32 prev;
     if (!d)
-        return 0;
+        return bitmap_moveto(AW(4),(i16)AW(2),(i16)AW(0));
     prev = ((u32)(u16)d->cury << 16) | (u16)d->curx;
     d->curx = (i16)AW(2); d->cury = (i16)AW(0);
     return prev;
@@ -603,7 +608,10 @@ u32 g_LineTo(u16 ss, u16 ap)
 {
     int y=(i16)AW(0),x=(i16)AW(2),tx=x,ty=y,fx,fy,k;
     struct dc*d=dc_get(AW(4));GR_COLOR c;
-    if(!d)return 0;
+    if(!d){
+        struct gobj*p=obj_get(bitmap_object(AW(4),OBJ_PEN,0));if(!p)return 0;
+        return bitmap_lineto(AW(4),x,y,p->color,p->style,p->width,p->null);
+    }
     fx=d->curx;fy=d->cury;
     if(!gdi_map_point(d,&fx,&fy)||!gdi_map_point(d,&tx,&ty))return 0;
     if((fx!=tx||fy!=ty)&&pen_of(d,&c)&&(k=set_rop(d,c))!=0){
