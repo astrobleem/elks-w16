@@ -570,6 +570,30 @@ u32 g_LineTo(u16 ss, u16 ap)
     return 1;
 }
 
+/* Display InvertRect: clip signed, exclusive Win16 bounds before computing
+ * dimensions so a far offscreen RECT cannot wrap in 16-bit arithmetic. */
+u32 u_InvertRect(u16 ss,u16 ap)
+{
+    struct dc *d; u16 off,seg; int l,t,r,b,width,height;
+    GR_SCREEN_INFO si;
+    if(ap>0xfffau) return 0;
+    off=AW(0);seg=AW(2);d=dc_get(AW(4));
+    if(!d || (!seg&&!off) || off>0xfff8u || ((u32)seg<<4)+off>0xffff8UL) return 0;
+    if(d->w){width=d->w->cw;height=d->w->ch;}
+    else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
+    l=(i16)rd16(seg,off);t=(i16)rd16(seg,off+2);
+    r=(i16)rd16(seg,off+4);b=(i16)rd16(seg,off+6);
+    if(l<0)l=0;
+    if(t<0)t=0;
+    if(r>width)r=width;
+    if(b>height)b=height;
+    if(r>l&&b>t){
+        gs_mode(GS(d),GR_MODE_INVERT); gs_fg(GS(d),GR_RGB(255,255,255));
+        GrFillRect(d->wid,d->gc,l,t,r-l,b-t);
+    }
+    return 1;
+}
+
 /* FillRect(hdc, lpRect, hbr): the brush's colour, regardless of the raster op */
 u32 u_FillRect(u16 ss, u16 ap)
 {

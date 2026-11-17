@@ -25,6 +25,7 @@ test: host samples
 	python3 tests/displayictest.py
 	python3 tests/ansistrtest.py
 	python3 tests/recttest.py
+	python3 tests/invertrecttest.py
 	python3 tests/globaltest.py
 	python3 tests/scrolltest.py
 	python3 tests/childtest.py

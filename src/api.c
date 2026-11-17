@@ -18,6 +18,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #else
 #define H(f) f
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
+u32 u_InvertRect(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
@@ -98,7 +99,7 @@ const struct api api_table[] = {
     { U,74,"CopyRect",8,0,H(u_CopyRect) },
     { U,76,"PtInRect",8,0,H(u_PtInRect) },
     { U,79,"IntersectRect",12,0,H(u_IntersectRect) },
-    { U,82,"InvertRect",0,API_MISSING,0 },
+    { U,82,"InvertRect",6,0,H(u_InvertRect) },
     { U,83,"FrameRect",0,API_MISSING,0 },
     { U,85,"DrawText",14,0,H(u_DrawText) },
     { U,96,"CheckRadioButton",8,0,H(u_CheckRadioButton) },
