@@ -19,7 +19,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) f
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
-u32 u_GetMenuString(u16,u16),u_ModifyMenu(u16,u16);
+u32 u_GetMenuString(u16,u16),u_ModifyMenu(u16,u16),u_GetMenuState(u16,u16);
 u32 g_EnumFonts(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
@@ -353,7 +353,7 @@ const struct api api_table[] = {
     { U, 166, "HIDECARET", 0, API_MISSING, 0 },
     { U, 167, "SHOWCARET", 0, API_MISSING, 0 },
     { U, 232, "SETWINDOWPOS", 0, API_MISSING, 0 },
-    { U, 250, "GETMENUSTATE", 0, API_MISSING, 0 },
+    { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
     { U, 278, "GETDESKTOPHWND", 0, API_MISSING, 0 },
     { U, 282, "SELECTPALETTE", 0, API_MISSING, 0 },
     { U, 283, "REALIZEPALETTE", 0, API_MISSING, 0 },

@@ -695,6 +695,23 @@ static struct menu_item *find_item(u16 h, u16 idpos, u16 flags, struct menu **pm
     return 0;
 }
 
+/* GetMenuState(hMenu,idOrPosition,flags). Popup count occupies high byte. */
+u32 u_GetMenuState(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it=find_item(AW(4),AW(2),AW(0),&mn);
+    int k,n=0,index;
+    u16 state;
+    if(!it) return 0xffff;
+    state=it->flags & ~MF_END;
+    if(it->flags & MF_POPUP) {
+        index=it-mn->t.it;
+        for(k=0;k<mn->t.n;k++) if(mn->t.it[k].parent==index) n++;
+        state=(state & 0xff) | ((u16)n<<8);
+    }
+    return state;
+}
+
 /* GetMenuString(hMenu,idOrPosition,out,maxChars,flags). Preserve the raw
  * ampersand mnemonic/tab accelerator bytes from the real resource. */
 u32 u_GetMenuString(u16 ss,u16 ap)
