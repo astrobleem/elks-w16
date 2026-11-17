@@ -2670,6 +2670,9 @@ void ready_write(void)
 /* counts of everything a program can leak, and how far w16's own heap has grown */
 void w16_census(const char *when)
 {
+#ifdef W16_COMPACT_LOG
+    (void)when;
+#else
     extern void lheap_census(u16 *used, u16 *blocks, u16 *size);
     extern void rsrc_census(u16 *n, u32 *bytes);
     u16 nw = 0, nc = 0, nt = 0, ndc, nobj, lu, lb, ls, nr, nm, i;
@@ -2698,6 +2701,7 @@ void w16_census(const char *when)
              "%lu %lu %lu %lu %lu %lu\n", (unsigned long)tk_n, (unsigned long)tk_sum, (unsigned long)tk_max,
              (unsigned long)tk_hist[0], (unsigned long)tk_hist[1], (unsigned long)tk_hist[2],
              (unsigned long)tk_hist[3], (unsigned long)tk_hist[4], (unsigned long)tk_hist[5]);
+#endif
 }
 
 int user_init(void)
