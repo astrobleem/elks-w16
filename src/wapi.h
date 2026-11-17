@@ -80,7 +80,7 @@
 #define R2_MERGEPEN     15
 #define R2_WHITE        16
 
-#define MAXWIN   16
+#define MAXWIN   24
 #define MAXCLASS 8
 #define MAXDC    6
 
@@ -88,6 +88,7 @@
 #define CTL_NONE    0
 #define CTL_STATIC  1
 #define CTL_BUTTON  2
+#define CTL_EDIT    4
 #define CTL_OTHER   3           /* class not provided: drawn as a placeholder */
 
 struct wclass {
@@ -112,6 +113,7 @@ struct wnd {
     u16  parent;                /* controls: the dialog */
     u8   ctl, pressed, isdialog, ended, checked;
     u16  id, result, defid;
+    u8 edit_cursor, edit_anchor, edit_limit;
     u8  *icon;                  /* SS_ICON: DIB of the chosen icon image (malloc) */
     u16  iconlen;
     u16  hmenu;                 /* menu bar, or 0 */

@@ -463,6 +463,8 @@ static void toggle_button(struct wnd *w)
 }
 
 static void paint_control(struct wnd *w);
+static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp);
+static struct wnd *find_ctl(u16 hdlg,u16 id);
 
 static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x, int y, int rx, int ry)
 {
@@ -576,6 +578,10 @@ static void translate_event(GR_EVENT *ev)
         }
         if (!w || blocked(w))
             break;
+        if (w->ctl==CTL_EDIT && down) {
+            focus_hwnd=w->hwnd;GrSetFocus(w->frame);
+            w->edit_cursor=(u8)strlen(w->title);w->edit_anchor=w->edit_cursor;paint_control(w);
+        }
         if (w->ctl) {                   /* built-in control: push buttons notify their dialog */
             if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) != BS_GROUPBOX && (ev->button.changebuttons & MWBUTTON_L)) {
                 if (down) {
@@ -1315,7 +1321,7 @@ u32 u_SendMessage(u16 ss,u16 ap)
         return 0;
     }
     w=win_get(hwnd);
-    return w?win_send(w,msg,wp,lp):0;
+    return w?(w->ctl?control_message(w,msg,wp,lp):win_send(w,msg,wp,lp)):0;
 }
 
 /* PostMessage(hWnd, wMsg, wParam, lParam) */
@@ -1773,6 +1779,14 @@ static void paint_control(struct wnd *w)
         black = dark;
     gdi_usebg(0);
     switch (w->ctl) {
+    case CTL_EDIT:
+        gdi_fill(f,white,0,0,w->w,w->h);gdi_fg(black);GrRect(f,gc,0,0,w->w,w->h);
+        if(w->title[0]) GrText(f,gc,2,1,w->title,strlen(w->title),GR_TFASCII|GR_TFTOP);
+        if(focus_hwnd==w->hwnd){
+            gdi_text_size(w->title,w->edit_cursor,&tw,&th,&tb);
+            if(tw+2<w->w) GrLine(f,gc,tw+2,2,tw+2,w->h-3);
+        }
+        break;
     case CTL_STATIC:
         gdi_fill(f, white, 0, 0, w->w, w->h);
         if (kind == 3) {                        /* SS_ICON: drawn at the control's top-left */
@@ -1883,13 +1897,15 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
     w->hinst = d->hinst;
     w->id = it->id;
     w->style = it->style;
-    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : CTL_OTHER;
+    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : it->cls == 0x81 ? CTL_EDIT : CTL_OTHER;
     if (w->ctl == CTL_OTHER)
         wlog("w16: dialog control %u of class %s is not provided; drawn as an empty box\n", it->id,
              it->cls >= 0x80 && it->cls <= 0x85 ? names[it->cls - 0x80] : it->clsname);
     if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) > BS_RADIOBUTTON && BUTTON_TYPE(w) != BS_GROUPBOX)
         wlog("w16: button control %u style %lx drawn as a push button\n", it->id, (unsigned long)(it->style & 0xF));
     strncpy(w->title, text ? text : it->text, sizeof(w->title) - 1);
+    w->edit_limit=sizeof(w->title)-1;
+    w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
     w->x = DX(it->x); w->y = DY(it->y); w->w = DX(it->cx); w->h = DY(it->cy);
     if (w->w < 1) w->w = 1;
     if (w->h < 1) w->h = 1;
@@ -1964,6 +1980,48 @@ static void dlg_command(struct wnd *d, u16 id)
         return;
     }
     win_send(d, WM_COMMAND, id, ((u32)BN_CLICKED << 16) | (c ? c->hwnd : 0));
+}
+
+/* Single-line EDIT semantics for filename entry. Offsets remain inside the
+ * fixed control-owned string and all far destination writes are bounded. */
+static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
+{
+    u16 len=(u16)strlen(w->title),a,b,n,off=(u16)lp,seg=(u16)(lp>>16);
+    if(msg==0x000e) return len; /* WM_GETTEXTLENGTH */
+    if(msg==0x000d){ /* WM_GETTEXT */
+        if(!wp || (!off&&!seg) || (u32)off+wp>65536UL || ((u32)seg<<4)+off+wp>0x100000UL)return 0;
+        n=len;if(n>=wp)n=wp-1;fcopy_out(seg,off,w->title,n);wr8(seg,off+n,0);return n;
+    }
+    if(msg==0x000c){ /* WM_SETTEXT */
+        if(!seg || (u32)off+sizeof(w->title)>65536UL || ((u32)seg<<4)+off+sizeof(w->title)>0x100000UL)return 0;
+        fstrncpy_in(w->title,seg,off,sizeof(w->title));w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
+        if(w->visible)paint_control(w);
+        return 1;
+    }
+    if(w->ctl!=CTL_EDIT)return 0;
+    if(msg==0x0400)return (u16)w->edit_anchor|((u32)w->edit_cursor<<16); /* EM_GETSEL */
+    if(msg==0x0401){a=(u16)lp;b=(u16)(lp>>16); /* EM_SETSEL */
+        if(a==0xffff)a=b=w->edit_cursor;
+        w->edit_anchor=a>len?len:a;w->edit_cursor=b>len?len:b;return 0;}
+    if(msg==0x0415){w->edit_limit=wp&&wp<sizeof(w->title)?wp:sizeof(w->title)-1;return 0;}
+    if(msg==WM_KEYDOWN){
+        if(wp==0x24)w->edit_cursor=0;
+        else if(wp==0x23)w->edit_cursor=len;
+        else if(wp==0x25&&w->edit_cursor)w->edit_cursor--;
+        else if(wp==0x27&&w->edit_cursor<len)w->edit_cursor++;
+        else if(wp==0x2e){if(w->edit_anchor==w->edit_cursor){if(w->edit_cursor==len)return 0;w->edit_cursor++;}msg=WM_CHAR;wp=8;}
+        else return 0;
+        if(msg==WM_KEYDOWN){if(!(key_mods&MWKMOD_SHIFT))w->edit_anchor=w->edit_cursor;paint_control(w);return 1;}
+    }
+    if(msg!=WM_CHAR || (wp!=8 && (wp<32||wp>255)))return 0;
+    a=w->edit_anchor;b=w->edit_cursor;if(a>b){n=a;a=b;b=n;}
+    if(wp==8&&a==b&&a)a--;
+    if(a==b&&wp!=8&&len>=w->edit_limit)return 0;
+    memmove(w->title+a,w->title+b,len-b+1);len-=b-a;
+    if(wp!=8){memmove(w->title+a+1,w->title+a,len-a+1);w->title[a++]=(char)wp;}
+    w->edit_anchor=w->edit_cursor=a;paint_control(w);
+    {struct wnd *d=win_get(w->parent);if(d)win_send(d,WM_COMMAND,w->id,((u32)0x0300<<16)|w->hwnd);}
+    return 1;
 }
 
 static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0);
@@ -2132,12 +2190,13 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
          W, H, x, y, d->defid);
 
     r = win_send(d, WM_INITDIALOG, hfocus, 0);
-    (void)r;
+    if(r && hfocus) focus_hwnd=hfocus;
     prev_modal = modal_hwnd;
     modal_hwnd = d->hwnd;
     GrMapWindow(d->client);
     GrMapWindow(d->frame);
-    GrSetFocus(d->client);
+    w=win_get(focus_hwnd);
+    GrSetFocus(w&&w->parent==d->hwnd?w->frame:d->client);
     d->visible = 1;
 
     while (!d->ended) {
@@ -2157,6 +2216,17 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
         if (w == d || (w->ctl && w->parent == d->hwnd)) {
             switch (m.msg) {
             case WM_KEYDOWN:                    /* the dialog manager's keyboard interface */
+                if(m.wp==9){
+                    u16 start=focus_hwnd?((focus_hwnd-HWND_BASE)/4):0,j;
+                    for(j=1;j<=MAXWIN;j++){struct wnd *c=&wins[(start+((key_mods&MWKMOD_SHIFT)?MAXWIN-j:j))%MAXWIN];
+                        if(c->used&&c->parent==d->hwnd&&c->visible&&(c->style&WS_TABSTOP)&&!(c->style&WS_DISABLED)){
+                            focus_hwnd=c->hwnd;GrSetFocus(c->frame);paint_control(c);break;}}
+                    break;
+                }
+                {struct wnd *e=win_get(focus_hwnd);
+                 if(e&&e->parent==d->hwnd&&e->ctl==CTL_EDIT&&m.wp!=13&&m.wp!=27&&!(key_mods&MWKMOD_ALT)){
+                    if(m.ch)control_message(e,WM_CHAR,m.ch,0);else control_message(e,WM_KEYDOWN,m.wp,0);break;}}
+
                 if (m.wp == 0x0D)
                     dlg_command(d, d->defid);
                 else if (m.wp == 0x1B)
@@ -2168,6 +2238,8 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
                 }
                 break;
             case WM_CHAR:
+                {struct wnd *e=win_get(focus_hwnd);if(e&&e->parent==d->hwnd)control_message(e,WM_CHAR,m.wp,0);}
+                break;
             case WM_KEYUP:
                 break;
             case WM_COMMAND:                    /* a button: through dlg_command, which also ends message boxes */
@@ -2315,6 +2387,7 @@ u32 u_SetDlgItemText(u16 ss, u16 ap)
         return 0;
     }
     fstrncpy_in(c->title, seg, off, sizeof(c->title));
+    c->edit_cursor=c->edit_anchor=(u8)strlen(c->title);
     vlog("w16: SetDlgItemText(%u, \"%s\")\n", id, c->title);
     if (c->visible)
         paint_control(c);
@@ -2497,4 +2570,16 @@ void user_shutdown(void)
         vlog("w16: destroyed %d window(s) the program left open\n", n);
     gdi_shutdown();
     GrClose();
+}
+
+/* GetDlgItemText(hDlg,id,out,max) and SendDlgItemMessage(hDlg,id,msg,wp,lp). */
+u32 u_GetDlgItemText(u16 ss,u16 ap)
+{
+    struct wnd *c=find_ctl(AW(8),AW(6));
+    return c?control_message(c,0x000d,AW(0),((u32)AW(4)<<16)|AW(2)):0;
+}
+u32 u_SendDlgItemMessage(u16 ss,u16 ap)
+{
+    struct wnd *c=find_ctl(AW(10),AW(8));
+    return c?control_message(c,AW(6),AW(4),AL(0)):0;
 }
