@@ -201,6 +201,11 @@ u32 bitmap_setpixel(u16 h,i16 x,i16 y,u32 rgb)
  if(m<0||(i=bi(memory[m].bitmap))<0||x<0||y<0||x>=bitmaps[i].w||y>=bitmaps[i].h||(rgb&0xff000000UL))return 0xffffffffUL;
  index=bitmap_nearest(&bitmaps[i],rgb);bitmap_put(&bitmaps[i],x,y,index);return bitmap_rgb(&bitmaps[i],index);
 }
+u32 bitmap_getcolor(u16 h,int bk)
+{
+ int m=di(h);if(m<0)return 0xffffffffUL;
+ return bk?memory[m].bkcolor:memory[m].textcolor;
+}
 u32 bitmap_setcolor(u16 h,u32 rgb,int bk)
 {
  int m=di(h);u32 old;if(m<0||(rgb&0xff000000UL))return 0xffffffffUL;

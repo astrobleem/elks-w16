@@ -45,6 +45,7 @@ u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
 u32 g_GetBitmapBits(u16,u16),g_SetBitmapBits(u16,u16);
 u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16),g_PtVisible(u16,u16),g_LineDDA(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
+u32 g_GetBkColor(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
@@ -264,7 +265,7 @@ const struct api api_table[] = {
     { G, 154, "GetNearestColor",   6, 0, H(g_GetNearestColor) },
     { G, 346, "SetTextAlign",      4, 0, H(g_SetTextAlign) },
     { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
-    { G, 75, "GetBkColor", 0, API_MISSING, 0 },
+    { G, 75, "GetBkColor", 2, 0, H(g_GetBkColor) },
     { G,97,"GetWindowOrg",2,0,H(g_GetWindowOrg) },
     { K,97,"GetTempFileName",12,0,H(k_GetTempFileName) },
     { K, 164, "GlobalLRUNewest", 2, 0, H(k_GlobalLRUNewest) },

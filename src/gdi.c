@@ -427,6 +427,12 @@ u32 g_SetTextColor(u16 ss, u16 ap)
     return prev;
 }
 
+u32 g_GetBkColor(u16 ss,u16 ap)
+{
+    struct dc *d=dc_get(AW(0));
+    return d?d->bkcolor:bitmap_getcolor(AW(0),1);
+}
+
 u32 g_SetBkColor(u16 ss, u16 ap)
 {
     struct dc *d = dc_get(AW(4));
