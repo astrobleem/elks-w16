@@ -72,6 +72,11 @@ void seg_free(u16 seg);
 int files_directory(const char *input,char *out,int change);
 void files_directory_label(char *out);
 
+int palette_valid(u16 h);
+int palette_delete(u16 h);
+void palette_shutdown(void);
+u16 palette_nearest(u16 h,u32 rgb,const u32 *device,u16 count);
+
 /* ---------------------------------------------------------------- logging */
 extern int opt_verbose, opt_trace, opt_debugport;
 void wlog(const char *fmt, ...);        /* stderr (and port 0xE9 with -e) */

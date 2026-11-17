@@ -129,7 +129,7 @@ struct dc {
     struct wnd *w;
     GR_WINDOW_ID wid;
     GR_GC_ID gc;
-    u16  pen, brush, font;
+    u16  pen, brush, font, palette;
     u32  textcolor, bkcolor;
     u16  bkmode, textalign;
     u8   rop2, stretchmode;

@@ -12,6 +12,7 @@ code='''#include "w16.h"
 #include <string.h>
 #include <stdio.h>
 #define MAXDC 6
+#define HSTOCK 0x300
 #define HDC_BASE 0x200
 #define HOBJ_BASE 0x400
 #define DC_SAVE_DEPTH 4
@@ -39,17 +40,25 @@ struct gobj*obj_get(u16 h){return h==0x400?&object:0;}
 int bmp_index(u16 h){return h==0x900?0:-1;}
 int bitmap_delete(u16 h){(void)h;return -1;}
 int bitmap_object_used(u16 h){(void)h;return 0;}
+int palette_valid(u16 h){return h==0xe00||h==0x31e;}
+u16 bitmap_object(u16 dc,u16 type,u16 h){(void)dc;(void)type;(void)h;return 0;}
+int palette_delete(u16 h){return h==0xe00;}
 #define vlog(...) ((void)0)
 '''
-code+=''.join(func(n) for n in ('dc_get','saved_object','g_SaveDC','g_RestoreDC','g_GetROP2','dc_release','g_DeleteObject'))
+code+=''.join(func(n) for n in ('dc_get','saved_object','g_SaveDC','g_RestoreDC','g_GetROP2','dc_release','g_DeleteObject','u_SelectPalette','u_RealizePalette'))
 code+='''
 static u32 save(u16 h){wr16(0x1000,0,h);return g_SaveDC(0x1000,0);}
 static u32 restore(u16 h,i16 l){wr16(0x1000,0,l);wr16(0x1000,2,h);return g_RestoreDC(0x1000,0);}
 int main(void){
  struct dc old;int i;
- dcs[0].used=1;dcs[0].hdc=HDC_BASE;dcs[0].gc=99;dcs[0].pen=0x400;dcs[0].rop2=13;
+ dcs[0].used=1;dcs[0].palette=0xe00;dcs[0].hdc=HDC_BASE;dcs[0].gc=99;dcs[0].pen=0x400;dcs[0].rop2=13;
  dcs[0].brush=0x401;dcs[0].font=0x402;dcs[0].brushx=-3;dcs[0].curx=55;dcs[0].bkcolor=0x123456;
+ wr16(0x1000,0,0);wr16(0x1000,2,0x31e);wr16(0x1000,4,HDC_BASE);assert(u_SelectPalette(0x1000,0)==0xe00);
+ wr16(0x1000,2,0xe00);assert(u_SelectPalette(0x1000,0)==0x31e);
+ wr16(0x1000,2,0xdead);assert(!u_SelectPalette(0x1000,0)&&dcs[0].palette==0xe00);
+ wr16(0x1000,0,HDC_BASE);assert(!u_RealizePalette(0x1000,0));
  old=dcs[0];assert(save(HDC_BASE)==1);
+ wr16(0x1000,0,0xe00);assert(!g_DeleteObject(0x1000,0));dcs[0].palette=0x31e;assert(!g_DeleteObject(0x1000,0));
  dcs[0].pen=0x403;dcs[0].brushx=72;dcs[0].rop2=7;dcs[0].textcolor=333;assert(save(HDC_BASE)==2);
  wr16(0x1000,0,0x400);assert(!g_DeleteObject(0x1000,0));
  assert(saved_object(0x400));assert(!restore(HDC_BASE,0)&&!restore(HDC_BASE,-3)&&!restore(HDC_BASE,3));

@@ -12,7 +12,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-struct memory_dc {u16 bitmap,pen,brush,font;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury;u32 textcolor,bkcolor;};
+struct memory_dc {u16 bitmap,pen,brush,font,palette;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
 #define MEMORY_SAVE_DEPTH 4
 static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
@@ -50,16 +50,16 @@ u16 bitmap_rop2(u16 h,u16 mode)
 u16 bitmap_object(u16 h,u16 type,u16 object)
 {
  int i=di(h);u16 *slot,old;if(i<0)return 0;
- slot=type==1?&memory[i].pen:type==2?&memory[i].brush:type==3?&memory[i].font:0;
+ slot=type==1?&memory[i].pen:type==2?&memory[i].brush:type==3?&memory[i].font:type==5?&memory[i].palette:0;
  if(!slot)return 0;old=*slot;if(object)*slot=object;return old;
 }
 int bitmap_object_used(u16 object)
 {
  int i,j;
  for(i=0;i<ND;i++)if(memory[i].used){
-  if(memory[i].pen==object||memory[i].brush==object||memory[i].font==object)return 1;
+  if(memory[i].pen==object||memory[i].brush==object||memory[i].font==object||memory[i].palette==object)return 1;
   for(j=0;j<memory_saved_count[i];j++)
-   if(memory_saved[i][j].pen==object||memory_saved[i][j].brush==object||memory_saved[i][j].font==object)return 1;
+   if(memory_saved[i][j].pen==object||memory_saved[i][j].brush==object||memory_saved[i][j].font==object||memory_saved[i][j].palette==object)return 1;
  }
  return 0;
 }
@@ -91,7 +91,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].palette=0x031e;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {

@@ -571,7 +571,10 @@ int main(int argc,char**argv){
  for(k=0;k<16;k++){native_palette.palette[k].r=k*17;native_palette.palette[k].g=k*17;native_palette.palette[k].b=k*17;}
  b=compatible(9,640,480);d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
  assert(bitmap_object(d,2,0x444)==0x300);assert(bitmap_object(d,1,0x446)==0x30e);
- assert(bitmap_savedc(d)==1);assert(bitmap_object(d,2,0x448)==0x444);
+ assert(bitmap_object(d,5,0xe00)==0x31e);
+ assert(bitmap_savedc(d)==1);assert(bitmap_object(d,5,0xe02)==0xe00);
+ assert(bitmap_object_used(0xe00)&&bitmap_object_used(0xe02));
+ assert(bitmap_object(d,2,0x448)==0x444);
  assert(bitmap_object_used(0x444)&&bitmap_object_used(0x448)&&bitmap_object_used(0x446));
  assert(bitmap_patblt(d,0,0,640,480,0x00000042,0,0,0));
  assert(bitmap_patblt(d,0,0,640,3,0x00f00021,0xffffff,0,0));
@@ -586,7 +589,8 @@ int main(int argc,char**argv){
  assert(!bitmap_patblt(d,0,0,2,2,0x00f00021,0,3,0));assert(bitmap_index(&bitmaps[bi(b)],0,0)==6);
  assert(bitmap_patblt(d,0,0,2,2,0x00f00021,0,0,1));assert(bitmap_index(&bitmaps[bi(b)],0,0)==6);
  assert(bitmap_restoredc(d,-1));assert(bitmap_object(d,2,0)==0x444&&!bitmap_object_used(0x448));
- assert(bitmap_deletedc(d));assert(!bitmap_object_used(0x444)&&!bitmap_object_used(0x446));
+ assert(bitmap_object(d,5,0)==0xe00&&!bitmap_object_used(0xe02));
+ assert(bitmap_deletedc(d));assert(!bitmap_object_used(0xe00));assert(!bitmap_object_used(0x444)&&!bitmap_object_used(0x446));
  bitmap_shutdown();clean();win.cw=win.ch=100;
 
  /* Memory line endpoints, all binary ROP2 truth tables and rectangle corners. */

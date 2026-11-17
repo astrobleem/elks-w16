@@ -170,6 +170,7 @@ int gdi_init(void)
     stock[8].type = OBJ_PEN; stock[8].null = 1; stock[8].used = 1;             /* NULL_PEN */
     for (i = 10; i <= 16; i++)              /* fonts: all map to the Nano-X system font */
         if (i != 15) { stock[i].type = OBJ_FONT; stock[i].used = 1; }
+    stock[15].type=5;stock[15].used=1; /* DEFAULT_PALETTE */
     gdi_gc = GrNewGC();
     memset(gcs, 0, sizeof(gcs));
     gcs[MAXDC].gc = gdi_gc;
@@ -231,6 +232,7 @@ void gdi_shutdown(void)
 {
     int i;
     bitmap_shutdown();
+    palette_shutdown();
     for (i = 0; i < MAXDC; i++) {
         dcs[i].used = 0;
         dc_saved_count[i] = 0;
@@ -276,6 +278,7 @@ u16 dc_create(struct wnd *w, int paint)
     gdi_map_init(d);
     d->pen = HSTOCK + 2 * 7;        /* BLACK_PEN */
     d->brush = HSTOCK + 2 * 0;      /* WHITE_BRUSH */
+    d->palette=HSTOCK+2*15;
     d->font = HSTOCK + 2 * 13;      /* SYSTEM_FONT */
     d->textcolor = 0; d->bkcolor = 0xFFFFFFul; d->bkmode = OPAQUE;
     return d->hdc;
@@ -300,7 +303,7 @@ static int saved_object(u16 h)
 {
     int i,j;
     for(i=0;i<MAXDC;i++)for(j=0;j<dc_saved_count[i];j++)
-        if(dc_saved[i][j].pen==h||dc_saved[i][j].brush==h||dc_saved[i][j].font==h)return 1;
+        if(dc_saved[i][j].pen==h||dc_saved[i][j].brush==h||dc_saved[i][j].font==h||dc_saved[i][j].palette==h)return 1;
     return 0;
 }
 u32 g_SaveDC(u16 ss,u16 ap)
@@ -377,6 +380,12 @@ u32 g_DeleteObject(u16 ss, u16 ap)
             if(objs[i].used&&objs[i].type==OBJ_BRUSH&&objs[i].style==BS_PATTERN&&objs[i].width==bi)return 0;
         bmps[bi].used = 0;
         return 1;
+    }
+    if(palette_valid(h)){
+        if(h==HSTOCK+2*15)return 1;
+        if(saved_object(h)||bitmap_object_used(h))return 0;
+        for(i=0;i<MAXDC;i++)if(dcs[i].used&&dcs[i].palette==h)return 0;
+        return palette_delete(h);
     }
     if (!o)
         return 0;
@@ -1265,4 +1274,28 @@ u32 g_EnumObjects(u16 ss,u16 ap)
     for(i=0;i<16;i++) colors[i]=(u32)p->palette[i].r |
         ((u32)p->palette[i].g<<8) | ((u32)p->palette[i].b<<16);
     return enum_palette_objects(kind,AW(4),AW(6),AL(0),colors,16);
+}
+
+/* SelectPalette is USER in Win16, although the object belongs to GDI. */
+u32 u_SelectPalette(u16 ss,u16 ap)
+{
+    u16 h=AW(2),dc=AW(4),old;struct dc*d=dc_get(dc);
+    if(!palette_valid(h))return 0;
+    if(!d)return bitmap_object(dc,5,h);
+    old=d->palette;d->palette=h;return old;
+}
+u32 u_RealizePalette(u16 ss,u16 ap)
+{
+    /* RC_PALETTE is not advertised for this fixed-color VGA device. No
+     * physical palette entries can change. Return zero changed entries. */
+    struct dc*d=dc_get(AW(0));
+    if(!d&&!bitmap_object(AW(0),5,0))return 0;
+    return 0;
+}
+u32 g_GetNearestPaletteIndex(u16 ss,u16 ap)
+{
+    GR_PALETTE*p=(GR_PALETTE*)w16_scratch;u32 colors[16];int i,n;
+    memset(p,0,sizeof(*p));GrGetSystemPalette(p);n=p->count;if(n>16)n=16;
+    for(i=0;i<n;i++)colors[i]=(u32)p->palette[i].r|((u32)p->palette[i].g<<8)|((u32)p->palette[i].b<<16);
+    return palette_nearest(AW(4),AL(0),colors,n);
 }

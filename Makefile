@@ -39,6 +39,7 @@ test: host samples
 	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py
 	python3 tests/dcstacktest.py
+	python3 tests/palettetest.py
 	python3 tests/devicecapstest.py
 	python3 tests/brushorgtest.py
 	python3 tests/setpixeltest.py

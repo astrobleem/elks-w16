@@ -61,6 +61,8 @@ u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
 u32 g_SetDIBits(u16,u16),g_GetDIBits(u16,u16);
 u32 g_DPtoLP(u16,u16),g_LPtoDP(u16,u16);
 u32 g_SetMapMode(u16,u16),g_SetWindowOrg(u16,u16),g_SetViewportOrg(u16,u16),g_SetWindowExt(u16,u16),g_SetViewportExt(u16,u16),g_GetWindowOrg(u16,u16);
+u32 g_CreatePalette(u16,u16),g_GetPaletteEntries(u16,u16),g_GetNearestPaletteIndex(u16,u16);
+u32 u_SelectPalette(u16,u16),u_RealizePalette(u16,u16);
 u32 g_SaveDC(u16,u16),g_RestoreDC(u16,u16),g_GetROP2(u16,u16);
 u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g_DeleteDC(u16, u16);
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
@@ -291,10 +293,10 @@ const struct api api_table[] = {
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
     { G, 156, "CREATEDISCARDABLEBITMAP", 0, API_MISSING, 0 },
     { G, 163, "SETBITMAPDIMENSION", 0, API_MISSING, 0 },
-    { G, 360, "CREATEPALETTE", 0, API_MISSING, 0 },
-    { G, 363, "GETPALETTEENTRIES", 0, API_MISSING, 0 },
+    { G, 360, "CREATEPALETTE", 4, 0, H(g_CreatePalette) },
+    { G, 363, "GETPALETTEENTRIES", 10, 0, H(g_GetPaletteEntries) },
     { G, 366, "UPDATECOLORS", 0, API_MISSING, 0 },
-    { G, 370, "GETNEARESTPALETTEINDEX", 0, API_MISSING, 0 },
+    { G, 370, "GETNEARESTPALETTEINDEX", 6, 0, H(g_GetNearestPaletteIndex) },
     { G, 372, "EXTFLOODFILL", 0, API_MISSING, 0 },
     { G, 440, "SetDIBits", 18, 0, H(g_SetDIBits) },
     { G, 441, "GetDIBits", 18, 0, H(g_GetDIBits) },
@@ -357,8 +359,8 @@ const struct api api_table[] = {
     { U, 232, "SETWINDOWPOS", 0, API_MISSING, 0 },
     { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
     { U, 278, "GETDESKTOPHWND", 0, API_MISSING, 0 },
-    { U, 282, "SELECTPALETTE", 0, API_MISSING, 0 },
-    { U, 283, "REALIZEPALETTE", 0, API_MISSING, 0 },
+    { U, 282, "SELECTPALETTE", 6, 0, H(u_SelectPalette) },
+    { U, 283, "REALIZEPALETTE", 2, 0, H(u_RealizePalette) },
     { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 0, API_MISSING, 0 },
     { U, 410, "INSERTMENU", 0, API_MISSING, 0 },
     { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
