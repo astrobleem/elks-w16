@@ -250,12 +250,12 @@ Exit status: the program's own exit code, or 10 unreadable/truncated, 11 not a v
 
 ## What is supported
 
-KERNEL: InitTask, WaitEvent, GetVersion, GetWinFlags, GetModuleFileName, LockSegment,
+Selected APIs (not an exhaustive export list): KERNEL: InitTask, WaitEvent, GetVersion, GetWinFlags, GetModuleFileName, LockSegment,
 UnlockSegment, MakeProcInstance, FreeProcInstance, LocalAlloc, LocalFree, LocalLock,
 LocalUnlock, LocalSize, GlobalLock, GlobalUnlock, FindResource, LoadResource, LockResource,
 FreeResource, GetInstanceData, GetProfileInt, GetProfileString, WriteProfileString, lstrcpy,
 lstrcat, lstrlen, DOS3Call and the selector constants (`__AHSHIFT`, `__AHINCR`, `__WINFLAGS`,
-`__A000H` ...). USER: InitApp, RegisterClass (with a class menu), CreateWindow (top-level),
+`__A000H` ...). USER: InitApp, RegisterClass (with a class menu), CreateWindow (top-level and a bounded set of registered child windows),
 ShowWindow, UpdateWindow, DestroyWindow, DefWindowProc, GetMessage, TranslateMessage,
 DispatchMessage, PostQuitMessage, BeginPaint, EndPaint, InvalidateRect, GetClientRect, GetDC,
 ReleaseDC, SetTimer, KillTimer, SetRect, OffsetRect, InflateRect, FillRect, GetSysColor,
@@ -269,23 +269,17 @@ CreatePatternBrush, SelectObject, DeleteObject, UnrealizeObject, SetTextColor, S
 SetBkMode, SetROP2, SetTextAlign, Rectangle, Ellipse, MoveTo, LineTo, PatBlt, TextOut, ExtTextOut,
 GetTextMetrics, GetTextExtent, GetNearestColor, CreateDC/DeleteDC (the display), GetDeviceCaps,
 AddFontResource/RemoveFontResource (accepted, fonts not loaded). KERNEL also: GetModuleUsage.
-INT 21h: 00h, 19h, 25h/35h (virtual vectors), 2Ah, 2Ch, 30h, 40h to stdout/stderr, 4Ch.
+INT 21h: 00h, 19h, 25h/35h (virtual vectors), 2Ah, 2Ch, 30h, 40h to stdout/stderr, 41h (confined unlink), 47h (mapped current directory), 4Ch.
 
 Bitmap resources, compatible memory DCs and selected `BitBlt` operations are implemented. Pixel readback, screen-to-bitmap capture and screen AND depend on matching Nano-X server capabilities; see the [experimental VGA build](build.md#experimental-vga-solitaire). The modal dialog manager supports basic check boxes, radio buttons and group boxes.
 
 ## What is not (yet)
 
-DLLs and `LoadLibrary`; `LoadIcon` from the
-program's own resources (the frame icon stands in); colour cursors; menus from `LoadMenu`/`SetMenu`
-(class menus only), nested popups, the system menu commands other than Close (and
-`GetSystemMenu`); modeless dialogs (`CreateDialog`) and
-`DialogBoxParam`; `SendMessage` and `PostMessage` to all windows;
-EDIT, LISTBOX, COMBOBOX and SCROLLBAR controls (drawn as empty boxes); keyboard focus moves between controls; the
-global heap (`GlobalAlloc`); font files and fonts other than the Nano-X system font (every
-`CreateFontIndirect` font draws with it); general `BitBlt` raster operations; mapping modes; clipping to the
-update region and `ETO_CLIPPED`; file I/O through INT 21h; 8087 OS fixups;
-self-loading, protected-mode-only and 80286-flagged executables; 64 KB segments; more than one
-Win16 program at a time (the loader keeps its data segment in its own code segment).
+* **DLLs and memory.** The loader can bind one explicitly named companion DLL at startup (for example, `-l PBRUSH=pbrush.dll`). It does not search for or dynamically load arbitrary DLLs. `LoadLibrary` and `FreeLibrary` remain diagnostic traps under `-u`. The global heap implements fixed and movable handles, locks, reallocation and free for up to 48 single-segment blocks of at most 65,520 bytes each. There is no automatic compaction, discard or multi-segment allocation.
+* **Windows, menus and controls.** Class menus and detached menu resources loaded with `LoadMenu` can be attached to a top-level window with `CreateWindow` or `SetMenu`. Nested popups, `GetSystemMenu` and system-menu commands other than Close are not supported. Modal dialogs have a bounded single-line EDIT and a LISTBOX used for filename and directory selection (up to 64 entries). This is not a general implementation of all control styles or messages. Standalone COMBOBOX and SCROLLBAR controls are placeholders; window scroll bars are separate. Modeless `CreateDialog`, `DialogBoxParam`, full focus management and messaging to arbitrary windows are not provided.
+* **Graphics.** `LoadIcon` can find a program icon resource but the standard frame icon stands in for it. Colour cursors and external font files are not supported. Raster operations and mapping modes are subsets (including MM_TEXT and MM_ANISOTROPIC). Partial background erase respects the dirty rectangle; this does not supply arbitrary clipping for all drawing operations or implement `ETO_CLIPPED`.
+* **Files and execution.** KERNEL implements bounded `OpenFile` and `_l*` file operations on the mapped drive. That is separate from INT 21h: there is no general DOS handle-based read/write interface. The DOS calls listed above include current-directory lookup, confined unlink and logged stdout/stderr writes. 8087 OS fixups, self-loading or protected-mode-only executables, 80286-flagged executables, 64 KB segments and multiple concurrent Win16 programs remain unsupported.
+
 Keyboard: without `nanox-w16.patch` the Nano-X tty keyboard driver decodes only three-byte
 `ESC [` sequences, so the ELKS console's F1-F12 and Alt+letter never arrive and menus need the
 mouse. Without `elks-graphics-keys.patch` the kernel drops Alt+F1..F8 while Nano-X runs, so
@@ -297,4 +291,4 @@ string, as Windows 3.x does; Windows 3.0's CLOCK (IDs 24, 25: the AM/PM defaults
 `GetProfileString` for `s1159`/`s2359`) and REVERSI (11, 12: text it appends after "You Won by N" and
 "You Lost by N") ask for such IDs, whose entries are empty in those programs, so AM/PM appear only
 when WIN.INI's `[intl]` section sets them, as on Windows.
-Memory is never discarded or moved, so the whole program must fit in conventional memory.
+There is no paging or automatic heap compaction, so the program and its live allocations must fit in conventional memory.
