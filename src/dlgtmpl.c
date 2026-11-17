@@ -139,6 +139,8 @@ int menu_parse(const u8 *d, u16 len, struct menu_tmpl *t)
     memset(t, 0, sizeof(*t));
     if (len < 6 || g16(d) != 0)
         return -1;
+    if (g16(d + 2) > len - 4u)
+        return -1;
     p = (u16)(4 + g16(d + 2));
     if (p >= len)
         return -1;

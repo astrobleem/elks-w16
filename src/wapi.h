@@ -134,7 +134,8 @@ struct dc {
 #define HICON      0x0590
 #define HACCEL_BASE 0x0800      /* accelerator tables */
 #define HBMP_BASE  0x0900       /* monochrome bitmaps (gdi.c) */
-#define HMENU_BASE 0x0600       /* menu bars: HMENU_BASE + 0x20 * n; their popups add 2 * (item + 1) */
+#define HMENU_BASE 0x2000       /* disjoint from object, resource and bitmap handle ranges */
+#define HMENU_STRIDE 0x0200    /* room for 128 item-indexed popup handles per menu */
 
 extern struct wnd wins[MAXWIN];
 struct wnd *win_get(u16 hwnd);

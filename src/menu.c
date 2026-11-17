@@ -26,7 +26,7 @@ struct menu {
     i16  tw[MENU_MAXITEMS], aw[MENU_MAXITEMS];  /* label and accelerator widths */
     i16  mx[MENU_MAXITEMS], mw[MENU_MAXITEMS];  /* mnemonic underline offset and width, mw 0 if none */
 };
-/* about 1 KB each, so allocated when first needed: most programs have one menu bar, many none */
+/* about 6 KB each at the maximum capacity, so allocated when first needed: most programs have one menu bar, many none */
 static struct menu *menus[MAXMENU + 1];
 #define USED(i) (menus[i] && menus[i]->used)
 static int scr_w = 320, scr_h = 200, asc = 10;
@@ -47,7 +47,7 @@ static struct {
 
 static struct menu *menu_of(u16 h, int *sub)
 {
-    u16 k = (u16)(h - HMENU_BASE), mi = k / 0x20, r = k % 0x20;
+    u16 k = (u16)(h - HMENU_BASE), mi = k / HMENU_STRIDE, r = k % HMENU_STRIDE;
     if (h < HMENU_BASE || mi > SYSMENU || (r & 1) || !USED(mi))
         return 0;
     *sub = r ? r / 2 - 1 : -1;
@@ -140,7 +140,7 @@ static struct menu *slot(int i)
 /* attach a MENU resource to w as its menu bar; widths are measured once, here */
 u16 menu_load(struct wnd *w, const char *name, u16 id)
 {
-    u8 *buf = w16_scratch;             /* 512 bytes of the shared scratch */
+    u8 *buf = w16_scratch;             /* shared scratch; never silently truncate a resource */
     struct menu *mn;
     GR_SCREEN_INFO si;
     u32 off;
@@ -158,8 +158,10 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
     }
     if (!(mn = slot(i)))
         return 0;
-    if (len > 512)
-        len = 512;
+    if (len > W16_SCRATCH) {
+        wlog("w16: menu resource too large (%u bytes)\n", len);
+        return 0;
+    }
     if (ne_read(w16_mod, off, buf, len) || menu_parse(buf, len, &mn->t)) {
         wlog("w16: menu %s is malformed or has more than %d items\n", name ? name : "(ordinal)", MENU_MAXITEMS);
         return 0;
@@ -173,7 +175,7 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
     mn->hwnd = w->hwnd;
     mn->bar_y = (i16)(border_w(w->style) + ((w->style & WS_CAPTION) == WS_CAPTION ? font_h + 2 : 0));
     measure(mn, border_w(w->style) + 2);
-    w->hmenu = (u16)(HMENU_BASE + 0x20 * i);
+    w->hmenu = (u16)(HMENU_BASE + HMENU_STRIDE * i);
     vlog("w16: menu %s: %u items on window %04x -> %04x\n", name ? name : "(ordinal)", mn->t.n, w->hwnd, w->hmenu);
     return w->hmenu;
 }
@@ -358,14 +360,14 @@ static void open_popup(int mi, int top, int sel_first)
     if (pop.open)
         close_popup(0);
     if (entering)
-        win_send(w, WM_INITMENU, (u16)(HMENU_BASE + 0x20 * mi), 0);
+        win_send(w, WM_INITMENU, (u16)(HMENU_BASE + HMENU_STRIDE * mi), 0);
     {
         int pos = 0;
         for (k = 0; k < top; k++)
             if (mn->t.it[k].parent == 0xFF)
                 pos++;
         /* the high word of lParam is TRUE for the system menu */
-        win_send(w, WM_INITMENUPOPUP, (u16)(HMENU_BASE + 0x20 * mi + 2 * (top + 1)),
+        win_send(w, WM_INITMENUPOPUP, (u16)(HMENU_BASE + HMENU_STRIDE * mi + 2 * (top + 1)),
                  (u32)pos | (mi == SYSMENU ? 0x10000ul : 0));
     }
     if (!win_get(mn->hwnd) || !mn->used)
@@ -670,7 +672,7 @@ u32 u_GetSubMenu(u16 ss, u16 ap)
         return 0;
     for (k = 0; k < mn->t.n; k++)
         if (mn->t.it[k].parent == (sub < 0 ? 0xFF : sub) && pos++ == want)
-            return (mn->t.it[k].flags & MF_POPUP) ? (u16)(HMENU_BASE + 0x20 * mn->idx + 2 * (k + 1)) : 0;
+            return (mn->t.it[k].flags & MF_POPUP) ? (u16)(HMENU_BASE + HMENU_STRIDE * mn->idx + 2 * (k + 1)) : 0;
     return 0;
 }
 

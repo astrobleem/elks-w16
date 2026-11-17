@@ -175,7 +175,7 @@ int  dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t);   /* 0 ok, -1 malforme
 #define MF_END        0x0080
 #define MF_BYPOSITION 0x0400
 #define MF_SEPARATOR  0x0800
-#define MENU_MAXITEMS 24
+#define MENU_MAXITEMS 128
 struct menu_item {
     u16  flags, id;
     u8   parent;                /* index of the popup item it belongs to, 0xFF on the menu bar */

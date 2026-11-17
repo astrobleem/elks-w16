@@ -55,11 +55,13 @@ static const u8 menu_res[] = { 0, 0, 0, 0,
     0x90, 0, '&', 'S', 'e', 't', 't', 'i', 'n', 'g', 's', 0,
     0x00, 0, 1, 0, '&', 'A', 'n', 'a', 'l', 'o', 'g', 0,
     0x80, 0, 2, 0, '&', 'D', 'i', 'g', 'i', 't', 'a', 'l', 0 };
+static const u8 *active_res=menu_res;
+static u16 active_len=sizeof(menu_res);
 int ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *off, u16 *len)
 {
-    *off = 0; *len = sizeof(menu_res); return 0;
+    *off = 0; *len = active_len; return 0;
 }
-int ne_read(struct ne_module *m, u32 off, void *buf, u16 n) { memcpy(buf, menu_res + off, n); return 0; }
+int ne_read(struct ne_module *m, u32 off, void *buf, u16 n) { memcpy(buf, active_res + off, n); return 0; }
 
 /* ---- the test */
 static int fails, cases;
@@ -129,6 +131,34 @@ int main(void)
     key(27, 0);
     check(key(MWKEY_F4, MWKMOD_ALT) == 0 && nposts == 0, "with no menu open Alt+F4 is left to the window");
 
+
+    /* Large menu resources and later popup handles must not alias other menus. */
+    { int sub, i; u16 h;
+      menu_free(w->hmenu);
+      { static u8 large[1600];unsigned p=4,j;
+        for(j=0;j<104;j++) {
+            large[p++]=j==103?MF_END:0;large[p++]=0;
+            large[p++]=(u8)j;large[p++]=1;
+            memcpy(large+p,"Example",8);p+=8;
+        }
+        active_res=large;active_len=p;
+        check(menu_load(w,0,1)!=0 && menus[0]->t.n==104,
+              "runtime loader reads a complete 1252-byte menu");
+        menu_free(w->hmenu);
+      }
+      memset(&menus[0]->t,0,sizeof(menus[0]->t));
+      menus[0]->used=1;menus[0]->t.n=MENU_MAXITEMS;
+      for(i=0;i<MENU_MAXITEMS;i++) {
+          menus[0]->t.it[i].parent=0xff;
+          menus[0]->t.it[i].flags=MF_POPUP;
+      }
+      for(i=0;i<MENU_MAXITEMS;i++) {
+          h=HMENU_BASE+2*(i+1);
+          check(menu_of(h,&sub)==menus[0]&&sub==i,"popup handle retains full item index");
+      }
+      check(menu_of(HMENU_BASE+1,&sub)==0,"odd handles rejected");
+
+    }
     printf("== menus: %d passed, %d failed\n", cases - fails, fails);
     return fails != 0;
 }
