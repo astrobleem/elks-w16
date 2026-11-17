@@ -468,13 +468,13 @@ static void farstr(char *dst, u16 off, u16 seg, u16 max)
 }
 
 /* GetProfileInt(lpAppName, lpKeyName, nDefault) */
-u32 k_GetProfileInt(u16 ss, u16 ap)
+static u32 profile_int(u16 ss, u16 ap, const char *path)
 {
     char app[40], key[40], v[16];
     u16 r = 0, k;
     farstr(key, AW(2), AW(4), sizeof(key));
     farstr(app, AW(6), AW(8), sizeof(app));
-    if (prof_get(prof_path(), app, key, v, sizeof(v)) < 0)
+    if (!path || prof_get(path, app, key, v, sizeof(v)) < 0)
         return AW(0);
     for (k = 0; v[k] >= '0' && v[k] <= '9'; k++)
         r = (u16)(r * 10 + (v[k] - '0'));
@@ -483,7 +483,7 @@ u32 k_GetProfileInt(u16 ss, u16 ap)
 }
 
 /* GetProfileString(lpAppName, lpKeyName, lpDefault, lpReturnedString, nSize) */
-u32 k_GetProfileString(u16 ss, u16 ap)
+static u32 profile_string(u16 ss, u16 ap, const char *path)
 {
     char app[40], key[40], v[80];
     u16 size = AW(0), ro = AW(2), rs = AW(4), n;
@@ -496,7 +496,7 @@ u32 k_GetProfileString(u16 ss, u16 ap)
         wlog("w16: GetProfileString [%s] with no key (list of keys) is not supported; returning the default\n", app);
         r = -1;
     } else
-        r = prof_get(prof_path(), app, key, v, sizeof(v));
+        r = path ? prof_get(path, app, key, v, sizeof(v)) : -1;
     if (r < 0)
         farstr(v, AW(6), AW(8), sizeof(v));
     n = (u16)strlen(v);
@@ -506,6 +506,47 @@ u32 k_GetProfileString(u16 ss, u16 ap)
     wr8(rs, (u16)(ro + n), 0);
     vlog("w16: GetProfileString [%s] %s = \"%s\"%s\n", app, key, v, r < 0 ? " (default)" : "");
     return n;
+}
+
+u32 k_GetProfileInt(u16 ss, u16 ap) { return profile_int(ss, ap, prof_path()); }
+u32 k_GetProfileString(u16 ss, u16 ap) { return profile_string(ss, ap, prof_path()); }
+
+/* Private profiles: a DOS 8.3 basename in the current app directory.
+ * Do not silently turn a DOS absolute path or a truncated name into a
+ * different file. ELKS filesystems are case sensitive. */
+static const char *private_ini(u16 seg, u16 off, char *name)
+{
+    int n, dot = -1;
+    if (!seg)
+        return 0;
+    for (n = 0; n < 13; n++) {
+        int c;
+        if ((u32)off + n > 0xfffful) return 0;
+        c = rd8(seg, (u16)(off+n));
+        if (!c) break;
+        if (c == '.') {
+            if (dot >= 0 || !n || n > 8) return 0;
+            dot = n;
+        } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                     (c >= 'A' && c <= 'Z') || c == '_' || c == '-')) return 0;
+        name[n] = c >= 'A' && c <= 'Z' ? c + ('a'-'A') : c;
+    }
+    if (n == 13 || !n || (dot < 0 ? n > 8 : n-dot <= 1 || n-dot > 4))
+        return 0;
+    name[n] = 0;
+    return name;
+}
+
+u32 k_GetPrivateProfileInt(u16 ss, u16 ap)
+{
+    char file[13];
+    return profile_int(ss, ap + 4, private_ini(AW(2), AW(0), file));
+}
+
+u32 k_GetPrivateProfileString(u16 ss, u16 ap)
+{
+    char file[13];
+    return profile_string(ss, ap + 4, private_ini(AW(2), AW(0), file));
 }
 
 /* WriteProfileString(lpAppName, lpKeyName, lpString): NULL string deletes the key, NULL key the section */

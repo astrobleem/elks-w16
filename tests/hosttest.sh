@@ -22,6 +22,10 @@ bad() { fail=$((fail+1)); echo "FAIL $*"; }
 
 if [ "${HOSTTEST_ONLY:-}" != optional ]; then   # HOSTTEST_ONLY=optional: sections 9-10 only (used by 11)
 
+if gcc -DW16_HOST -Isrc -ffunction-sections -fdata-sections -fsanitize=address,undefined -no-pie \
+       tests/privateprofile_test.c src/kernel.c src/profile.c src/mem.c -Wl,--gc-sections -o "$T/privateprofile" \
+       && (cd "$T" && ./privateprofile); then ok "private profile reads"; else bad "private profile reads"; fi
+
 echo "== 1. load HELLO16 and compare with the model"
 mkdir -p $T/load
 if $H -o $T/load $EXE > $T/load/out.txt 2>&1 && python3 tests/verify_load.py $EXE $T/load src/api.c; then ok "HELLO16 load matches model"; else bad "HELLO16 load"; cat $T/load/out.txt; fi
