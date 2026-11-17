@@ -85,6 +85,7 @@ struct ne_seg {
 };
 
 struct ne_module {
+    u32 discard_notify; /* registered far callback; no task-driven discard/compaction yet */
     const char *path;
     int  fd;
     u32  ne_off;        /* file offset of the NE header */

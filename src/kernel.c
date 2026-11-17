@@ -68,6 +68,14 @@ int task_setup(struct ne_module *m, const char *path, int argc, char **argv)
 }
 
 /* ---------------------------------------------------------------- KERNEL */
+/* Set or clear the per-task movable-memory notification callback. Global
+ * storage in this runtime is not compacted or implicitly discarded. */
+u32 k_GlobalNotify(u16 ss,u16 ap)
+{
+    w16_mod->discard_notify=AL(0);
+    return 0; /* Win16 void Pascal, not the previous callback */
+}
+
 u32 k_GetVersion(u16 ss, u16 ap)
 {
     (void)ss; (void)ap;
