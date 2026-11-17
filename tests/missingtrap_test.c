@@ -51,6 +51,8 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_USER,96)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,97)].argbytes==6);
  assert(api_table[api_find_ord(MOD_USER,98)].argbytes==4);
+ assert(api_table[api_find_ord(MOD_GDI,74)].argbytes==10);
+ assert(api_table[api_find_ord(MOD_GDI,106)].argbytes==10);
  assert(api_find_name(MOD_PBRUSH,"VBITBLT")<0);
  opt_missing=1;
  i=api_find_name(MOD_PBRUSH,"vBitBlt");assert(i>=0&&api_table[i].flags==API_MISSING);

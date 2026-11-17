@@ -94,6 +94,9 @@ code+=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
 code+="static u16 rd16(u16 s,u16 o){return rd8(s,o)|((u16)rd8(s,o+1)<<8); }\nstatic void wr16(u16 s,u16 o,u16 v){wr8(s,o,v);wr8(s,o+1,v>>8); }\n"
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
+gdi=(root/'src/gdi.c').read_text()
+code+="struct {u16 rows[16];u8 h;} bmps[1];\nstatic int bmp_index(u16 h){return h==0x700?0:-1;}\n"
+code+=gdi[gdi.index('static u32 transfer_bitmap_bits('):gdi.index('/* CreatePatternBrush(')]
 code+=r"""
 static void wordput(int o,int v){resource[o]=v;resource[o+1]=v>>8;}
 static int pattern(int x,int y){return ((x*3+y*7)%11)<5;}
@@ -237,7 +240,15 @@ static void ddb_bits_test(void){
  assert(bitmap_bits(h,0,0,0,0)==153600UL);
  assert(!bitmap_bits(h,153600UL,99,0,0));bitmap_shutdown();clean();
 }
+static void small_ddb_bits_test(void){
+ u32 n;memset(bmps,0,sizeof bmps);bmps[0].h=2;bmps[0].rows[0]=0x8123;bmps[0].rows[1]=0xabcd;
+ args[4]=0x700;args[0]=20;args[1]=99;args[2]=4;args[3]=0;
+ n=g_GetBitmapBits(0,0);assert(n==4&&output[20]==0x81&&output[21]==0x23&&output[23]==0xcd);
+ output[20]=0x67;args[2]=1;assert(g_SetBitmapBits(0,0)==1&&bmps[0].rows[0]==0x6723);
+ args[0]=65535;args[2]=2;assert(!g_SetBitmapBits(0,0));
+}
 int main(int argc,char**argv){
+ small_ddb_bits_test();
  ddb_bits_test();
  dib_band_test();
  stretch_tests();
