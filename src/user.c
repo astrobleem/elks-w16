@@ -106,7 +106,7 @@ u32 win_send(struct wnd *w, u16 msg, u16 wp, u32 lp)
 void win_invalidate_all(struct wnd *w, int erase)
 {
     w->ul = 0; w->ut = 0; w->ur = w->cw; w->ub = w->ch;
-    w->invalid = 1;
+    w->invalid = w->cw > 0 && w->ch > 0;
     if (erase)
         w->erase = 1;
 }
@@ -749,7 +749,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         pw = win_get(parent);
         /* Bounded registered children: plain/bordered client windows only. */
         if (!pw || pw->active || (style & (WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) != (style & WS_BORDER) ||
-            wd <= 0 || h <= 0 || wd > 32760 || h > 32760) {
+            wd < 0 || h < 0 || wd > 32760 || h > 32760) {
             wlog("w16: CreateWindow: unsupported child geometry, decoration or parent\n");
             return 0;
         }
@@ -795,14 +795,15 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if (tseg)
         fstrncpy_in(w->title, tseg, toff, sizeof(w->title));
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
-    if (w->cw <= 0 || w->ch <= 0) { w->used = 0; return 0; }
+    if (w->cw < 0) w->cw = 0;
+    if (w->ch < 0) w->ch = 0;
     w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
-                             x < 0 ? 0 : x, y < 0 ? 0 : y, wd, h, GR_RGB(170, 170, 170));
+                             x < 0 ? 0 : x, y < 0 ? 0 : y, wd ? wd : 1, h ? h : 1, GR_RGB(170, 170, 170));
     if (!w->frame) { w->used = 0; return 0; }
     /* Nano-X creation interprets any negative coordinate as auto-placement.
      * Move the still-unmapped frame to preserve Win16 signed positions. */
     if (x < 0 || y < 0) GrMoveWindow(w->frame, x, y);
-    w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw, w->ch, 0, bg, 0);
+    w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw ? w->cw : 1, w->ch ? w->ch : 1, 0, bg, 0);
     if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
@@ -836,12 +837,50 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         return 0;
     }
     if (style & WS_VISIBLE) {
-        GrMapWindow(w->client);
-        GrMapWindow(w->frame);
+        if (w->cw && w->ch) GrMapWindow(w->client);
+        if (w->w && w->h) GrMapWindow(w->frame);
         w->visible = 1;
         win_invalidate_all(w, 1);
     }
     return w->hwnd;
+}
+
+/* MoveWindow(hwnd, x, y, width, height, repaint). Empty Win16 clients
+ * retain a one-pixel Nano-X backing window which must stay unmapped. */
+u32 u_MoveWindow(u16 ss, u16 ap)
+{
+    u16 hwnd=AW(10), repaint=AW(0);
+    int x=(i16)AW(8), y=(i16)AW(6), wd=(i16)AW(4), h=(i16)AW(2);
+    struct wnd *w=win_get(hwnd);
+    int moved, resized, cw, ch;
+    if(!w || wd<0 || h<0 || wd>32760 || h>32760) return 0;
+    moved=w->x!=x || w->y!=y;
+    resized=w->w!=wd || w->h!=h;
+    cw=wd-w->cx-(w->ctl?0:border_of(w->style));
+    ch=h-w->cy-(w->ctl?0:border_of(w->style));
+    if(cw<0) cw=0;
+    if(ch<0) ch=0;
+    w->x=x;w->y=y;w->w=wd;w->h=h;w->cw=cw;w->ch=ch;
+    GrMoveWindow(w->frame,x,y);
+    if(!cw || !ch) GrUnmapWindow(w->client);
+    if(!wd || !h) GrUnmapWindow(w->frame);
+    GrResizeWindow(w->frame,wd?wd:1,h?h:1);
+    if(w->client!=w->frame)
+        GrResizeWindow(w->client,cw?cw:1,ch?ch:1);
+    if(w->visible) {
+        if(cw && ch) GrMapWindow(w->client);
+        if(wd && h) GrMapWindow(w->frame);
+    }
+    if(!cw || !ch) w->invalid=0;
+    if(moved) win_send(w,WM_MOVE,0,((u32)(u16)(y+w->cy)<<16)|(u16)(x+w->cx));
+    if(win_get(hwnd)!=w) return 1;
+    if(resized) win_send(w,WM_SIZE,0,((u32)(u16)ch<<16)|(u16)cw);
+    if(win_get(hwnd)!=w) return 1;
+    if(repaint) {
+        win_invalidate_all(w,1);
+        if(w->visible && w->invalid) win_send(w,WM_PAINT,0,0);
+    }
+    return 1;
 }
 
 /* ShowWindow(hwnd, nCmdShow) */
@@ -858,9 +897,9 @@ u32 u_ShowWindow(u16 ss, u16 ap)
         w->visible = 0;
         return prev;
     }
-    GrMapWindow(w->client);
-    GrMapWindow(w->frame);
-    GrSetFocus(w->client);
+    if (w->cw && w->ch) GrMapWindow(w->client);
+    if (w->w && w->h) GrMapWindow(w->frame);
+    if (w->cw && w->ch) GrSetFocus(w->client);
     w->visible = 1;
     if (!w->shown) {
         w->shown = 1;

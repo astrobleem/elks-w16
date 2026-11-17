@@ -48,21 +48,26 @@ u32 brush_color(u16 h,int *n){(void)h;*n=0;return 0;}
 GR_COLOR rgb_to_gr(u32 c){return c;}
 static unsigned nextid=100, frame_parent, fail_frame,fail_client,destroyed[64],ndestroy;
 static int createdx,createdy,movex,movey,moves;
+static unsigned maps[400],unmaps[400],sizes[400][2],msgcount;
+static u16 lastmsg;static u32 lastlp;
 unsigned GrNewWindowEx(unsigned p,const char*t,unsigned parent,int x,int y,int w,int h,unsigned c){(void)p;(void)t;(void)x;(void)y;(void)w;(void)h;(void)c;frame_parent=parent;createdx=x;createdy=y;return fail_frame?0:nextid++;}
-unsigned GrNewWindow(unsigned p,int x,int y,int w,int h,int b,unsigned c,unsigned bc){(void)p;(void)x;(void)y;(void)w;(void)h;(void)b;(void)c;(void)bc;return fail_client?0:nextid++;}
+unsigned GrNewWindow(unsigned p,int x,int y,int w,int h,int b,unsigned c,unsigned bc){assert(w>0&&h>0);(void)p;(void)x;(void)y;(void)w;(void)h;(void)b;(void)c;(void)bc;return fail_client?0:nextid++;}
 void GrMoveWindow(unsigned w,int x,int y){(void)w;movex=x;movey=y;moves++;}
 void GrDestroyWindow(unsigned w){destroyed[ndestroy++]=w;}
 void GrSelectEvents(unsigned w,unsigned m){(void)w;(void)m;}
 void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
-void GrMapWindow(unsigned w){(void)w;}
-void win_invalidate_all(struct wnd*w,int e){w->invalid=1;w->erase=e;}
-static u16 senthw,sentm,sentp; static u32 sentl;
-u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=m;sentp=p;sentl=l;return m==0x400?0xface1234UL:0;}
+void GrMapWindow(unsigned w){maps[w]++;}
+void GrUnmapWindow(unsigned w){unmaps[w]++;}
+void GrResizeWindow(unsigned w,int x,int y){assert(x>0&&y>0);sizes[w][0]=x;sizes[w][1]=y;}
+void GrSetFocus(unsigned w){(void)w;}
+
+static u16 senthw,sentm,sentp;static u32 sentl;
+u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
 void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','u_CreateWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('win_get','client_origin','top_window','win_by_nx','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','u_MoveWindow','u_ShowWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -87,7 +92,7 @@ int main(void){u16 id;int x,y;unsigned frame;
  wr16(0x1000,0,0xfffa);u_GetWindowRect(0x1000,0);assert(!rd16(0x2000,0xfffa));
  setup(WS_CHILD,999,0,0,10,10);assert(!u_CreateWindow(0x1000,0));
  setup(WS_CHILD|WS_CAPTION,id,0,0,10,10);assert(!u_CreateWindow(0x1000,0));
- setup(WS_CHILD,id,0,0,0,10);assert(!u_CreateWindow(0x1000,0));
+ setup(WS_CHILD,id,0,0,-1,10);assert(!u_CreateWindow(0x1000,0));
  setup(WS_CHILD,id,0,0,10,10);fail_frame=1;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used);fail_frame=0;
  fail_client=1;frame=nextid;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used&&destroyed[ndestroy-1]==frame);fail_client=0;
  capture_hwnd=wins[2].hwnd;focus_hwnd=wins[1].hwnd;destroy_window(&wins[1]);assert(!wins[1].used&&!wins[2].used&&wins[0].used);assert(!capture_hwnd&&!focus_hwnd);
@@ -97,6 +102,26 @@ int main(void){u16 id;int x,y;unsigned frame;
  setup(WS_THICKFRAME,0,-32768,0,-32768,0);id=u_CreateWindow(0x1000,0);assert(win_get(id)->x==0&&win_get(id)->w==640&&win_get(id)->cw==634&&win_get(id)->cw>615);destroy_window(win_get(id));
  setup(0,0,16,12,100,75);id=u_CreateWindow(0x1000,0);assert(win_get(id)->w==100&&win_get(id)->h==75);destroy_window(win_get(id));
  scr_w=16;scr_h=16;setup(0,0,0,0,-32768,0);id=u_CreateWindow(0x1000,0);assert(win_get(id)->w==40&&win_get(id)->h==30);destroy_window(win_get(id));
+
+ { struct wnd *z;unsigned client,frame,n;
+   setup(WS_CHILD|WS_BORDER|WS_VISIBLE,HWND_BASE,66,2,2,2);
+   id=u_CreateWindow(0x1000,0);assert(id);z=win_get(id);client=z->client;frame=z->frame;
+   assert(z->cw==0&&z->ch==0&&!z->invalid&&maps[client]==0&&maps[frame]==1);
+   wr16(0x1000,0,1);wr16(0x1000,2,id);u_ShowWindow(0x1000,0);assert(maps[client]==0&&!z->invalid);
+   wr16(0x1000,0,0);wr16(0x1000,2,102);wr16(0x1000,4,202);
+   wr16(0x1000,6,7);wr16(0x1000,8,(u16)-3);wr16(0x1000,10,id);
+   assert(u_MoveWindow(0x1000,0));assert(z->x==-3&&z->y==7&&z->cw==200&&z->ch==100);
+   assert(maps[client]==1&&sizes[client][0]==200&&sizes[client][1]==100);
+   assert(lastmsg==WM_SIZE&&lastlp==0x006400c8UL);
+   n=msgcount;assert(u_MoveWindow(0x1000,0));assert(msgcount==n);
+   wr16(0x1000,2,2);wr16(0x1000,4,2);assert(u_MoveWindow(0x1000,0));
+   assert(z->cw==0&&z->ch==0&&unmaps[client]&&sizes[client][0]==1&&sizes[client][1]==1);
+   assert(lastmsg==WM_SIZE&&!lastlp);
+   wr16(0x1000,4,(u16)-1);assert(!u_MoveWindow(0x1000,0)&&z->w==2);
+   destroy_window(z);
+   setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,0,0);id=u_CreateWindow(0x1000,0);
+   assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
+ }
  puts("Registered child hierarchy, geometry, failure and teardown checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
