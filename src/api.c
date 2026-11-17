@@ -29,6 +29,8 @@ u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
+u32 u_OpenClipboard(u16,u16),u_CloseClipboard(u16,u16),u_EmptyClipboard(u16,u16);
+u32 u_SetClipboardData(u16,u16),u_GetClipboardData(u16,u16),u_GetPriorityClipboardFormat(u16,u16);
 u32 u_GetDlgItemText(u16,u16),u_SendDlgItemMessage(u16,u16);
 u32 u_DlgDirList(u16,u16),u_DlgDirSelect(u16,u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
@@ -347,11 +349,11 @@ const struct api api_table[] = {
     { U, 130, "SetClassWord", 6, 0, H(u_SetClassWord) },
     { U, 135, "GetWindowLong", 4, 0, H(u_GetWindowLong) },
     { U, 136, "SetWindowLong", 8, 0, H(u_SetWindowLong) },
-    { U, 137, "OPENCLIPBOARD", 0, API_MISSING, 0 },
-    { U, 138, "CLOSECLIPBOARD", 0, API_MISSING, 0 },
-    { U, 139, "EMPTYCLIPBOARD", 0, API_MISSING, 0 },
-    { U, 141, "SETCLIPBOARDDATA", 0, API_MISSING, 0 },
-    { U, 142, "GETCLIPBOARDDATA", 0, API_MISSING, 0 },
+    { U, 137, "OPENCLIPBOARD", 2, 0, H(u_OpenClipboard) },
+    { U, 138, "CLOSECLIPBOARD", 0, 0, H(u_CloseClipboard) },
+    { U, 139, "EMPTYCLIPBOARD", 0, 0, H(u_EmptyClipboard) },
+    { U, 141, "SETCLIPBOARDDATA", 4, 0, H(u_SetClipboardData) },
+    { U, 142, "GETCLIPBOARDDATA", 2, 0, H(u_GetClipboardData) },
     { U, 156, "GETSYSTEMMENU", 0, API_MISSING, 0 },
     { U, 161, "GetMenuString", 12, 0, H(u_GetMenuString) },
     { U, 163, "CREATECARET", 0, API_MISSING, 0 },
@@ -364,7 +366,7 @@ const struct api api_table[] = {
     { U, 278, "GETDESKTOPHWND", 0, API_MISSING, 0 },
     { U, 282, "SELECTPALETTE", 6, 0, H(u_SelectPalette) },
     { U, 283, "REALIZEPALETTE", 2, 0, H(u_RealizePalette) },
-    { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 0, API_MISSING, 0 },
+    { U, 402, "GETPRIORITYCLIPBOARDFORMAT", 6, 0, H(u_GetPriorityClipboardFormat) },
     { U, 410, "INSERTMENU", 0, API_MISSING, 0 },
     { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
     { U, 414, "ModifyMenu", 12, 0, H(u_ModifyMenu) },

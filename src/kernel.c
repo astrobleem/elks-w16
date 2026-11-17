@@ -498,6 +498,7 @@ void kernel_shutdown(void)
 {
     int i, n = 0;
     files_shutdown();
+    clipboard_shutdown();
     global_shutdown();
     for (i = 0; i < MAXRSRC; i++) {
         if (rsrc[i].used && rsrc[i].seg) {

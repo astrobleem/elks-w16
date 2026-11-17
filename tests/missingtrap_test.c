@@ -3,6 +3,12 @@
 int main(void) {
  int i;u16 s,o;
  assert(!opt_missing);
+ assert(api_table[api_find_ord(MOD_USER,137)].argbytes==2);
+ assert(api_table[api_find_ord(MOD_USER,138)].argbytes==0);
+ assert(api_table[api_find_ord(MOD_USER,139)].argbytes==0);
+ assert(api_table[api_find_ord(MOD_USER,141)].argbytes==4);
+ assert(api_table[api_find_ord(MOD_USER,142)].argbytes==2);
+ assert(api_table[api_find_ord(MOD_USER,402)].argbytes==6);
  assert(api_table[api_find_ord(MOD_USER,414)].argbytes==12);
  assert(api_table[api_find_ord(MOD_USER,161)].argbytes==12);
  assert(api_table[api_find_ord(MOD_GDI,70)].argbytes==14);

@@ -5,7 +5,7 @@
 #define GLOBAL_BASE 0xf000
 #define GM_MOVEABLE 2
 #define GM_ZEROINIT 0x40
-struct global_block { u16 seg, bytes, locks, flags; u8 used; };
+struct global_block { u16 seg, bytes, locks, flags; u8 used, clipboard_owned; };
 static struct global_block blocks[GLOBAL_MAX];
 static int lookup(u16 h)
 {
@@ -53,7 +53,7 @@ u32 k_GlobalAlloc(u16 ss,u16 ap)
     if(n && seg_alloc(n>>4,&seg)) return 0;
     if(n && (flags&GM_ZEROINIT)) fzero(seg,0,n);
     blocks[i].used=1;blocks[i].seg=seg;blocks[i].bytes=n;
-    blocks[i].flags=flags;blocks[i].locks=0;
+    blocks[i].flags=flags;blocks[i].locks=0;blocks[i].clipboard_owned=0;
     return handle(i);
 }
 u32 k_GlobalFree(u16 ss,u16 ap)
@@ -61,7 +61,7 @@ u32 k_GlobalFree(u16 ss,u16 ap)
     u16 h=AW(0);
     int i=lookup(h);
     if(!h) return 0;
-    if(i<0) return h;
+    if(i<0 || blocks[i].clipboard_owned) return h;
     if(blocks[i].seg) seg_free(blocks[i].seg);
     blocks[i].used=0; return 0;
 }
@@ -70,7 +70,7 @@ u32 k_GlobalReAlloc(u16 ss,u16 ap)
     u16 flags=AW(0),h=AW(6),n,seg,copy,pos,part;
     u32 bytes=AL(2);
     int i=lookup(h);
-    if(i<0 || bytes>0xfff0UL) return 0;
+    if(i<0 || blocks[i].clipboard_owned || bytes>0xfff0UL) return 0;
     /* GMEM_MODIFY changes allocation flags, not size or identity. */
     if(flags&0x80) {
         blocks[i].flags=(blocks[i].flags&GM_MOVEABLE)|(flags&~(GM_MOVEABLE|0x80));
@@ -99,4 +99,19 @@ void global_shutdown(void)
         if(blocks[i].used && blocks[i].seg) seg_free(blocks[i].seg);
         blocks[i].used=0;
     }
+}
+
+/* Ownership is transferred, not copied: returned clipboard handles retain
+ * their identity. Caller Free/ReAlloc must not recycle clipboard storage. */
+int global_clipboard_take(u16 h)
+{
+ int i=lookup(h);
+ if(i<0||!(blocks[i].flags&GM_MOVEABLE)||!blocks[i].seg||!blocks[i].bytes||blocks[i].locks||blocks[i].clipboard_owned)return 0;
+ blocks[i].clipboard_owned=1;return 1;
+}
+void global_clipboard_release(u16 h)
+{
+ int i=lookup(h);if(i<0||!blocks[i].clipboard_owned)return;
+ if(blocks[i].seg)seg_free(blocks[i].seg);
+ blocks[i].used=0;blocks[i].clipboard_owned=0;
 }

@@ -284,6 +284,9 @@ int global_pointer(u16 h,u32 *ptr);
 u32 global_unlock(u16 h);
 u32 global_size(u16 h);
 void global_shutdown(void);
+int global_clipboard_take(u16 h);
+void global_clipboard_release(u16 h);
+void clipboard_shutdown(void);
 void files_shutdown(void);
 u16 files_unlink(u16 seg,u16 off);
 
