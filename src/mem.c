@@ -182,3 +182,22 @@ void vlog(const char *fmt, ...)
     va_end(ap);
     emit();
 }
+
+#ifndef W16_HOST
+#include <linuxmt/mem.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+/* Only conventional memory can hold our real-mode far segments. Do not count
+ * the ELKS XMS buffer cache or promise that free bytes are contiguous. */
+u32 k_GetFreeSpace(u16 ss,u16 ap)
+{
+    struct mem_usage mu; int fd,rc;
+    (void)ss;(void)ap;
+    fd=open("/dev/kmem",O_RDONLY);
+    if(fd<0) return 0;
+    rc=ioctl(fd,MEM_GETUSAGE,&mu);close(fd);
+    if(rc<0)return 0;
+    vlog("w16: GetFreeSpace: %u KiB conventional memory free\n",mu.main_free);
+    return (u32)mu.main_free<<10;
+}
+#endif

@@ -22,6 +22,7 @@ u32 u_InvertRect(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
+u32 k_GetFreeSpace(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
@@ -298,7 +299,7 @@ const struct api api_table[] = {
     { K,  95, "LOADLIBRARY", 0, API_MISSING, 0 },
     { K,  96, "FREELIBRARY", 0, API_MISSING, 0 },
 
-    { K, 169, "GETFREESPACE", 0, API_MISSING, 0 },
+    { K, 169, "GetFreeSpace", 2, 0, H(k_GetFreeSpace) },
     { P,   2, "VCREATEBITMAP", 0, API_MISSING, 0 },
     { P,   3, "GETVCACHEDC", 0, API_MISSING, 0 },
     { P,   4, "VPATBLT", 0, API_MISSING, 0 },
