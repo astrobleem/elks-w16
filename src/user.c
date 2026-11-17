@@ -943,16 +943,24 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
         if ((wp & 0xFFF0) == SC_CLOSE)
             return win_send(w, WM_CLOSE, 0, 0);
         return 0;
-    case WM_ERASEBKGND:
-        if (w->cls < 0) {               /* dialogs and controls: white background */
-            gdi_fill(w->client, GR_RGB(255, 255, 255), 0, 0, w->cw, w->ch);
-            return 1;
+    case WM_ERASEBKGND: {
+        struct dc *dc = dc_get(wp);
+        int l = 0, t = 0, r = w->cw, b = w->ch;
+        if (w->cls < 0)                /* dialogs and controls: white background */
+            c = 0xffffffUL;
+        else {
+            c = brush_color(classes[w->cls].hbrush, &isnull);
+            if (isnull)
+                return 0;
         }
-        c = brush_color(classes[w->cls].hbrush, &isnull);
-        if (isnull)
-            return 0;
-        gdi_fill(w->client, rgb_to_gr(c), 0, 0, w->cw, w->ch);
+        /* BeginPaint revalidates only the dirty bounds. Erasing the rest of
+         * the client would discard pixels the application will not repaint. */
+        if (dc && dc->paint && dc->w == w && w->invalid) {
+            l = w->ul; t = w->ut; r = w->ur; b = w->ub;
+        }
+        gdi_fill(w->client, rgb_to_gr(c), l, t, r - l, b - t);
         return 1;
+    }
     case WM_PAINT:
         w->invalid = 0;
         w->erase = 0;
