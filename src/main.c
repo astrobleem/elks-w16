@@ -271,6 +271,9 @@ int main(int argc, char **argv)
             e=W16_EIMPORT;
         }
         if(!e) e=ne_open_library(&dll,dllpath);
+        /* Bounded spare room lets the DLL grow fixed local blocks without
+         * changing its real-mode DS or any relocated exported prologue. */
+        if(!e && dll.heap<8192 && (u32)dll.heap_start+8192<=0xfff0UL) e=ne_reserve_library_heap(&dll,8192);
         if(!e) e=ne_check_imports(&dll);
         if(!e) e=ne_load(&dll);
         if(!e) e=ne_bind_library(&m,dllindex,&dll);

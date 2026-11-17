@@ -20,10 +20,15 @@ int main(int argc,char **argv)
     assert(ne_export(&dll,0,2,&s,&o)); /* out of code bounds */
     assert(ne_export(&dll,0,3,&s,&o)); /* not exported */
     assert(ne_export(&dll,0,4,&s,&o)); /* missing */
+    assert(!ne_reserve_library_heap(&dll,8192));
+    assert(dll.heap==32 && dll.dgroup_size==8208);
+    assert(ne_reserve_library_heap(&dll,31)==W16_EUNSUPP);
+    assert(ne_reserve_library_heap(&dll,65535)==W16_EUNSUPP);
     assert(!ne_check_imports(&dll));
     assert(!ne_open(&app,argv[2]));
     assert(ne_bind_library(&app,0,&dll)==W16_EIMPORT);
     assert(!ne_load(&dll));
+    assert(ne_reserve_library_heap(&dll,8192)==W16_EUNSUPP);
     assert(rd8(dll.seg[0].sel,0)==0xb8);
     assert(rd16(dll.seg[0].sel,1)==dll.dgroup);
     assert(!ne_bind_library(&app,0,&dll));

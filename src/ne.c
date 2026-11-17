@@ -387,6 +387,19 @@ int ne_open(struct ne_module *m, const char *path)
     return ne_open_image(m,path,0);
 }
 
+/* Real-mode DLL data cannot be moved after selector fixups. Reserve growth
+ * space up front; the NE heap field remains the LibMain minimum, not capacity. */
+int ne_reserve_library_heap(struct ne_module *m,u16 bytes)
+{
+    u32 total=(u32)m->heap_start+bytes;
+    int i;
+    if(!m->library || !m->seg || m->loaded || bytes<m->heap || total>0xfff0UL)
+        return W16_EUNSUPP;
+    for(i=0;i<m->nseg;i++) if(m->seg[i].paras) return W16_EUNSUPP;
+    m->dgroup_size=(u16)((total+1)&~1UL);
+    return 0;
+}
+
 int ne_open_library(struct ne_module *m, const char *path)
 {
     return ne_open_image(m,path,1);

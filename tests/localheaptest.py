@@ -37,6 +37,9 @@ int main(void)
     wr16(ss,24,0xffff);wr16(ss,32,20);assert(!k_LocalAlloc(ss,32));
     wr16(ss,24,dll.dgroup);wr16(ss,32,1025);wr16(ss,34,0);assert(!k_LocalInit(ss,32));
     wr16(ss,32,1248);wr16(ss,34,100);wr16(ss,36,dll.dgroup);assert(!k_LocalInit(ss,32));
+    /* NE minimum heap stays 1024 while a preallocated reserve is available. */
+    dll.dgroup_size=1280;wr16(ss,32,1024);wr16(ss,34,0);wr16(ss,36,0);
+    assert(k_LocalInit(ss,32));assert(dll.local_start==224&&dll.local_end==1280);
     /* Resize only the DLL heap, preserve handles and failure atomicity. */
     lheap_init(&dll);wr16(ss,24,dll.dgroup);
     wr16(ss,32,20);wr16(ss,34,0x40);h1=k_LocalAlloc(ss,32);

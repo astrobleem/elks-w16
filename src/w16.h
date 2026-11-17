@@ -130,6 +130,7 @@ enum {
 };
 
 int  ne_open(struct ne_module *m, const char *path);   /* read and validate headers */
+int  ne_reserve_library_heap(struct ne_module *m, u16 bytes); /* before any load */
 int  ne_open_library(struct ne_module *m, const char *path); /* single-data DLL, not initialized */
 int  ne_bind_library(struct ne_module *m, u16 import_index, struct ne_module *dll);
 int  ne_export(struct ne_module *m, const char *name, u16 ordinal, u16 *seg, u16 *off);
