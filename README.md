@@ -52,6 +52,12 @@ These results come from emulator runs. Tandy configurations have been exercised 
 
 [See the gallery →](docs/gallery.md) for digital Clock, system menus, Reversi dialogs and the PCjr display.
 
+### Solitaire on experimental VGA
+
+[![Windows 3.0 Solitaire on ELKS after dealing three cards, captured in QEMU at 640×480 VGA](docs/screenshots/solitaire-stock-deal-qemu-vga.png)](docs/gallery.md#solitaire-on-experimental-vga)
+
+The separately supplied Windows 3.0 executable runs in QEMU. Stock dealing, basic tableau moves, and Options have been tested; a full game and real hardware have not. See the [VGA setup and limitations](docs/build.md#experimental-vga-solitaire).
+
 ## Build it from source
 
 Start with the **[build and run guide](docs/build.md)**. You will need:
