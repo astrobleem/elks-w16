@@ -506,7 +506,7 @@ u32 w16_api_dispatch(u16 idx)
         wlog("w16: raster failed ord=%u args=%04x %04x %04x %04x %04x %04x %04x %04x %04x %04x\n", a->ord,
              rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),rd16(ss,sp+18),rd16(ss,sp+20),
              rd16(ss,sp+22),rd16(ss,sp+24),rd16(ss,sp+26),rd16(ss,sp+28),rd16(ss,sp+30));
-    if(opt_trace && ((a->mod==MOD_KERNEL && (a->ord==15 || a->ord==16 || a->ord==74 || a->ord==81 || a->ord==82)) ||
+    if(opt_trace && ((a->mod==MOD_KERNEL && (a->ord==15 || a->ord==16 || a->ord==74 || a->ord==81 || a->ord==82 || a->ord==86)) ||
        (a->mod==MOD_GDI && (a->ord==48 || a->ord==74 || a->ord==106 || a->ord==440)))) {
         wlog("w16: result %s.%u = %08lx",w16_modnames[a->mod],a->ord,(unsigned long)r);
         for(k=0;k<a->argbytes && k<12;k+=2)wlog(" %04x",rd16(ss,sp+12+k));
