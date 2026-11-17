@@ -25,7 +25,7 @@ u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16,
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
-u32 g_GetObject(u16,u16);
+u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
@@ -64,7 +64,7 @@ const struct api api_table[] = {
      * Strict default lookup rejects these. -u binds a terminating thunk. */
     { G,31,"SetPixel",0,API_MISSING,0 },
     { G,35,"StretchBlt",0,API_MISSING,0 },
-    { G,51,"CreateCompatibleBitmap",0,API_MISSING,0 },
+    { G,51,"CreateCompatibleBitmap",6,0,H(g_CreateCompatibleBitmap) },
     { G,79,"GetDCOrg",0,API_MISSING,0 },
     { G,82,"GetObject",8,0,H(g_GetObject) },
     { G,83,"GetPixel",0,API_MISSING,0 },
@@ -328,6 +328,8 @@ u32 w16_api_dispatch(u16 idx)
     w16_ret_es = ss;
     if (opt_trace)
         wlog("w16: call %s.%s\n", w16_modnames[a->mod], a->name);
+    if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
+        wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
     r = a->fn(ss, (u16)(sp + 12));
     n = a->argbytes;
     if (n) {

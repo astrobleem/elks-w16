@@ -75,3 +75,23 @@ u32 g_GetObject(u16 ss,u16 ap)
  {u16 stride=((bitmaps[i].w*bpp+15)/16)*2;out[6]=stride;out[7]=stride>>8;}
  out[8]=1;out[9]=bpp;fcopy_out(seg,off,out,14);return 14;
 }
+
+/* Compatibility follows the supplied DC's selected bitmap, not merely the
+ * display from which a memory DC was created. The default memory bitmap is mono. */
+u32 g_CreateCompatibleBitmap(u16 ss,u16 ap)
+{
+ u16 hdc=AW(4),stride;int w=(i16)AW(2),h=(i16)AW(0),m=di(hdc),i,b,mono=0;
+ if(w<0||h<0||w>640||h>480)return 0;
+ if(m>=0){b=bi(memory[m].bitmap);mono=b<0||bitmaps[b].seg!=0;}
+ else if(!dc_get(hdc))return 0;
+ if(!w||!h){w=h=1;mono=1;}
+ stride=mono?((w+15)/16)*2:(((w+1)/2+3)&~3);
+ if((u32)stride*h>16384UL)return 0;
+ for(i=0;i<NB&&bitmaps[i].used;i++);if(i==NB)return 0;
+ bitmaps[i].w=w;bitmaps[i].h=h;bitmaps[i].stride=stride;
+ if(mono){if(seg_alloc(((u32)stride*h+15)/16,&bitmaps[i].seg))goto failed;
+  fzero(bitmaps[i].seg,0,stride*h);
+ }else{bitmaps[i].pix=GrNewPixmap(w,h,0);if(!bitmaps[i].pix)goto failed;}
+ bitmaps[i].used=1;return BBASE+2*i;
+failed: release_bitmap(i);return 0;
+}

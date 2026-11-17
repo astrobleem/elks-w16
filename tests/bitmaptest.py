@@ -21,7 +21,9 @@ static u16 args[10];
 #define GR_MODE_COPY 0
 #define MWROP_COPY 0
 #define GR_RGB(r,g,b) ((r)|((g)<<8)|((b)<<16))
-static u8 resource[20000],ram[16384],output[65536];static u16 length;
+static u8 resource[20000],rams[16][16384],output[65536];static u16 length;
+#define ram rams[0]
+static int segused[16],pixused[16];
 static int outputwrites;
 static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
  assert(seg==2&&(u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;
@@ -37,13 +39,13 @@ static int ne_read(struct module*m,u32 o,void*p,u16 n){
  if(++readcount==readfail)return -1;
  if(o+n>length)return -1;memcpy(p,resource+o,n);return 0;
 }
-static int seg_alloc(u16 n,u16*s){if(segfail)return -1;assert(!seglive&&n*16<=sizeof ram);seglive=1;*s=1;memset(ram,0xa5,sizeof ram);return 0;}
-static void seg_free(u16 s){assert(s==1&&seglive);seglive=0;}
-static void fzero(u16 s,u16 o,u16 n){assert(s==1&&seglive&&o+n<=sizeof ram);memset(ram+o,0,n);}
-static u8 rd8(u16 s,u16 o){assert(s==1&&seglive&&o<sizeof ram);return ram[o];}
-static void wr8(u16 s,u16 o,u8 v){assert(s==1&&seglive&&o<sizeof ram);ram[o]=v;}
-static int GrNewPixmap(int w,int h,void*p){if(pixfail)return 0;assert(!pixlive);pixlive=1;return 3;}
-static void GrDestroyWindow(int p){assert(p==3&&pixlive);pixlive=0;}
+static int seg_alloc(u16 n,u16*s){int i;if(segfail)return -1;assert(n*16<=sizeof ram);for(i=0;i<16&&segused[i];i++);assert(i<16);segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
+static void seg_free(u16 s){assert(s>=1&&s<=16&&segused[s-1]);segused[s-1]=0;seglive--;}
+static void fzero(u16 s,u16 o,u16 n){assert(s>=1&&s<=16&&segused[s-1]&&o+n<=sizeof ram);memset(rams[s-1]+o,0,n);}
+static u8 rd8(u16 s,u16 o){assert(s>=1&&s<=16&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
+static void wr8(u16 s,u16 o,u8 v){assert(s>=1&&s<=16&&segused[s-1]&&o<sizeof ram);rams[s-1][o]=v;}
+static int GrNewPixmap(int w,int h,void*p){int i;if(pixfail)return 0;for(i=0;i<16&&pixused[i];i++);assert(i<16);pixused[i]=1;pixlive++;return i+3;}
+static void GrDestroyWindow(int p){assert(p>=3&&p<19&&pixused[p-3]);pixused[p-3]=0;pixlive--;}
 static int GrNewGC(void){if(gcfail)return 0;assert(!gclive);gclive=1;return 4;}
 static void GrDestroyGC(int g){assert(g==4&&gclive);gclive=0;}
 static void GrSetGCMode(int g,int m){mode=m;}
@@ -80,6 +82,16 @@ static void clean(void){int i;assert(!seglive&&!pixlive&&!gclive);for(i=0;i<NB;i
 static u16 dcnew(void){args[0]=0;return g_CreateCompatibleDC(0,0);}
 static int blit(u16 dc,int dx,int dy,int sx,int sy,int w,int h,u32 rop){
  args[0]=rop;args[1]=rop>>16;args[2]=sy;args[3]=sx;args[4]=dc;args[5]=h;args[6]=w;args[7]=dy;args[8]=dx;args[9]=9;return g_BitBlt(0,0);
+}
+static u16 compatible(u16 d,int w,int h){args[0]=h;args[1]=w;args[2]=d;return g_CreateCompatibleBitmap(0,0);}
+static void object_check(u16 b,int w,int h,int depth){
+ int stride=((w*depth+15)/16)*2;
+ args[0]=100;args[1]=2;args[2]=14;args[3]=b;
+ memset(output,0xa5,sizeof output);assert(g_GetObject(0,0)==14);
+ assert(output[100]==0&&output[101]==0);
+ assert((output[102]|output[103]<<8)==w&&(output[104]|output[105]<<8)==h);
+ assert((output[106]|output[107]<<8)==stride&&output[108]==1&&output[109]==depth);
+ assert(!output[110]&&!output[111]&&!output[112]&&!output[113]&&output[114]==0xa5);
 }
 int main(void){
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
@@ -156,6 +168,30 @@ int main(void){
    for(n=0;n<65536;n++)assert(output[n]==0xa5);
   }
  }
+
+ setup(1,1,1);b=compatible(9,71,96);assert(b&&pixlive==1&&!seglive);object_check(b,71,96,4);
+ d=dcnew();e=compatible(d,71,96);assert(e&&seglive==1);object_check(e,71,96,1);
+ assert(bitmap_select(d,e)==DEFAULT_BITMAP);
+ {u16 f=compatible(d,17,9);assert(f&&seglive==2);object_check(f,17,9,1);assert(bitmap_delete(f)==1);}
+ assert(bitmap_select(d,b)==e);
+ {u16 f=compatible(d,17,9);assert(f&&pixlive==2);object_check(f,17,9,4);assert(bitmap_delete(f)==1);}
+ assert(bitmap_select(d,DEFAULT_BITMAP)==b);bitmap_shutdown();clean();
+ for(k=0;k<3;k++){
+  setup(1,1,1);b=compatible(9,k==1?71:0,k==0?96:0);
+  assert(b&&seglive==1&&!pixlive);object_check(b,1,1,1);
+ }
+ setup(1,1,1);d=dcnew();
+ assert(!compatible(0,1,1)&&!compatible(123,1,1));
+ assert(!compatible(9,-1,1)&&!compatible(9,1,-1));
+ assert(!compatible(9,641,1)&&!compatible(9,1,481));
+ assert(!compatible(9,640,52)); /* color 320*52 >16KiB */
+ assert(!compatible(d,640,205)); /* mono 80*205 >16KiB */
+ clean();
+ segfail=1;assert(!compatible(d,71,96));clean();segfail=0;
+ pixfail=1;assert(!compatible(9,71,96));clean();pixfail=0;
+ b=compatible(9,640,51);assert(b);object_check(b,640,51,4);assert(bitmap_delete(b)==1);
+ b=compatible(d,640,204);assert(b);object_check(b,640,204,1);assert(bitmap_delete(b)==1);
+ for(k=0;k<NB;k++){b=compatible(d,1,1);assert(b);}assert(!compatible(d,1,1));
  bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
  return 0;
 }
