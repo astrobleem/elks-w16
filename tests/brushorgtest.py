@@ -18,7 +18,7 @@ typedef uint16_t u16;typedef int16_t i16;typedef uint32_t u32;
 typedef u16 GR_BITMAP;
 #define GR_MODE_COPY 0
 struct dc {int wid,gc;i16 brushx,brushy;u32 bkcolor,textcolor;} dcs[2];
-static struct {int w,h;u16 rows[16];}bmps[1];
+static struct {int w,h,mono;u16 rows[16];u32 colors[2];}bmps[1];
 static u16 scratch[640],args[3];
 #define w16_scratch scratch
 #define AW(n) args[(n)/2]
@@ -39,7 +39,7 @@ static void GrBitmap(int wid,int gc,int x,int y,int w,int h,GR_BITMAP*data){
  assert(gc==wid&&x==base_x&&w==width&&h>0&&h<=16);
  assert(16+2*((w+15)/16)*h<=512);
  assert(y>=base_y&&y+h<=base_y+height);
- assert(mode==GR_MODE_COPY&&fg==d->bkcolor&&bg==d->textcolor&&usebg==1);
+ assert(mode==GR_MODE_COPY&&fg==(bmps[0].mono?d->bkcolor:bmps[0].colors[1])&&bg==(bmps[0].mono?d->textcolor:bmps[0].colors[0])&&usebg==1);
  calls++;
  for(row=0;row<h;row++)for(col=0;col<w;col++){
   int actual=(data[row*((w+15)/16)+col/16]>>(15-col%16))&1;
@@ -63,6 +63,7 @@ int main(void){
  int bw,bh,i,j,k;
  int origins[]={-32768,-32767,-17,-1,0,1,17,32766,32767};
  int widths[]={1,7,15,16,17,31,32,33,255,256,257,639,640};
+ bmps[0].mono=1;
  dcs[0].wid=dcs[0].gc=1;dcs[1].wid=dcs[1].gc=2;
  dcs[0].bkcolor=123;dcs[0].textcolor=456;
  args[2]=1;args[1]=32767;args[0]=0x8000;
@@ -82,6 +83,8 @@ int main(void){
   }
  }
  bmps[0].w=7;bmps[0].h=13;run(-32768,32288,640,480);
+ bmps[0].mono=0;bmps[0].colors[0]=0xff0000;bmps[0].colors[1]=0x00ff00;
+ run(1,2,33,19);dcs[0].bkcolor=777;dcs[0].textcolor=888;run(-3,-4,31,17);
  calls=0;assert(!pat_fill(&dcs[0],0,0,641,1,0)&&!calls);
  assert(!pat_fill(&dcs[0],0,0,1,481,0)&&!calls);
  assert(!pat_fill(&dcs[0],32767,0,2,1,0)&&!calls);

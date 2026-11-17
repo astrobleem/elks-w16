@@ -37,7 +37,7 @@ done
 mkdir -p "$ROOT/build/nanox-medium"
 for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
     object="$ROOT/build/nanox-medium/$(basename "$source" .c).o"
-    "$CC" -mcmodel=medium -melks-libc -march=i8086 -Os \
+    "$CC" -mcmodel=medium -melks-libc -mregparmcall -march=i8086 -Os \
         -ffunction-sections -fdata-sections \
         -DELKS=1 -DUNIX=1 -DNDEBUG=1 -DNONETWORK=0 \
         '-DMWCONFIG_FILE="mwconfig.elks"' -DMWPIXEL_FORMAT=MWPF_PALETTE \
@@ -45,8 +45,10 @@ for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
         -I"$TOPDIR/include" -I"$TOPDIR/libc/include" -I"$TOPDIR/elks/include" \
         -I"$MWDIR/src/include" -I"$MWDIR/src/elksdrivers" -c -o "$object" "$MWDIR/src/$source"
 done
+"$CC" -mcmodel=medium -melks-libc -mregparmcall -march=i8086 -Os \
+    -c -o "$ROOT/build/nanox-medium/nanoxabi.o" "$ROOT/src/nanoxabi.c"
 "$AR" rcs "$ROOT/build/nanox-medium/libnano-X-medium.a" \
     "$ROOT/build/nanox-medium/client.o" "$ROOT/build/nanox-medium/nxproto.o" \
-    "$ROOT/build/nanox-medium/nxutil.o" "$ROOT/build/nanox-medium/osdep.o"
+    "$ROOT/build/nanox-medium/nxutil.o" "$ROOT/build/nanox-medium/osdep.o" "$ROOT/build/nanox-medium/nanoxabi.o"
 cp "$ROOT/build/nanox-medium/libnano-X-medium.a" "$MWDIR/src/lib/libnano-X-medium.a"
 printf '\nBuilt Nano-X, utilities and separate small/medium client libraries.\n'

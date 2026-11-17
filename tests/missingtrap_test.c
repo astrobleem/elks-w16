@@ -39,7 +39,8 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_KERNEL,20)].argbytes==2);
  assert(api_table[api_find_ord(MOD_KERNEL,6)].argbytes==6);
  assert(api_table[api_find_ord(MOD_KERNEL,154)].argbytes==4);
- assert(api_find_ord(MOD_GDI,28)<0);
+ /* CreateHatchBrush remains unsupported; RoundRect is now implemented. */
+ assert(api_find_ord(MOD_GDI,58)<0);
  assert(api_find_ord(MOD_USER,175)>=0);
  assert(api_table[api_find_ord(MOD_USER,175)].argbytes==6);
  assert(api_table[api_find_ord(MOD_GDI,34)].argbytes==20);
@@ -66,11 +67,11 @@ int main(void) {
  assert(api_find_ord(MOD_PBRUSH,5)==i && !api_target(i,&s,&o) && o==8*i);
  i=api_find_ord(MOD_USER,414);assert(i>255 && !api_table[i].flags && api_table[i].argbytes==12);
  assert(!api_target(i,&s,&o) && o==8*i);
- i=api_find_ord(MOD_GDI,28);
+ i=api_find_ord(MOD_GDI,58);
  assert(i>=0 && (api_table[i].flags&API_MISSING));
  assert(api_table[i].fn==0);
  assert(!api_target(i,&s,&o));assert(o==8*i);
- opt_missing=0;assert(api_find_ord(MOD_GDI,28)<0);
+ opt_missing=0;assert(api_find_ord(MOD_GDI,58)<0);
  assert(api_find_ord(MOD_GDI,65535)<0);
  assert(api_target(api_count,&s,&o)<0);
  return 0;

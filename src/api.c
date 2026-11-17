@@ -52,7 +52,7 @@ u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_GetBkColor(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
-u32 g_ExtFloodFill(u16, u16), g_Polyline(u16, u16), g_Polygon(u16, u16), g_RoundRect(u16, u16), g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
+u32 g_SetPolyFillMode(u16, u16), g_ExtFloodFill(u16, u16), g_Polyline(u16, u16), g_Polygon(u16, u16), g_RoundRect(u16, u16), g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
 u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
 u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
@@ -290,7 +290,7 @@ const struct api api_table[] = {
     /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
      * these terminate if executed; ordinary loads reject them. */
     { G,3,"SetMapMode",4,0,H(g_SetMapMode) },
-    { G,   6, "SETPOLYFILLMODE", 0, API_MISSING, 0 },
+    { G,   6, "SetPolyFillMode", 4, 0, H(g_SetPolyFillMode) },
     { G,7,"SetStretchBltMode",4,0,H(g_SetStretchBltMode) },
     { G,11,"SetWindowOrg",6,0,H(g_SetWindowOrg) },
     { G,12,"SetWindowExt",6,0,H(g_SetWindowExt) },
@@ -508,7 +508,7 @@ int api_target(int idx, u16 *seg, u16 *off)
 
 /* Called from thunk.S on the loader stack. The app frame at w16_app_ss:w16_app_sp is
  * DI SI DS BP IP CS, then the arguments. Pops Pascal arguments by moving the frame up. */
-u32 w16_api_dispatch(u16 idx)
+u32 W16_CDECL w16_api_dispatch(u16 idx)
 {
     const struct api *a;
     u16 ss = w16_app_ss, sp = w16_app_sp, n, k;

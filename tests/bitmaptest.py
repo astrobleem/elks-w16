@@ -104,9 +104,8 @@ code+=(root/'src/polygon.c').read_text()
 code+=(root/'src/oval.c').read_text()
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
-code+="struct {u16 rows[16];u8 h;} bmps[1];\nstatic int bmp_index(u16 h){return h==0x700?0:-1;}\n"
 code+=gdi[gdi.index('u32 g_GetBkColor('):gdi.index('u32 g_SetBkColor(')]
-code+=gdi[gdi.index('static u32 transfer_bitmap_bits('):gdi.index('/* CreatePatternBrush(')]
+code+=gdi[gdi.index('u32 g_GetBitmapBits('):gdi.index('/* CreatePatternBrush copies')]
 code+=r"""
 static void wordput(int o,int v){resource[o]=v;resource[o+1]=v>>8;}
 static int pattern(int x,int y){return ((x*3+y*7)%11)<5;}
@@ -320,7 +319,7 @@ static void ddb_bits_test(void){
  assert(!bitmap_bits(h,153600UL,99,0,0));bitmap_shutdown();clean();
 }
 static void small_ddb_bits_test(void){
- u32 n;u16 dc;
+ u32 n;u16 dc,h,rows[16];u8 pw,ph;u32 colors[2];
  args[0]=0;dc=g_CreateCompatibleDC(0,0);assert(dc);args[0]=dc;
  assert(g_GetBkColor(0,0)==0xffffffUL);bitmap_setcolor(dc,0x123456,1);
  assert(g_GetBkColor(0,0)==0x123456);assert(bitmap_savedc(dc));
@@ -328,11 +327,29 @@ static void small_ddb_bits_test(void){
  assert(g_GetBkColor(0,0)==0x123456);bitmap_shutdown();
  args[0]=0xffff;assert(g_GetBkColor(0,0)==0xffffffffUL);
  args[0]=9;dest.bkcolor=0x654321;assert(g_GetBkColor(0,0)==0x654321);
- memset(bmps,0,sizeof bmps);bmps[0].h=2;bmps[0].rows[0]=0x8123;bmps[0].rows[1]=0xabcd;
- args[4]=0x700;args[0]=20;args[1]=99;args[2]=4;args[3]=0;
+ h=bitmap_create(16,2,1,1,0,0);assert(h);
+ output[20]=0x81;output[21]=0x23;output[22]=0xab;output[23]=0xcd;
+ args[4]=h;args[0]=20;args[1]=99;args[2]=4;args[3]=0;
+ assert(g_SetBitmapBits(0,0)==4);memset(output+20,0,4);
  n=g_GetBitmapBits(0,0);assert(n==4&&output[20]==0x81&&output[21]==0x23&&output[23]==0xcd);
- output[20]=0x67;args[2]=1;assert(g_SetBitmapBits(0,0)==1&&bmps[0].rows[0]==0x6723);
+ assert(bitmap_pattern(h,&pw,&ph,rows,colors)&&pw==16&&ph==2&&rows[0]==0x8123&&rows[1]==0xabcd);
+ output[20]=0x67;args[2]=1;assert(g_SetBitmapBits(0,0)==1&&rows[0]==0x8123);
  args[0]=65535;args[2]=2;assert(!g_SetBitmapBits(0,0));
+ args[0]=0;dc=g_CreateCompatibleDC(0,0);assert(bitmap_select(dc,h)==DEFAULT_BITMAP);
+ assert(bitmap_patblt(dc,0,0,16,2,0x00ff0062UL,0,0,0));
+ assert(bitmap_pattern(h,&pw,&ph,rows,colors)&&rows[0]==0xffff&&rows[1]==0xffff);
+ bitmap_shutdown();clean();
+ h=bitmap_create(17,2,1,1,0,0);assert(h&&!bitmap_pattern(h,&pw,&ph,rows,colors));
+ bitmap_shutdown();clean();
+ native_palette.count=16;native_palette.palette[1].r=255;native_palette.palette[2].g=255;native_palette.palette[3].b=255;
+ h=bitmap_create(8,8,1,4,0,0);assert(h);
+ bitmap_put(&bitmaps[bi(h)],0,0,1);bitmap_put(&bitmaps[bi(h)],1,0,2);
+ for(int yy=0;yy<8;yy++)for(int xx=0;xx<8;xx++)bitmap_put(&bitmaps[bi(h)],xx,yy,xx&1?2:1);
+ assert(bitmap_pattern(h,&pw,&ph,rows,colors)==2&&pw==8&&ph==8&&rows[0]==0x5500);
+ assert(colors[0]==bitmap_rgb(&bitmaps[bi(h)],1)&&colors[1]==bitmap_rgb(&bitmaps[bi(h)],2));
+ bitmap_put(&bitmaps[bi(h)],3,3,3);assert(!bitmap_pattern(h,&pw,&ph,rows,colors));
+ bitmap_shutdown();clean();
+
 }
 static void flood_output(void*ctx,int x,int y,int w,int kind){
  int i;(void)ctx;assert(kind==1&&x>=0&&y>=0&&x+w<=100&&y<100);

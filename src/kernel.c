@@ -695,7 +695,7 @@ void dos_init(void)
     (void)dos_vectors;
 }
 
-void w16_int21_dispatch(void)
+void W16_CDECL w16_int21_dispatch(void)
 {
     u16 ss = w16_app_ss, f = w16_app_sp;
     u16 ax = rd16(ss, f + R_AX), ah = ax >> 8, al = ax & 0xFF;

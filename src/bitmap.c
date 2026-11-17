@@ -457,6 +457,29 @@ u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set)
  return count;
 }
 
+/* Snapshot mono or two-colour DDBs without retaining the source handle.
+ * A third colour is rejected, never approximated into a monochrome pattern. */
+int bitmap_pattern(u16 h,u8*w,u8*height,u16*rows,u32*colors)
+{
+ int i=bi(h),x,y,two=0;struct bitmap*b;u16 row;u8 v;u32 rgb;
+ if(i<0)return 0;b=&bitmaps[i];
+ if(b->w>16||b->h>16)return 0;
+ colors[0]=colors[1]=bitmap_rgb(b,bitmap_index(b,0,0));
+ for(y=0;y<b->h;y++){
+  row=0;
+  for(x=0;x<b->w;x++){
+   v=bitmap_index(b,x,y);
+   if(b->bpp!=1){
+    rgb=bitmap_rgb(b,v);v=rgb!=colors[0];
+    if(v){if(!two){colors[1]=rgb;two=1;}else if(rgb!=colors[1])return 0;}
+   }
+   if(v)row|=0x8000u>>x;
+  }
+  rows[y]=row;
+ }
+ *w=b->w;*height=b->h;return b->bpp==1?1:2;
+}
+
 /* Compatibility follows the supplied DC's selected bitmap, not merely the
  * display from which a memory DC was created. The default memory bitmap is mono. */
 typedef char bitmap_palette_fits_scratch[(sizeof(GR_PALETTE)<=W16_SCRATCH)?1:-1];

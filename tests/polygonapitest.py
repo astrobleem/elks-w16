@@ -4,7 +4,7 @@ from pathlib import Path
 import os,subprocess,tempfile
 root=Path(__file__).resolve().parents[1]
 s=(root/'src/gdi.c').read_text()
-a=s.index('struct polygon_screen {');b=s.index('/* Rectangle(hdc',a)
+a=s.index('/* ALTERNATE is the only supported polygon fill mode.');b=s.index('/* Rectangle(hdc',a)
 code=r'''
 #include <stdint.h>
 #include <stdlib.h>
@@ -27,6 +27,7 @@ static u32 screen[16][16],color;
 #define OBJ_BRUSH 2
 static struct dc*dc_get(u16 h){return h==1?&dc:0;}
 static struct gobj*obj_get(u16 h){return h==1||h==2?&objects[h-1]:0;}
+static u16 bitmap_rop2(u16 h,u16 mode){assert(mode==0);return h==2?13:0;}
 static u16 bitmap_object(u16 h,int type,int unused){return h==2?type:0;}
 static u16 rd16(u16 seg,u16 off){assert(seg==123&&off<512);reads++;return points[off/2];}
 static int gdi_map_point(struct dc*d,int*x,int*y){mapped++;*x+=1;*y+=2;return !badmap;}
@@ -43,6 +44,11 @@ static void GrFillRect(int wid,int gc,int x,int y,int w,int h)
 ''' +s[a:b]+r'''
 int main(void){
  u16 square[]={2,2,6,2,6,6,2,6};int x,y;
+ args[0]=1;args[1]=1;assert(g_SetPolyFillMode(0,0)==1);
+ args[1]=2;assert(g_SetPolyFillMode(0,0)==1);
+ args[1]=99;assert(!g_SetPolyFillMode(0,0));args[1]=1;
+ args[0]=2;assert(!g_SetPolyFillMode(0,0));args[0]=0;assert(!g_SetPolyFillMode(0,0));
+ assert(!g_SetPolyFillMode(0,65534));
  memcpy(points,square,sizeof square);args[0]=4;args[1]=0;args[2]=123;args[3]=1;
  assert(g_Polygon(0,0)==1&&mapped==4&&reads==8&&writes==25);
  for(y=4;y<=8;y++)for(x=3;x<=7;x++)assert(screen[y][x]==(x==3||x==7||y==4||y==8?0x111111:0x222222));

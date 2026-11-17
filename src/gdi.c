@@ -25,7 +25,7 @@ struct gobj { u8 type, used, null; u16 style, width; u32 color; };   /* fonts: s
                                                                         pattern brushes: style BS_PATTERN, width = bitmap */
 #define BS_PATTERN 3
 #define MAXBMP 4
-static struct { u8 used, w, h; u16 rows[16]; } bmps[MAXBMP];      /* monochrome bitmaps up to 16x16 */
+static struct { u8 used, w, h, mono; u16 rows[16]; u32 colors[2]; } bmps[MAXBMP];      /* monochrome bitmaps up to 16x16 */
 static struct gobj stock[NSTOCK];
 static struct gobj objs[MAXOBJ];
 static struct dc dcs[MAXDC];
@@ -223,11 +223,6 @@ void gdi_census(u16 *ndc, u16 *nobj)
             (*nobj)++;
 }
 
-static int bmp_index(u16 h)
-{
-    u16 i = (u16)(h - HBMP_BASE) >> 1;
-    return (h >= HBMP_BASE && !(h & 1) && i < MAXBMP && bmps[i].used) ? (int)i : -1;
-}
 
 void gdi_shutdown(void)
 {
@@ -372,16 +367,7 @@ u32 g_DeleteObject(u16 ss, u16 ap)
 {
     u16 h = AW(0), i;
     struct gobj *o = obj_get(h);
-    int bi = bmp_index(h);
     {int r=bitmap_delete(h);if(r>=0)return r;}
-    if (bi >= 0) {
-        /* Pattern brushes currently retain their source rows rather than a
-         * private copy. Do not let a saved brush observe a recycled bitmap. */
-        for(i=0;i<MAXOBJ;i++)
-            if(objs[i].used&&objs[i].type==OBJ_BRUSH&&objs[i].style==BS_PATTERN&&objs[i].width==bi)return 0;
-        bmps[bi].used = 0;
-        return 1;
-    }
     if(palette_valid(h)){
         if(h==HSTOCK+2*15)return 1;
         if(saved_object(h)||bitmap_object_used(h))return 0;
@@ -398,6 +384,7 @@ u32 g_DeleteObject(u16 ss, u16 ap)
             vlog("w16: DeleteObject %04x refused: still selected\n", h);
             return 0;
         }
+    if(o->type==OBJ_BRUSH&&o->style==BS_PATTERN)bmps[o->width].used=0;
     o->used = 0;
     return 1;
 }
@@ -492,8 +479,8 @@ static int pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
     batch = 480 / (2 * wpr);
     if (batch > 16) batch = 16;
     gs_mode(GS(d), GR_MODE_COPY);
-    gs_fg(GS(d), rgb_to_gr(d->bkcolor));
-    gs_bg(GS(d), rgb_to_gr(d->textcolor));
+    gs_fg(GS(d), rgb_to_gr(bmps[bi].mono?d->bkcolor:bmps[bi].colors[1]));
+    gs_bg(GS(d), rgb_to_gr(bmps[bi].mono?d->textcolor:bmps[bi].colors[0]));
     gs_usebg(GS(d), 1);
     for (y0 = 0; y0 < h; y0 += batch) {
         int rows = h - y0 > batch ? batch : h - y0;
@@ -553,6 +540,14 @@ u32 g_SetROP2(u16 ss, u16 ap)
     if (r >= 1 && r <= 16)
         d->rop2 = (u8)r;
     return prev;
+}
+
+/* ALTERNATE is the only supported polygon fill mode. Querying the memory
+ * DC's ROP with mode zero validates its handle without changing any state. */
+u32 g_SetPolyFillMode(u16 ss,u16 ap)
+{
+ if(ap>0xfffcu||AW(0)!=1)return 0;
+ return dc_get(AW(2))||bitmap_rop2(AW(2),0)?1:0;
 }
 
 struct polygon_screen { struct dc *d; GR_COLOR pen,brush; };
@@ -749,58 +744,26 @@ u32 u_FillRect(u16 ss, u16 ap)
 }
 
 /* ---------------------------------------------------------------- bitmaps, pattern brushes, PatBlt */
-/* CreateBitmap(nWidth, nHeight, nPlanes, nBitCount, lpBits): monochrome bitmaps up to 16x16, the brush
- * patterns programs build; rows are WORD aligned with the leftmost pixel in the most significant bit */
-u32 g_CreateBitmap(u16 ss, u16 ap)
-{
-    u16 off = AW(0), seg = AW(2), bpp = AW(4), planes = AW(6), h = AW(8), w = AW(10), y;
-    int i;
-    /* The 1x1 mono placeholder is selected to detach a DDB before GetDIBits.
-     * Unlike legacy brush-row handles, owned bitmaps are real memory-DC objects. */
-    if ((w==1 && h==1) || planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
-        return bitmap_create(w,h,planes,bpp,seg,off);
-    }
-    for (i = 0; i < MAXBMP && bmps[i].used; i++)
-        ;
-    if (i == MAXBMP) {
-        wlog("w16: bitmap table full (%d)\n", MAXBMP);
-        return 0;
-    }
-    bmps[i].used = 1; bmps[i].w = (u8)w; bmps[i].h = (u8)h;
-    for (y = 0; y < h; y++)
-        bmps[i].rows[y] = (seg || off) ? (u16)((rd8(seg, (u16)(off + 2 * y)) << 8) | rd8(seg, (u16)(off + 2 * y + 1))) : 0;
-    return (u16)(HBMP_BASE + 2 * i);
-}
+/* All DDBs, including small monochrome masks, are selectable memory objects. */
+u32 g_CreateBitmap(u16 ss,u16 ap)
+{return bitmap_create(AW(10),AW(8),AW(6),AW(4),AW(2),AW(0));}
 
-/* Get/SetBitmapBits(hBitmap,LONG count,far bits), including brush DDBs. */
-static u32 transfer_bitmap_bits(u16 ss,u16 ap,int set)
-{
- int i=bmp_index(AW(8));u32 count=AL(4),at,size;u16 seg=AW(2),off=AW(0),row;u8 v;
- if(i<0)return bitmap_bits(AW(8),count,seg,off,set);
- if(count&0x80000000UL)return 0;
- size=2*bmps[i].h;
- if(!seg&&!off)return set?0:size;
- if(count>size)count=size;
- if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
- for(at=0;at<count;at++){
-  row=at/2;
-  if(set){v=rd8(seg,(u16)(off+at));
-   if(at&1)bmps[i].rows[row]=(bmps[i].rows[row]&0xff00)|v;
-   else bmps[i].rows[row]=(bmps[i].rows[row]&0xff)|((u16)v<<8);
-  }else wr8(seg,(u16)(off+at),(u8)(bmps[i].rows[row]>>((at&1)?0:8)));
- }
- return count;
-}
-u32 g_GetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,0);}
-u32 g_SetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,1);}
+/* Get/SetBitmapBits(hBitmap,LONG count,far bits). */
+u32 g_GetBitmapBits(u16 ss,u16 ap){return bitmap_bits(AW(8),AL(4),AW(2),AW(0),0);}
+u32 g_SetBitmapBits(u16 ss,u16 ap){return bitmap_bits(AW(8),AL(4),AW(2),AW(0),1);}
 
-/* CreatePatternBrush(hBitmap) */
-u32 g_CreatePatternBrush(u16 ss, u16 ap)
+/* CreatePatternBrush copies source rows, independent of the bitmap lifetime. */
+u32 g_CreatePatternBrush(u16 ss,u16 ap)
 {
-    int i = bmp_index(AW(0));
-    if (i < 0)
-        return 0;
-    return obj_new(OBJ_BRUSH, 0x808080ul, BS_PATTERN, (u16)i);    /* grey where a pattern cannot be drawn */
+ int i,type;u16 h;
+ for(i=0;i<MAXBMP&&bmps[i].used;i++);
+ if(i==MAXBMP)return 0;
+ type=bitmap_pattern(AW(0),&bmps[i].w,&bmps[i].h,bmps[i].rows,bmps[i].colors);
+ if(!type)return 0;
+ bmps[i].mono=type==1;
+ h=obj_new(OBJ_BRUSH,0x808080ul,BS_PATTERN,(u16)i);
+ if(h)bmps[i].used=1;
+ return h;
 }
 
 /* PatBlt(hDC, X, Y, nWidth, nHeight, dwRop): fill with the brush, invert, blacken or whiten */

@@ -13,6 +13,13 @@
 #ifndef W16_H
 #define W16_H
 
+/* Assembly thunk boundaries remain stack-based even in register-call builds. */
+#ifdef W16_HOST
+#define W16_CDECL
+#else
+#define W16_CDECL __attribute__((cdecl))
+#endif
+
 #ifdef W16_HOST
 #include <stdint.h>
 typedef uint8_t        u8;     /* host build: the exact widths of the ia16 types, so 32-bit arithmetic */
@@ -265,17 +272,17 @@ u32 enum_system_font(u16,u16,u16,u16,u32,u16,u16,u16,u16);
 extern struct ne_module *w16_mod;
 extern u16 w16_app_ss, w16_app_sp, w16_ldr_sp;
 extern u16 w16_ret_bx, w16_ret_cx, w16_ret_es;
-u16  w16_init16(const u16 *regs); /* far-call DLL initializer; traps unwind here */
-u32  w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words);
-void w16_exit16(u16 code);                  /* terminate the app, unwind to w16_run() */
-u16  w16_get_cs(void);
-void w16_setvect(u16 vec, u16 off, u16 seg);
-u32  w16_getvect(u16 vec);
-extern void w16_stubs(void);
-extern void w16_int21(void);
-extern void w16_dos3call(void);
-extern void w16_debugstring(void);
-int  w16_thunk_init(void);                  /* 0 ok, -1 another instance shares our text */
+u16  W16_CDECL w16_init16(const u16 *regs); /* far-call DLL initializer; traps unwind here */
+u32  W16_CDECL w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words);
+void W16_CDECL w16_exit16(u16 code);                  /* terminate the app, unwind to w16_run() */
+u16  W16_CDECL w16_get_cs(void);
+void W16_CDECL w16_setvect(u16 vec, u16 off, u16 seg);
+u32  W16_CDECL w16_getvect(u16 vec);
+extern void W16_CDECL w16_stubs(void);
+extern void W16_CDECL w16_int21(void);
+extern void W16_CDECL w16_dos3call(void);
+extern void W16_CDECL w16_debugstring(void);
+int  W16_CDECL w16_thunk_init(void);                  /* 0 ok, -1 another instance shares our text */
 
 /* argument access inside API handlers */
 #define AW(n)   rd16(ss, (u16)(ap + (n)))

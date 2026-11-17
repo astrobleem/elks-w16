@@ -51,7 +51,7 @@ make -C "$WORK/src" -f Makefile.vga CONFIG_ARCH_PC98= SCREEN_TANDY=n SCREEN_CGA=
 mkdir -p "$WORK/medium"
 for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
     object="$WORK/medium/$(basename "$source" .c).o"
-    "$CC" -mcmodel=medium -melks-libc -march=i8086 -Os \
+    "$CC" -mcmodel=medium -melks-libc -mregparmcall -march=i8086 -Os \
         -ffunction-sections -fdata-sections \
         -DELKS=1 -DUNIX=1 -DNDEBUG=1 -DNONETWORK=0 \
         '-DMWCONFIG_FILE="mwconfig.elks"' -DMWPIXEL_FORMAT=MWPF_PALETTE \
@@ -59,8 +59,10 @@ for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
         -I"$TOPDIR/include" -I"$TOPDIR/libc/include" -I"$TOPDIR/elks/include" \
         -I"$WORK/src/include" -I"$WORK/src/elksdrivers" -c -o "$object" "$WORK/src/$source"
 done
+"$CC" -mcmodel=medium -melks-libc -mregparmcall -march=i8086 -Os \
+    -c -o "$WORK/medium/nanoxabi.o" "$ROOT/src/nanoxabi.c"
 "$AR" rcs "$WORK/medium/libnano-X-medium.a" "$WORK/medium/client.o" \
-    "$WORK/medium/nxproto.o" "$WORK/medium/nxutil.o" "$WORK/medium/osdep.o"
+    "$WORK/medium/nxproto.o" "$WORK/medium/nxutil.o" "$WORK/medium/osdep.o" "$WORK/medium/nanoxabi.o"
 cp "$WORK/src/bin/nano-x" "$OUT/nano-x"
 cp "$WORK/medium/libnano-X-medium.a" "$OUT/libnano-X-medium.a"
 # The caller can compile w16 against these negotiated API declarations.

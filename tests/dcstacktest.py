@@ -37,7 +37,6 @@ u8 *host_ptr(u16 s,u16 o,u16 n){assert((u32)o+n<=65536);return host_mem+LIN(s,o)
 #define BS_PATTERN 3
 struct gobj {int used,type,style,width;} object={1,0,0,0},objs[1];static struct{int used;}bmps[1];
 struct gobj*obj_get(u16 h){return h==0x400?&object:0;}
-int bmp_index(u16 h){return h==0x900?0:-1;}
 int bitmap_delete(u16 h){(void)h;return -1;}
 int bitmap_object_used(u16 h){(void)h;return 0;}
 int palette_valid(u16 h){return h==0xe00||h==0x31e;}
@@ -69,9 +68,9 @@ int main(void){
  dc_release(HDC_BASE);assert(!dc_saved_count[0]&&!saved_object(0x400));
  dcs[0].used=1;assert(!restore(HDC_BASE,-1));dcs[0].pen=0;
  wr16(0x1000,0,0x400);assert(g_DeleteObject(0x1000,0));assert(!object.used);
- objs[0].used=1;objs[0].type=OBJ_BRUSH;objs[0].style=BS_PATTERN;objs[0].width=0;bmps[0].used=1;
- wr16(0x1000,0,0x900);assert(!g_DeleteObject(0x1000,0)&&bmps[0].used);
- objs[0].used=0;assert(g_DeleteObject(0x1000,0)&&!bmps[0].used);
+ object.used=1;object.type=OBJ_BRUSH;object.style=BS_PATTERN;object.width=0;bmps[0].used=1;
+ dcs[0].brush=0x400;wr16(0x1000,0,0x400);assert(!g_DeleteObject(0x1000,0)&&bmps[0].used);
+ dcs[0].brush=0;assert(g_DeleteObject(0x1000,0)&&!bmps[0].used);
  assert(!save(HDC_BASE+1));assert(!save(0xffff));assert(!restore(0xffff,-1));
  puts("DC save/restore full state, object lifetime, limits and handle reuse passed");
  return 0;

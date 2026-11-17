@@ -204,8 +204,8 @@ extern u32 w16_t0;
 u32  now_ms(void);
 void kernel_shutdown(void);
 int  task_setup(struct ne_module *m, const char *path, int argc, char **argv);
-u16  w16_start16(const u16 *regs);
-void w16_thunk_done(void);
+u16  W16_CDECL w16_start16(const u16 *regs);
+void W16_CDECL w16_thunk_done(void);
 
 static void usage(void)
 {
@@ -224,6 +224,8 @@ int main(int argc, char **argv)
     u16 regs[13], code;
     const char *path;
 
+    /* Refuse a legacy stack-call Nano-X archive at link time. */
+    { extern void w16_nanox_regparm_abi(void); w16_nanox_regparm_abi(); }
     w16_t0 = now_ms();
     for (i = 1; i < argc && argv[i][0] == '-'; i++) {
         char *o = argv[i] + 1;
@@ -258,7 +260,7 @@ int main(int argc, char **argv)
     path = argv[i];
 
     {
-        extern int w16_cpu_is_nec(void);
+        extern int W16_CDECL w16_cpu_is_nec(void);
         vlog("w16: CPU %s\n", w16_cpu_is_nec() ? "NEC V20/V30 (AAD ignores its base operand)" : "Intel 8086/8088 class");
     }
     if (w16_thunk_init()) {

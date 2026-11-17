@@ -249,3 +249,4 @@ struct poly_point;
 int bitmap_polygon(u16,struct poly_point *,int,u32,int,u32,int);
 
 int bitmap_flood(u16,struct dc*,int,int,u32,int,u32,void (*)(void*,int,int,int,int),void*);
+int bitmap_pattern(u16,u8 *,u8 *,u16 *,u32 *);

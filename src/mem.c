@@ -82,10 +82,10 @@ void e9puts(const char *s) { (void)s; }
 #else
 /* ---------------------------------------------------------------- ELKS */
 #include <malloc.h>
-void w16_farcpy(u16 dseg, u16 doff, u16 sseg, u16 soff, u16 n);
-void w16_farset(u16 seg, u16 off, u16 val, u16 n);
-u16  w16_get_ds(void);
-void w16_outb(u16 port, u16 val);
+void W16_CDECL w16_farcpy(u16 dseg, u16 doff, u16 sseg, u16 soff, u16 n);
+void W16_CDECL w16_farset(u16 seg, u16 off, u16 val, u16 n);
+u16  W16_CDECL w16_get_ds(void);
+void W16_CDECL w16_outb(u16 port, u16 val);
 
 int seg_alloc(u16 paras, u16 *seg)
 {
