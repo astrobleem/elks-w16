@@ -62,7 +62,7 @@ static void run(int x,int y,int w,int h){
 int main(void){
  int bw,bh,i,j,k;
  int origins[]={-32768,-32767,-17,-1,0,1,17,32766,32767};
- int widths[]={1,7,15,16,17,31,32,33,639,640};
+ int widths[]={1,7,15,16,17,31,32,33,255,256,257,639,640};
  dcs[0].wid=dcs[0].gc=1;dcs[1].wid=dcs[1].gc=2;
  dcs[0].bkcolor=123;dcs[0].textcolor=456;
  args[2]=1;args[1]=32767;args[0]=0x8000;
@@ -78,7 +78,7 @@ int main(void){
   for(i=0;i<16;i++)bmps[0].rows[i]=(u16)(0xa591u^(0x3719u*i));
   for(j=0;j<9;j++){
    dcs[0].brushx=origins[j];dcs[0].brushy=origins[8-j];
-   for(k=0;k<10;k++)run(j%2?-29:23,j%2?31:-19,widths[k],17);
+   for(k=0;k<13;k++)run(j%2?-29:23,j%2?31:-19,widths[k],17);
   }
  }
  bmps[0].w=7;bmps[0].h=13;run(-32768,32288,640,480);
