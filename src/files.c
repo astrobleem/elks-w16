@@ -12,7 +12,7 @@
 #define FILE_BASE 0x4000
 #define PATHLEN 124
 #define OFSTRUCT_SIZE 136
-static struct { int fd; u8 used; } files[FILES];
+static struct { int fd; u8 used,dirty; } files[FILES];
 static char dos_cwd[PATHLEN];
 
 static int far_range(u16 seg,u16 off,u16 n)
@@ -158,7 +158,7 @@ static int new_handle(const char *path,int flags)
     if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode)) {
         close(fd);errno=EACCES;return -1;
     }
-    files[i].fd=fd;files[i].used=1;
+    files[i].fd=fd;files[i].used=1;files[i].dirty=(flags&(O_CREAT|O_TRUNC))!=0;
     return FILE_BASE+i;
 }
 static int access_mode(u16 mode)
@@ -170,16 +170,19 @@ static int access_mode(u16 mode)
 }
 void files_shutdown(void)
 {
-    int i;
+    int i,dirty=0;
     for(i=0;i<FILES;i++) if(files[i].used) {
-        close(files[i].fd);files[i].used=0;
+        dirty|=files[i].dirty;close(files[i].fd);files[i].used=0;
     }
+    if(dirty)sync();
 }
 u32 k_lclose(u16 ss,u16 ap)
 {
     int i=file_index(AW(0)),e;
     if(i<0) return 0xffff;
     e=close(files[i].fd);files[i].used=0;
+    if(!e && files[i].dirty)sync();
+    files[i].dirty=0;
     return e<0?0xffff:0;
 }
 u32 k_lopen(u16 ss,u16 ap)
@@ -214,6 +217,7 @@ static u32 transfer(u16 ss,u16 ap,int writing)
         got=writing?write(files[i].fd,buf,n):read(files[i].fd,buf,n);
         if(got<0) { if(errno==EINTR) continue; return done?done:0xffff; }
         if(!got) break;
+        if(writing)files[i].dirty=1;
         if(!writing) fcopy_out(seg,off+done,buf,got);
         done+=got;
         if(got<n) break;

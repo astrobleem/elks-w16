@@ -9,6 +9,8 @@ u32 k_lcreat(u16,u16),k_lopen(u16,u16),k_lclose(u16,u16),k_lread(u16,u16),k_lwri
 u32 k_GetTempDrive(u16,u16),k_GetTempFileName(u16,u16);
 extern int host_live;
 static u16 ss,ns,ds,ofs;
+static int sync_calls;
+void sync(void){sync_calls++;}
 static void arg(int n,u16 v){wr16(ss,n,v);}
 static void name(const char *s){fcopy_out(ns,0,s,strlen(s)+1);}
 static u16 create(const char *s){name(s);arg(0,0);arg(2,0);arg(4,ns);return k_lcreat(ss,0);}
@@ -95,6 +97,8 @@ int main(void)
     h=openh("mixed.bmp");assert(h!=0xffff&&seekh(h,0,2)==1400);
     arg(0,32);arg(2,65530);arg(4,ds);arg(6,h);assert(k_lread(ss,0)==0xffff);
     closeh(h);files_shutdown();
+    {int before=sync_calls;h=openh("mixed.bmp");assert(h!=0xffff);closeh(h);assert(sync_calls==before);
+     h=create("flush.bmp");assert(h!=0xffff);assert(transfer(h,12,1)==12);closeh(h);assert(sync_calls==before+1);}
     bitmap_roundtrip(256,256);bitmap_roundtrip(640,480);
     name("SMALL.BMP");assert(!files_unlink(ns,0));assert(files_unlink(ns,0)==2);
     name("../VGA.BMP");assert(files_unlink(ns,0)==5);assert(openh("VGA.BMP")!=0xffff);
