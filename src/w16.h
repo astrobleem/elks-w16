@@ -112,6 +112,7 @@ struct ne_module {
     u16  dgroup_size;           /* bytes, including stack and local heap */
     u16  init_sp;
     u16  heap_start;
+    u16  local_start, local_end;
     u16  psp, envseg;
     u16  nreloc, nimport, npatched;
     u32  total_bytes;           /* all memory allocated for the module */
@@ -240,6 +241,7 @@ u32 enum_palette_objects(u16 kind,u16 proc_off,u16 proc_seg,u32 data,
 extern struct ne_module *w16_mod;
 extern u16 w16_app_ss, w16_app_sp, w16_ldr_sp;
 extern u16 w16_ret_bx, w16_ret_cx, w16_ret_es;
+u16  w16_init16(const u16 *regs); /* far-call DLL initializer; traps unwind here */
 u32  w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words);
 void w16_exit16(u16 code);                  /* terminate the app, unwind to w16_run() */
 u16  w16_get_cs(void);

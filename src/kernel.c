@@ -191,23 +191,38 @@ u32 k_FreeProcInstance(u16 ss, u16 ap)
 /* First-fit blocks in DGROUP between the stack and the end of the segment (the NE heap size).
  * Each block starts with a WORD holding its size in bytes (even, header included) | 1 when in use;
  * a handle is the address of the data, so LMEM_MOVEABLE blocks simply never move. */
-static u16 lh_start, lh_end;
+/* A DLL runs on the task stack but has its own DS and local heap. */
+static struct ne_module *local_owner(u16 ds)
+{
+    int i;
+    if(w16_mod && w16_mod->dgroup==ds) return w16_mod;
+    for(i=0;w16_mod && i<w16_mod->nmod;i++) {
+        struct ne_module *m=w16_mod->dependencies[i];
+        if(m && m->loaded && m->dgroup==ds) return m;
+    }
+    return 0;
+}
+static struct ne_module *local_caller(u16 ss,u16 ap)
+{
+    return ap>=8 ? local_owner(rd16(ss,ap-8)) : 0;
+}
 
 static void lheap_init(struct ne_module *m)
 {
-    lh_start = m->heap_start;
-    lh_end = m->dgroup_size & ~1u;
+    u16 lh_start=m->heap_start, lh_end=m->dgroup_size & ~1u;
     if (!m->heap || lh_end < lh_start + 4) {
-        lh_start = lh_end = 0;
+        m->local_start = m->local_end = 0;
         return;
     }
+    m->local_start=lh_start; m->local_end=lh_end;
     wr16(m->dgroup, lh_start, lh_end - lh_start);
 }
 
 /* the header of the block in use whose data starts at h, or 0; with h 0, the totals of blocks in use */
-static u16 lh_walk(u16 h, u16 *used, u16 *blocks)
+static u16 lh_walk(struct ne_module *m,u16 h, u16 *used, u16 *blocks)
 {
-    u16 p = lh_start, dg = w16_mod->dgroup;
+    u16 lh_start=m?m->local_start:0, lh_end=m?m->local_end:0;
+    u16 p=lh_start,dg=m?m->dgroup:0;
     if (used) *used = 0;
     if (blocks) *blocks = 0;
     while (lh_start && p + 2 <= lh_end) {
@@ -229,14 +244,37 @@ static u16 lh_walk(u16 h, u16 *used, u16 *blocks)
 
 void lheap_census(u16 *used, u16 *blocks, u16 *size)
 {
-    lh_walk(0, used, blocks);
-    *size = lh_end - lh_start;
+    lh_walk(w16_mod,0, used, blocks);
+    *size = w16_mod->local_end - w16_mod->local_start;
+}
+
+/* LocalInit(hInstance,start,end). The zero-start DLL startup form passes
+ * its NE heap byte count; it must agree with the reserved tail of DGROUP. */
+u32 k_LocalInit(u16 ss,u16 ap)
+{
+    u16 end=AW(0),start=AW(2),ds=AW(4);
+    struct ne_module *m;
+    if(!ds) { if(ap<8) return 0; ds=rd16(ss,ap-8); }
+    m=local_owner(ds);
+    if(!m) return 0;
+    if(!start) {
+        if(end!=m->heap) return 0;
+        start=m->heap_start; end=m->dgroup_size & ~1u;
+    }
+    if((start&1) || (end&1) || start<m->heap_start ||
+       (u32)start+4>end || end>m->dgroup_size) return 0;
+    m->local_start=start; m->local_end=end;
+    wr16(ds,start,end-start);
+    return 1;
 }
 
 /* LocalAlloc(wFlags, wBytes) */
 u32 k_LocalAlloc(u16 ss, u16 ap)
 {
-    u16 bytes = AW(0), flags = AW(2), dg = w16_mod->dgroup, p = lh_start, need;
+    struct ne_module *m=local_caller(ss,ap);
+    u16 bytes=AW(0),flags=AW(2),dg,lh_start,lh_end,p,need;
+    if(!m) return 0;
+    dg=m->dgroup; p=lh_start=m->local_start; lh_end=m->local_end;
     if (bytes > 0xFFF0u)
         return 0;
     need = (u16)((bytes + 3u) & ~1u);
@@ -274,22 +312,24 @@ u32 k_LocalAlloc(u16 ss, u16 ap)
 /* LocalFree(hMem): 0 on success, the handle on failure */
 u32 k_LocalFree(u16 ss, u16 ap)
 {
-    u16 h = AW(0), b = lh_walk(h, 0, 0);
+    struct ne_module *m=local_caller(ss,ap);
+    u16 h = AW(0), b = lh_walk(m,h, 0, 0);
     if (!b) {
         wlog("w16: LocalFree(%04x): not a local heap block in use\n", h);
         return h;
     }
-    wr16(w16_mod->dgroup, b, rd16(w16_mod->dgroup, b) & ~1u);
+    wr16(m->dgroup, b, rd16(m->dgroup, b) & ~1u);
     return 0;
 }
 
-u32 k_LocalLock(u16 ss, u16 ap)   { return lh_walk(AW(0), 0, 0) ? AW(0) : 0; }
+u32 k_LocalLock(u16 ss, u16 ap)   { return lh_walk(local_caller(ss,ap),AW(0),0,0) ? AW(0) : 0; }
 u32 k_LocalUnlock(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }
 
 u32 k_LocalSize(u16 ss, u16 ap)
 {
-    u16 b = lh_walk(AW(0), 0, 0);
-    return b ? (rd16(w16_mod->dgroup, b) & ~1u) - 2 : 0;
+    struct ne_module *m=local_caller(ss,ap);
+    u16 b = lh_walk(m,AW(0), 0, 0);
+    return b ? (rd16(m->dgroup, b) & ~1u) - 2 : 0;
 }
 
 /* ---------------------------------------------------------------- resources */

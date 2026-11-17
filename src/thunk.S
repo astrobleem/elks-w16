@@ -30,6 +30,7 @@ w16_exit_sp:	.word 0		// loader SP to unwind to when the program terminates
 	.global w16_ldr_ds
 w16_ldr_ds:	.word 0
 cb_target:	.word 0, 0
+init_call:	.word 0
 
 // int w16_thunk_init(void): record the loader DS in the code segment.
 // Returns -1 if another w16 process sharing this text segment already did.
@@ -336,6 +337,14 @@ w16_call16:
 // Starts the program like a Windows task; returns its exit code when w16_exit16 is called.
 	.global w16_start16
 w16_start16:
+    movw $0, %cs:init_call
+    jmp start_common
+
+// Same register/stack setup, but LibMain returns by RETF with AX=success.
+    .global w16_init16
+w16_init16:
+    movw $1, %cs:init_call
+start_common:
 	push	%bp
 	mov	%sp, %bp
 	push	%si
@@ -395,7 +404,23 @@ w16_start16:
 	pop	%ax
 	pop	%es
 	pop	%ds
+    cmpw $0, %cs:init_call
+    jne init_invoke
 	ljmpw	*%cs:cb_target
+init_invoke:
+    lcallw *%cs:cb_target
+    mov %cs:w16_ldr_ds, %bx
+    mov %bx, %ds
+    cli
+    mov %bx, %ss
+    mov w16_exit_sp, %sp
+    sti
+    pop w16_ldr_sp
+    pop %es
+    pop %di
+    pop %si
+    pop %bp
+    lret
 
 // void w16_exit16(u16 code): called on the loader stack; abandons every nested frame and
 // returns from w16_start16 with the code.

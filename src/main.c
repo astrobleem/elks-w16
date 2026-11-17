@@ -209,13 +209,16 @@ void w16_thunk_done(void);
 
 static void usage(void)
 {
-    fputs("usage: w16 [-u] [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] PROGRAM.EXE [ARGS...]\n", stderr);
+    fputs("usage: w16 [-u] [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] [-l MODULE=DLL] PROGRAM.EXE [ARGS...]\n", stderr);
     exit(2);
 }
 
 int main(int argc, char **argv)
 {
-    static struct ne_module m;
+    static struct ne_module m, dll;
+    const char *dllpath=0;
+    char dllname[9];
+    int dllindex=-1;
     int i, e, checkonly = 0;
     u32 old21;
     u16 regs[13], code;
@@ -226,6 +229,13 @@ int main(int argc, char **argv)
         char *o = argv[i] + 1;
         if (!strcmp(o, "d") && i + 1 < argc) { strncpy(opt_dump, argv[++i], sizeof(opt_dump) - 1); continue; }
         if (!strcmp(o, "q") && i + 1 < argc) { opt_quit_s = atoi(argv[++i]); continue; }
+        if (!strcmp(o,"l") && i+1<argc) {
+            const char *arg=argv[++i], *eq=strchr(arg,'=');
+            unsigned j,n=eq?(unsigned)(eq-arg):0;
+            if(dllpath || !eq || !n || n>8 || !eq[1]) usage();
+            for(j=0;j<n;j++) dllname[j]=arg[j]>='a'&&arg[j]<='z'?arg[j]-32:arg[j];
+            dllname[n]=0; dllpath=eq+1; continue;
+        }
         for (; *o; o++)
             switch (*o) {
             case 'v': opt_verbose = 1; break;
@@ -251,27 +261,40 @@ int main(int argc, char **argv)
         wlog("w16: another w16 process shares this program's code segment; run one Win16 program at a time\n");
         return 1;
     }
+    dll.fd=-1;
     e = ne_open(&m, path);
+    if(!e && dllpath) {
+        int k;
+        for(k=0;k<m.nmod;k++) if(!strcmp(m.modname[k],dllname)) { dllindex=k; break; }
+        if(dllindex<0) {
+            wlog("w16: explicitly requested DLL %s is not imported by %s\n",dllname,path);
+            e=W16_EIMPORT;
+        }
+        if(!e) e=ne_open_library(&dll,dllpath);
+        if(!e) e=ne_check_imports(&dll);
+        if(!e) e=ne_load(&dll);
+        if(!e) e=ne_bind_library(&m,dllindex,&dll);
+    }
     if (!e) e = ne_check_imports(&m);
     if (!e) e = ne_load(&m);
     if (!e) e = task_setup(&m, path, argc - i - 1, argv + i + 1);
     if (e) {
         wlog("w16: %s rejected: %s\n", path, ne_errstr(e));
-        ne_free(&m);
+        ne_free(&m); ne_free(&dll);
         w16_thunk_done();
         return e;
     }
     wlog("w16: %s loaded: %u segments, %lu bytes, %u fixups (%u import references), DGROUP %04x (%u bytes)\n",
          path, m.nseg, (unsigned long)m.total_bytes, m.nreloc, m.nimport, m.dgroup, m.dgroup_size);
     if (checkonly) {
-        ne_free(&m);
+        ne_free(&m); ne_free(&dll);
         w16_thunk_done();
         wlog("w16: check only (-n): all segments freed\n");
         return 0;
     }
     w16_mod = &m;
     if (user_init()) {
-        ne_free(&m);
+        ne_free(&m); ne_free(&dll);
         w16_thunk_done();
         return 1;
     }
@@ -295,15 +318,31 @@ int main(int argc, char **argv)
     if (opt_debugport)
         e9puts("@@START\n");
 
+    if(dllpath) {
+        u16 dr[13];
+        memcpy(dr,regs,sizeof(dr));
+        dr[0]=dll.ip; dr[1]=dll.seg[dll.cs-1].sel;
+        dr[4]=dll.dgroup; dr[6]=0; dr[7]=0;
+        dr[8]=dll.heap; dr[9]=0; dr[10]=0; dr[11]=dll.dgroup; dr[12]=0;
+        vlog("w16: initializing %s at %04x:%04x DS=%04x heap=%u\n",
+             dllpath,dr[1],dr[0],dr[4],dr[8]);
+        code=w16_init16(dr);
+        if(code!=1) {
+            wlog("w16: DLL initializer %s failed or trapped: %u\n",dllpath,code);
+            code=code?code:W16_EIMPORT;
+            goto finished;
+        }
+    }
     code = w16_start16(regs);
+finished:
 
     w16_setvect(0x21, (u16)old21, (u16)(old21 >> 16));
     user_shutdown();
     kernel_shutdown();
     {
-        u32 bytes = m.total_bytes;
-        u16 nseg = m.nseg;
-        ne_free(&m);
+        u32 bytes = m.total_bytes + dll.total_bytes;
+        u16 nseg = m.nseg + dll.nseg;
+        ne_free(&m); ne_free(&dll);
         w16_thunk_done();
         wlog("w16: program exited with code %u; freed %u segments + PSP/environment (%lu bytes)\n", code, nseg,
              (unsigned long)bytes);

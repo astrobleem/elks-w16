@@ -19,6 +19,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) f
 u32 g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
+u32 k_LocalInit(u16,u16);
 u32 k_GlobalNotify(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16), u_BeginPaint(u16, u16);
@@ -104,6 +105,7 @@ const struct api api_table[] = {
     { U,65,"GetScrollRange",12,0,H(u_GetScrollRange) },
     /* KERNEL */
     { K,20,"GlobalSize",2,0,H(k_GlobalSize) },
+    { K, 4, "LocalInit", 6, 0, H(k_LocalInit) },
     { K, 154, "GlobalNotify", 4, 0, H(k_GlobalNotify) },
     { K,   3, "GetVersion",        0, 0, H(k_GetVersion) },
     { K,   5, "LocalAlloc",        4, 0, H(k_LocalAlloc) },
@@ -233,6 +235,10 @@ const struct api api_table[] = {
     { G, 154, "GetNearestColor",   6, 0, H(g_GetNearestColor) },
     { G, 346, "SetTextAlign",      4, 0, H(g_SetTextAlign) },
     { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
+    { G, 75, "GetBkColor", 0, API_MISSING, 0 },
+    { G, 97, "GetWindowOrg", 0, API_MISSING, 0 },
+    { K, 97, "GetTempFileName", 0, API_MISSING, 0 },
+    { K, 164, "GlobalLRUNewest", 0, API_MISSING, 0 },
     /* Recognized Paintbrush calls for -u diagnostics only. These entries always
      * terminate if executed; ordinary loads reject them as unsupported. */
     { G,   3, "SETMAPMODE", 0, API_MISSING, 0 },
