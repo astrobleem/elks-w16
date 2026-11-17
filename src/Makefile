@@ -29,6 +29,8 @@ w16-medium.ld: ../scripts/w16-link-layout.sh
 %.o: %.c w16.h wapi.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+gdi.o bitmap.o polygon.o: polygon.h
+
 thunk.o: thunk.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
