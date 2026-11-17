@@ -28,7 +28,7 @@ typedef short          i16;
 typedef long           i32;
 #endif
 
-#define MAXSEG   32          /* NE segments per module */
+#define MAXSEG   254         /* NE entry bundles reserve segment 0xff for movable entries */
 #define MAXMOD   8           /* imported module names */
 
 /* ---------------------------------------------------------------- far memory */
@@ -94,7 +94,7 @@ struct ne_module {
     u16  nseg, nmod, segtab_off, rsrc_off, resn_off, modref_off, impn_off;
     u16  nmov, align, nres, expver;
     u8   target_os, flags2;
-    struct ne_seg seg[MAXSEG];
+    struct ne_seg *seg;         /* allocated for this image, zeroed for partial-load cleanup */
     char modname[MAXMOD][9];
     int  modid[MAXMOD];         /* index into the provided-module table, -1 if unknown */
     u8  *enttab;                /* copy of the entry table */

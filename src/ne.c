@@ -251,6 +251,10 @@ int ne_open(struct ne_module *m, const char *path)
         return W16_EFORMAT;
     }
 
+    /* Allocate only the descriptors this image uses, not MAXSEG entries in DGROUP. */
+    m->seg = calloc(m->nseg, sizeof(*m->seg));
+    if (!m->seg)
+        return W16_ENOMEM;
     /* segment table */
     for (i = 0; i < m->nseg; i++) {
         u8 s[8];
@@ -735,11 +739,12 @@ int ne_load(struct ne_module *m)
 void ne_free(struct ne_module *m)
 {
     int i;
-    for (i = 0; i < m->nseg && i < MAXSEG; i++)
+    for (i = 0; m->seg && i < m->nseg; i++)
         if (m->seg[i].paras) {
             seg_free(m->seg[i].sel);
             m->seg[i].paras = 0;
         }
+    if (m->seg) { free(m->seg); m->seg = 0; }
     if (m->psp) { seg_free(m->psp); m->psp = 0; }
     if (m->envseg) { seg_free(m->envseg); m->envseg = 0; }
     if (m->enttab) { free(m->enttab); m->enttab = 0; }
