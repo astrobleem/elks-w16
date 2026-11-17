@@ -50,7 +50,7 @@ static int GrCapturePixels(int wid,int gc,int x,int y,int w,int h,
  for(row=0;row<(unsigned)h;row++){
   if(capture_mode==2&&row==(unsigned)h-1)break;
   memset(packed,0,sizeof packed);
-  for(col=0;col<(unsigned)w;col++)packed[col/2]|=((x+col+3*(y+row))&15)<<((col&1)?0:4);
+  for(col=0;col<(unsigned)w;col++)packed[col/2]|=(capture_mode==8?surface[(y+row)*100+x+col]:((x+col+3*(y+row))&15))<<((col&1)?0:4);
   callback(ctx,capture_mode==3&&row==1?row+1:row,packed,capture_mode==4&&row==1?len-1:len);
  }
  if(capture_mode==6)callback(ctx,h,packed,len);
@@ -101,6 +101,7 @@ code+="static u16 rd16(u16 s,u16 o){return rd8(s,o)|((u16)rd8(s,o+1)<<8); }\nsta
 code+='u32 bitmap_origin(u16,int,int,i16,i16);\n'
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=(root/'src/polygon.c').read_text()
+code+=(root/'src/oval.c').read_text()
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
 code+="struct {u16 rows[16];u8 h;} bmps[1];\nstatic int bmp_index(u16 h){return h==0x700?0:-1;}\n"
@@ -332,6 +333,10 @@ static void small_ddb_bits_test(void){
  n=g_GetBitmapBits(0,0);assert(n==4&&output[20]==0x81&&output[21]==0x23&&output[23]==0xcd);
  output[20]=0x67;args[2]=1;assert(g_SetBitmapBits(0,0)==1&&bmps[0].rows[0]==0x6723);
  args[0]=65535;args[2]=2;assert(!g_SetBitmapBits(0,0));
+}
+static void flood_output(void*ctx,int x,int y,int w,int kind){
+ int i;(void)ctx;assert(kind==1&&x>=0&&y>=0&&x+w<=100&&y<100);
+ for(i=x;i<x+w;i++)surface[y*100+i]=7;
 }
 int main(int argc,char**argv){
  small_ddb_bits_test();
@@ -711,6 +716,53 @@ int main(int argc,char**argv){
   assert(bitmap_index(&bitmaps[bi(b)],0,0)==expect);
  }
  bitmap_rop2(d,13);assert(bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0));
+ /* Surface/boundary flood fill, disconnected regions, all ROP2 modes,
+  * failure atomicity and DC origin without changing current position. */
+ {
+  int rop,xx,yy,bit;
+  for(rop=1;rop<=16;rop++){
+   for(yy=0;yy<32;yy++)for(xx=0;xx<32;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,3);
+   for(xx=2;xx<=8;xx++){bitmap_put(&bitmaps[bi(b)],xx,2,15);bitmap_put(&bitmaps[bi(b)],xx,8,15);}
+   for(yy=2;yy<=8;yy++){bitmap_put(&bitmaps[bi(b)],2,yy,15);bitmap_put(&bitmaps[bi(b)],8,yy,15);}
+   bitmap_rop2(d,rop);bitmap_moveto(d,27,29);
+   assert(bitmap_flood(d,0,4,4,0xffffff,0,0x555555,0,0));
+   assert(memory[di(d)].curx==27&&memory[di(d)].cury==29);
+   for(yy=0;yy<32;yy++)for(xx=0;xx<32;xx++){
+    int expect=3;
+    if(xx>=2&&xx<=8&&yy>=2&&yy<=8){
+     if(xx==2||xx==8||yy==2||yy==8)expect=15;
+     else{expect=0;for(bit=0;bit<4;bit++)expect|=(((rop-1)>>((((5>>bit)&1)<<1)|((3>>bit)&1)))&1)<<bit;}
+    }
+    assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expect);
+   }
+  }
+  bitmap_rop2(d,13);
+  assert(bitmap_flood(d,0,0,0,0x333333,1,0x777777,0,0));
+  assert(bitmap_index(&bitmaps[bi(b)],0,0)==7&&bitmap_index(&bitmaps[bi(b)],4,4)==15);
+  assert(!bitmap_flood(d,0,-1,0,0x777777,1,0,0,0));
+  assert(!bitmap_flood(d,0,0,0,0x777777,2,0,0,0));
+  segfail=1;assert(!bitmap_flood(d,0,0,0,0x777777,1,0,0,0));segfail=0;
+  assert(bitmap_index(&bitmaps[bi(b)],0,0)==7);
+  bitmap_origin(d,1,1,3,4);
+  assert(bitmap_flood(d,0,-3,-4,0x777777,1,0,0,0));
+  assert(!bitmap_index(&bitmaps[bi(b)],0,0));bitmap_origin(d,1,1,0,0);
+  assert(bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0));
+ }
+ /* Screen capture is fully validated before emitting a single fill span. */
+ {
+  int xx,yy,fail;win.cw=win.ch=16;
+  for(yy=0;yy<16;yy++)for(xx=0;xx<16;xx++)surface[yy*100+xx]=3;
+  for(xx=2;xx<=8;xx++){surface[2*100+xx]=15;surface[8*100+xx]=15;}
+  for(yy=2;yy<=8;yy++){surface[yy*100+2]=15;surface[yy*100+8]=15;}
+  capture_mode=8;assert(bitmap_flood(9,&dest,4,4,0xffffff,0,0x777777,flood_output,0));
+  assert(surface[4*100+4]==7&&surface[0]==3&&surface[2*100+4]==15);
+  for(fail=1;fail<=6;fail++){
+   for(yy=0;yy<16;yy++)for(xx=0;xx<16;xx++)surface[yy*100+xx]=3;
+   capture_mode=fail;assert(!bitmap_flood(9,&dest,0,0,0xffffff,0,0,flood_output,0));
+   for(yy=0;yy<16;yy++)for(xx=0;xx<16;xx++)assert(surface[yy*100+xx]==3);
+  }
+  capture_mode=0;win.cw=win.ch=100;
+ }
  /* Polygon shares the memory DC translation and full ROP2 truth table. */
  {struct poly_point square[4]={{2,2},{6,2},{6,6},{2,6}};
   int rop,src,dst,xx,yy;
@@ -725,6 +777,19 @@ int main(int argc,char**argv){
      expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((src>>bit)&1)<<1)|((dst>>bit)&1)))&1)<<bit;
     }
     assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
+   }
+  }
+  {struct poly_point oval[3]={{2,2},{7,7},{5,5}};
+   for(rop=1;rop<=16;rop++){
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,10);
+    bitmap_rop2(d,rop);assert(bitmap_polygon(d,oval,0,0xffffff,0,0x555555,0));
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
+     int dx=xx-4,dy=yy-4,inside=dx*dx+dy*dy<=6,edge=inside&&
+      ((dx-1)*(dx-1)+dy*dy>6||(dx+1)*(dx+1)+dy*dy>6||dx*dx+(dy-1)*(dy-1)>6||dx*dx+(dy+1)*(dy+1)>6);
+     int expected=10,bit,source=edge?15:5;
+     if(inside){expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((source>>bit)&1)<<1)|((10>>bit)&1)))&1)<<bit;}
+     assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
+    }
    }
   }
   bitmap_rop2(d,13);

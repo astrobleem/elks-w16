@@ -34,6 +34,7 @@ int main(void)
  clear();assert(draw(reverse,6,1,1));assert(!memcmp(saved,actual,sizeof saved));
  clear();assert(draw(bow,4,1,1));assert(actual[3][6]==1&&actual[9][6]==1&&!actual[6][3]&&actual[6][6]==2);
  clear();assert(draw(clipped,4,1,1));assert(actual[0][0]==1&&actual[4][4]==2&&!actual[5][5]);
+ clear();assert(draw(box,-4,1,1));assert(actual[2][2]==2&&actual[8][3]==2&&!actual[3][2]&&!actual[4][4]&&!actual[8][2]);
  clear();assert(draw(line,2,1,0));for(i=2;i<=8;i++)assert(actual[i][i]==2);
  clear();assert(draw(extreme,4,0,1));for(y=0;y<32;y++)for(x=0;x<32;x++)assert(actual[y][x]==1);
  clear();assert(draw(shallow,2,1,0));for(i=1;i<32;i++)assert(actual[1][i]==2&&!actual[0][i]);

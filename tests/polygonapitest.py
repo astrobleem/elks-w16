@@ -16,11 +16,11 @@ typedef uint16_t u16;typedef int16_t i16;typedef uint32_t u32;
 typedef u32 GR_COLOR;
 typedef struct {int cols,rows;} GR_SCREEN_INFO;
 struct wnd {int cw,ch;};
-struct dc {struct wnd*w;int pen,brush,wid,gc;};
+struct dc {struct wnd*w;int pen,brush,wid,gc,mapmode;};
 struct gobj {int null,style,width;u32 color;};
-static struct wnd win={16,16};static struct dc dc={&win,1,2,3,4};
+static struct wnd win={16,16};static struct dc dc={&win,1,2,3,4,1};
 static struct gobj objects[2]={{0,0,1,0x111111},{0,0,0,0x222222}};
-static u16 args[4],points[256];static int mapped,badmap,reads,memorycalls,writes,rop=13;
+static u16 args[7],points[256];static int mapped,badmap,reads,memorycalls,writes,rop=13;
 static u32 screen[16][16],color;
 #define AW(n) args[(n)/2]
 #define OBJ_PEN 1
@@ -30,8 +30,11 @@ static struct gobj*obj_get(u16 h){return h==1||h==2?&objects[h-1]:0;}
 static u16 bitmap_object(u16 h,int type,int unused){return h==2?type:0;}
 static u16 rd16(u16 seg,u16 off){assert(seg==123&&off<512);reads++;return points[off/2];}
 static int gdi_map_point(struct dc*d,int*x,int*y){mapped++;*x+=1;*y+=2;return !badmap;}
+static int gdi_map_rect(struct dc*d,int*l,int*t,int*r,int*b){return gdi_map_point(d,l,t)&&gdi_map_point(d,r,b);}
 static int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pc,int np,u32 bc,int nb)
 {assert(h==2&&n==4&&p[0].x==2&&p[0].y==2);memorycalls++;return 1;}
+static int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 c,int mode,u32 brush,void (*out)(void*,int,int,int,int),void*ctx){return 0;}
+#define AL(n) ((u32)AW(n)|((u32)AW((n)+2)<<16))
 static u32 rgb_to_gr(u32 c){return c;}
 static void GrGetScreenInfo(GR_SCREEN_INFO*s){s->cols=s->rows=16;}
 static int set_rop(struct dc*d,u32 c){color=c;return rop!=11;}
@@ -56,5 +59,5 @@ int main(void){
 '''
 with tempfile.TemporaryDirectory() as td:
  p=Path(td);(p/'t.c').write_text(code)
- subprocess.run(['cc','-I'+str(root/'src'),'-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),str(root/'src/polygon.c'),'-o',str(p/'t')],check=True)
+ subprocess.run(['cc','-I'+str(root/'src'),'-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),str(root/'src/polygon.c'),str(root/'src/oval.c'),'-o',str(p/'t')],check=True)
  subprocess.run([str(p/'t')],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

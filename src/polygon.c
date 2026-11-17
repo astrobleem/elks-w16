@@ -8,7 +8,10 @@
 int polygon_raster(struct poly_point *p,int n,int width,int height,
                    int pen,int brush,poly_span output,void *ctx)
 {
- int i,j,x,y,l,r,t,b,start,kind; unsigned char *row;
+ int i,j,x,y,l,r,t,b,start,kind,closed=n>0; unsigned char *row;
+ if(n< -128||n>128)return 0;
+ if(n<0)n=-n;
+ if(!closed)brush=0;
  if(n<2||n>128||width<1||width>2048||height<1||height>2048)return 0;
  l=r=p[0].x;t=b=p[0].y;
  for(i=0;i<n;i++){
@@ -39,7 +42,7 @@ int polygon_raster(struct poly_point *p,int n,int width,int height,
    }
    row[x-l]=inside?1:0;
   }
-  if(pen)for(i=0,j=n-1;i<n;j=i++){
+  if(pen)for(i=closed?0:1,j=closed?n-1:0;i<n;j=i++){
    /* Differences and error fit 16 bits; doubled error needs 32 bits. */
    int xx=p[j].x,yy=p[j].y,dx=p[i].x-xx,dy=p[i].y-yy;
    int sx=dx<0?-1:1,sy=dy<0?-1:1,err;long e2;

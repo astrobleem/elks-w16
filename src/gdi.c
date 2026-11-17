@@ -562,35 +562,58 @@ static void polygon_screen_span(void *ctx,int x,int y,int width,int kind)
  if(set_rop(s->d,kind==2?s->pen:s->brush))
   GrFillRect(s->d->wid,s->d->gc,x,y,width,1);
 }
-/* Polygon(hdc, far POINT[], count). Does not change the current position. */
-u32 g_Polygon(u16 ss,u16 ap)
+/* ExtFloodFill(hdc,x,y,color,type): solid brush, surface or boundary fill. */
+u32 g_ExtFloodFill(u16 ss,u16 ap)
 {
- u16 n,off,seg,h;int i,result,width,height;struct dc*d;
- struct gobj *pen,*brush;struct poly_point *p;struct polygon_screen out;
- GR_SCREEN_INFO si;
- if(ap>0xfff8u)return 0;
- n=AW(0);off=AW(2);seg=AW(4);h=AW(6);
- if(n<2||n>128||(!seg&&!off)||(u32)off+4UL*n>65536UL||
-    ((u32)seg<<4)+off+4UL*n>0x100000UL)return 0;
- d=dc_get(h);
+ struct dc*d;struct gobj*brush;struct polygon_screen out;u16 h;int x,y;
+ if(ap>0xfff4u)return 0;
+ h=AW(10);x=(i16)AW(8);y=(i16)AW(6);d=dc_get(h);
+ brush=obj_get(d?d->brush:bitmap_object(h,OBJ_BRUSH,0));
+ if(!brush||(!brush->null&&brush->style))return 0;
+ if(brush->null)return 1;
+ if(d&&!gdi_map_point(d,&x,&y))return 0;
+ out.d=d;out.brush=rgb_to_gr(brush->color);
+ return bitmap_flood(h,d,x,y,AL(2),AW(0),brush->color,polygon_screen_span,&out);
+}
+/* A zero count selects the three-point rounded-box descriptor. */
+static int draw_shape(u16 h,struct poly_point*p,int n)
+{
+ struct dc*d=dc_get(h);struct gobj *pen,*brush;
+ struct polygon_screen out;GR_SCREEN_INFO si;int i,width,height,count=n<0?-n:n;
  pen=obj_get(d?d->pen:bitmap_object(h,OBJ_PEN,0));
  brush=obj_get(d?d->brush:bitmap_object(h,OBJ_BRUSH,0));
  if(!pen||!brush||(!pen->null&&(pen->style||pen->width>1))||
-    (!brush->null&&brush->style))return 0;
+    (n>=0&&!brush->null&&brush->style))return 0;
+ if(!d)return bitmap_polygon(h,p,n,pen->color,pen->null,brush->color,brush->null);
+ if(n){for(i=0;i<count;i++)if(!gdi_map_point(d,&p[i].x,&p[i].y))return 0;}
+ else{
+  /* Corner diameters currently use MM_TEXT units. Ellipse uses the full box. */
+  if(p[2].x!=32767&&d->mapmode!=1)return 0;
+  if(!gdi_map_rect(d,&p[0].x,&p[0].y,&p[1].x,&p[1].y))return 0;
+ }
+ if(d->w){width=d->w->cw;height=d->w->ch;}
+ else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
+ out.d=d;out.pen=rgb_to_gr(pen->color);out.brush=rgb_to_gr(brush->color);
+ return n?polygon_raster(p,n,width,height,!pen->null,!brush->null,polygon_screen_span,&out):
+          oval_raster(p,width,height,!pen->null,!brush->null,polygon_screen_span,&out);
+}
+/* Polygon(hdc, far POINT[], count). Does not change the current position. */
+static u32 polygon_api(u16 ss,u16 ap,int closed)
+{
+ u16 n,off,seg;int i,result;struct poly_point *p;
+ if(ap>0xfff8u)return 0;
+ n=AW(0);off=AW(2);seg=AW(4);
+ if(n<2||n>128||(!seg&&!off)||(u32)off+4UL*n>65536UL||
+    ((u32)seg<<4)+off+4UL*n>0x100000UL)return 0;
  p=malloc(n*sizeof(*p));if(!p)return 0;
  for(i=0;i<n;i++){
   p[i].x=(i16)rd16(seg,off+4*i);p[i].y=(i16)rd16(seg,off+4*i+2);
-  if(d&&!gdi_map_point(d,&p[i].x,&p[i].y)){free(p);return 0;}
  }
- if(!d)result=bitmap_polygon(h,p,n,pen->color,pen->null,brush->color,brush->null);
- else{
-  if(d->w){width=d->w->cw;height=d->w->ch;}
-  else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
-  out.d=d;out.pen=rgb_to_gr(pen->color);out.brush=rgb_to_gr(brush->color);
-  result=polygon_raster(p,n,width,height,!pen->null,!brush->null,polygon_screen_span,&out);
- }
- free(p);return result;
+ result=draw_shape(AW(6),p,closed?(int)n:-(int)n);free(p);return result;
 }
+
+u32 g_Polygon(u16 ss,u16 ap){return polygon_api(ss,ap,1);}
+u32 g_Polyline(u16 ss,u16 ap){return polygon_api(ss,ap,0);}
 
 /* Rectangle(hdc, left, top, right, bottom): right/bottom exclusive */
 u32 g_Rectangle(u16 ss, u16 ap)
@@ -629,20 +652,22 @@ u32 g_Rectangle(u16 ss, u16 ap)
     return 1;
 }
 
-/* Ellipse(hdc, left, top, right, bottom) */
-u32 g_Ellipse(u16 ss, u16 ap)
+/* Solid hairline Ellipse and RoundRect share the same memory/display raster. */
+u32 g_Ellipse(u16 ss,u16 ap)
 {
-    int b = (i16)AW(0), r = (i16)AW(2), t = (i16)AW(4), l = (i16)AW(6);
-    struct dc *d = dc_get(AW(8));
-    int rx,ry;
-    GR_COLOR c;
-    if(!d || !gdi_map_rect(d,&l,&t,&r,&b) || r<=l || b<=t)return 0;
-    rx=(r-l-1)/2;ry=(b-t-1)/2;
-    if (brush_of(d, &c) && set_rop(d, c))
-        GrFillEllipse(d->wid, d->gc, l + rx, t + ry, rx, ry);
-    if (pen_of(d, &c) && set_rop(d, c))
-        GrEllipse(d->wid, d->gc, l + rx, t + ry, rx, ry);
-    return 1;
+ struct poly_point p[3];
+ if(ap>0xfff6u)return 0;
+ p[0].x=(i16)AW(6);p[0].y=(i16)AW(4);p[1].x=(i16)AW(2);p[1].y=(i16)AW(0);
+ p[2].x=p[2].y=32767;
+ return draw_shape(AW(8),p,0);
+}
+u32 g_RoundRect(u16 ss,u16 ap)
+{
+ struct poly_point p[3];
+ if(ap>0xfff2u)return 0;
+ p[0].x=(i16)AW(10);p[0].y=(i16)AW(8);p[1].x=(i16)AW(6);p[1].y=(i16)AW(4);
+ p[2].x=(i16)AW(2);p[2].y=(i16)AW(0);
+ return draw_shape(AW(12),p,0);
 }
 
 /* MoveTo(hdc, x, y): returns the previous position, y in the high word */

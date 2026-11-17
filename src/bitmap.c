@@ -1,6 +1,7 @@
 /* Bounded far-owned bitmaps and memory DCs. Unsupported raster operations
  * fail; screen capture commits only after a complete negotiated snapshot. */
 #include <string.h>
+#include <stdlib.h>
 #include "wapi.h"
 #include "polygon.h"
 #include "dib.h"
@@ -201,12 +202,13 @@ static void polygon_memory_span(void *ctx,int x,int y,int width,int kind)
 }
 int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int np,u32 brush,int nb)
 {
- int m=di(h),b,i;struct polygon_memory out;
+ int m=di(h),b,i,count=n<0?-n:n;struct polygon_memory out;
  if(m<0||(b=bi(memory[m].bitmap))<0)return 0;
- for(i=0;i<n;i++)if(!memory_point(m,&p[i].x,&p[i].y))return 0;
+ for(i=0;i<(count?count:2);i++)if(!memory_point(m,&p[i].x,&p[i].y))return 0;
  out.b=&bitmaps[b];out.pen=bitmap_nearest(out.b,pen);
  out.brush=bitmap_nearest(out.b,brush);out.rop=memory[m].rop2;
- return polygon_raster(p,n,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out);
+ return n?polygon_raster(p,n,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out):
+          oval_raster(p,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out);
 }
 int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)
 {
@@ -318,6 +320,80 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
 #else
  (void)src;(void)dm;(void)dx;(void)dy;(void)sx;(void)sy;(void)w;(void)h;return 0;
 #endif
+}
+/* Flood membership is prepared before drawing, so transport/allocation/queue
+ * failures leave the destination untouched. Two one-bit maps avoid retaining a
+ * full colour snapshot. A bounded scanline worklist refuses pathological fills. */
+struct flood_capture {struct bitmap *mask;u8 accept[16];u16 rows;int valid;};
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+static void flood_capture_row(void *ctx,unsigned row,const unsigned char *data,unsigned len)
+{
+ struct flood_capture*c=ctx;unsigned x;
+ if(!c->valid||row!=c->rows||row>=c->mask->h||len!=(c->mask->w+1)/2){c->valid=0;return;}
+ for(x=0;x<c->mask->w;x++)if(c->accept[(data[x/2]>>((x&1)?0:4))&15])bitmap_put(c->mask,x,row,1);
+ c->rows++;
+}
+#endif
+int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
+                 void (*output)(void*,int,int,int,int),void *ctx)
+{
+ struct bitmap eligible,visited,*dest=0;struct flood_capture cap;
+ struct poly_point *stack;int m=di(h),i,j,w,hgt,top=0,l,r,ny,xx,yy,start,ok=0;u8 pi=0;
+ GR_SCREEN_INFO si;GR_PALETTE*palette=(GR_PALETTE*)w16_scratch;
+ if(mode<0||mode>1||(boundary&0xff000000UL))return 0;
+ if(d){
+  if(d->w){w=d->w->cw;hgt=d->w->ch;}
+  else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);w=si.cols;hgt=si.rows;}
+ }else{
+  if(m<0||(i=bi(memory[m].bitmap))<0||!memory_point(m,&x,&y))return 0;
+  dest=&bitmaps[i];w=dest->w;hgt=dest->h;pi=bitmap_nearest(dest,brush);
+ }
+ if(w<1||hgt<1||w>640||hgt>480||x<0||y<0||x>=w||y>=hgt)return 0;
+ memset(&eligible,0,sizeof(eligible));eligible.w=w;eligible.h=hgt;eligible.bpp=1;eligible.stride=(w+7)/8;
+ visited=eligible;
+ if(!allocate_pixels(&eligible,(u32)eligible.stride*hgt))return 0;
+ if(!allocate_pixels(&visited,(u32)visited.stride*hgt)){release_pixels(&eligible);return 0;}
+ stack=malloc(512*sizeof(*stack));if(!stack)goto done;
+ if(d){
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+  memset(&cap,0,sizeof(cap));cap.mask=&eligible;cap.valid=1;
+  memset(palette,0,sizeof(*palette));GrGetSystemPalette(palette);if(palette->count!=16)goto done;
+  for(j=0;j<16;j++){
+   u32 rgb=(u32)palette->palette[j].r|((u32)palette->palette[j].g<<8)|((u32)palette->palette[j].b<<16);
+   cap.accept[j]=(rgb==boundary)==mode;
+  }
+  if(!GrCapturePixels(d->wid,d->gc,0,0,w,hgt,flood_capture_row,&cap)||!cap.valid||cap.rows!=hgt)goto done;
+#else
+  goto done;
+#endif
+ }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
+  if((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)bitmap_put(&eligible,xx,yy,1);
+ if(!bitmap_index(&eligible,x,y))goto done;
+ stack[top].x=x;stack[top++].y=y;
+ while(top){
+  x=stack[--top].x;y=stack[top].y;
+  if(!bitmap_index(&eligible,x,y))continue;
+  for(l=x;l>0&&bitmap_index(&eligible,l-1,y);l--);
+  for(r=x;r+1<w&&bitmap_index(&eligible,r+1,y);r++);
+  for(xx=l;xx<=r;xx++){bitmap_put(&eligible,xx,y,0);bitmap_put(&visited,xx,y,1);}
+  for(j=-1;j<=1;j+=2){
+   ny=y+j;if(ny<0||ny>=hgt)continue;
+   for(xx=l;xx<=r;){
+    if(!bitmap_index(&eligible,xx,ny)){xx++;continue;}
+    if(top==512)goto done;
+    stack[top].x=xx;stack[top++].y=ny;
+    do{xx++;}while(xx<=r&&bitmap_index(&eligible,xx,ny));
+   }
+  }
+ }
+ for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;){
+  if(!bitmap_index(&visited,xx,yy)){xx++;continue;}
+  start=xx;do{xx++;}while(xx<w&&bitmap_index(&visited,xx,yy));
+  if(d)output(ctx,start,yy,xx-start,1);
+  else for(i=start;i<xx;i++)memory_rop_pixel(dest,i,yy,pi,memory[m].rop2);
+ }
+ ok=1;
+ done:free(stack);release_pixels(&eligible);release_pixels(&visited);return ok;
 }
 u32 g_BitBlt(u16 ss,u16 ap)
 {

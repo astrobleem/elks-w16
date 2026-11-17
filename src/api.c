@@ -52,7 +52,7 @@ u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_GetBkColor(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
-u32 g_Polygon(u16, u16), g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
+u32 g_ExtFloodFill(u16, u16), g_Polyline(u16, u16), g_Polygon(u16, u16), g_RoundRect(u16, u16), g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
 u32 k_GetWinFlags(u16, u16), k_LockSegment(u16, u16), k_UnlockSegment(u16, u16), k_MakeProcInstance(u16, u16);
 u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), u_SetDlgItemText(u16, u16);
@@ -297,10 +297,10 @@ const struct api api_table[] = {
     { G,13,"SetViewportOrg",6,0,H(g_SetViewportOrg) },
     { G,14,"SetViewportExt",6,0,H(g_SetViewportExt) },
     { G,  21, "EXCLUDECLIPRECT", 0, API_MISSING, 0 },
-    { G,  28, "ROUNDRECT", 0, API_MISSING, 0 },
+    { G,  28, "RoundRect", 14, 0, H(g_RoundRect) },
     { G, 30, "SaveDC", 2, 0, H(g_SaveDC) },
     { G,  36, "Polygon", 8, 0, H(g_Polygon) },
-    { G,  37, "POLYLINE", 0, API_MISSING, 0 },
+    { G,  37, "Polyline", 8, 0, H(g_Polyline) },
     { G,  38, "ESCAPE", 0, API_MISSING, 0 },
     { G, 39, "RestoreDC", 4, 0, H(g_RestoreDC) },
     { G,  44, "SELECTCLIPRGN", 0, API_MISSING, 0 },
@@ -322,7 +322,7 @@ const struct api api_table[] = {
     { G, 363, "GETPALETTEENTRIES", 10, 0, H(g_GetPaletteEntries) },
     { G, 366, "UPDATECOLORS", 0, API_MISSING, 0 },
     { G, 370, "GETNEARESTPALETTEINDEX", 6, 0, H(g_GetNearestPaletteIndex) },
-    { G, 372, "EXTFLOODFILL", 0, API_MISSING, 0 },
+    { G, 372, "ExtFloodFill", 12, 0, H(g_ExtFloodFill) },
     { G, 440, "SetDIBits", 18, 0, H(g_SetDIBits) },
     { G, 441, "GetDIBits", 18, 0, H(g_GetDIBits) },
     { G, 443, "SetDIBitsToDevice", 28, 0, H(g_SetDIBitsToDevice) },
