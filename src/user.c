@@ -71,6 +71,30 @@ u32 u_IsWindowVisible(u16 ss,u16 ap)
     return 0;
 }
 
+/* GWL_STYLE and GWL_WNDPROC are DWORD values even in 16-bit Windows.
+ * A style write alone does not move, resize or recreate the native frame. */
+u32 u_GetWindowLong(u16 ss,u16 ap)
+{
+    struct wnd *w; i16 index;
+    if(ap>0xfffcu) return 0;
+    w=win_get(AW(2)); index=(i16)AW(0); if(!w) return 0;
+    if(index==-16) return w->style;
+    if(index==-4) return ((u32)w->procseg<<16)|w->procoff;
+    return 0;
+}
+u32 u_SetWindowLong(u16 ss,u16 ap)
+{
+    struct wnd *w; i16 index; u32 old,v;
+    if(ap>0xfff8u) return 0;
+    w=win_get(AW(6)); index=(i16)AW(4); v=AL(0); if(!w) return 0;
+    if(index==-16) {old=w->style; w->style=v; return old;}
+    if(index==-4 && v) {
+        old=((u32)w->procseg<<16)|w->procoff;
+        w->procoff=(u16)v; w->procseg=(u16)(v>>16);return old;
+    }
+    return 0;
+}
+
 /* Child frame positions are relative to the parent's client, not the screen. */
 static void client_origin(struct wnd *w, int *x, int *y)
 {
@@ -969,13 +993,13 @@ u32 u_ShowWindow(u16 ss, u16 ap)
     prev = w->visible;
     if (cmd == 0) {
         GrUnmapWindow(w->frame);
-        w->visible = 0;
+        w->visible = 0; w->style &= ~WS_VISIBLE;
         return prev;
     }
     if (w->cw && w->ch) GrMapWindow(w->client);
     if (w->w && w->h) GrMapWindow(w->frame);
     if (w->cw && w->ch) GrSetFocus(w->client);
-    w->visible = 1;
+    w->visible = 1; w->style |= WS_VISIBLE;
     if (!w->shown) {
         w->shown = 1;
         win_send(w, WM_SIZE, 0, ((u32)w->ch << 16) | (u16)w->cw);

@@ -54,6 +54,7 @@ u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16
 u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
+u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_MoveWindow(u16,u16);
@@ -321,8 +322,8 @@ const struct api api_table[] = {
     { U, 111, "SendMessage", 10, 0, H(u_SendMessage) },
     { U, 119, "GETMESSAGEPOS", 0, API_MISSING, 0 },
     { U, 130, "SETCLASSWORD", 0, API_MISSING, 0 },
-    { U, 135, "GETWINDOWLONG", 0, API_MISSING, 0 },
-    { U, 136, "SETWINDOWLONG", 0, API_MISSING, 0 },
+    { U, 135, "GetWindowLong", 4, 0, H(u_GetWindowLong) },
+    { U, 136, "SetWindowLong", 8, 0, H(u_SetWindowLong) },
     { U, 137, "OPENCLIPBOARD", 0, API_MISSING, 0 },
     { U, 138, "CLOSECLIPBOARD", 0, API_MISSING, 0 },
     { U, 139, "EMPTYCLIPBOARD", 0, API_MISSING, 0 },
