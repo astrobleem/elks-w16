@@ -355,6 +355,8 @@ finished:
         sprintf(line, "@@EXIT %u\n", code);
         e9puts(line);
     }
-    return code;
+    /* The guest exits through a nonlocal assembly unwind. Complete libc
+     * teardown directly rather than re-entering the startup return frame. */
+    exit(code);
 }
 #endif
