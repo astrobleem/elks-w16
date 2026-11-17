@@ -2541,6 +2541,7 @@ u32 u_GetSystemMetrics(u16 ss, u16 ap)
     case 7: case 8: return 3;       /* SM_CXDLGFRAME, SM_CYDLGFRAME */
     case 11: case 12: return 32;    /* SM_CXICON, SM_CYICON */
     case 13: case 14: return 16;    /* SM_CXCURSOR, SM_CYCURSOR */
+    case 15: return MENUH;          /* SM_CYMENU: same space reserved by CreateWindow */
     case 16: return scr_w;          /* SM_CXFULLSCREEN */
     case 17: return scr_h - CAPH;   /* SM_CYFULLSCREEN */
     case 19: return 1;              /* SM_MOUSEPRESENT */

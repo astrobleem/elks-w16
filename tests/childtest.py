@@ -45,6 +45,7 @@ void fzero(u16 s,u16 o,u16 n){memset(host_ptr(s,o,n),0,n);}
 u16 fstrncpy_in(char*d,u16 s,u16 o,u16 n){strncpy(d,(char*)host_ptr(s,o,1),n);d[n-1]=0;return strlen(d);}
 static int find_class(u16 o,u16 s){(void)o;(void)s;return 0;}
 static int menu_load(struct wnd*w,const char*n,u16 id){(void)w;(void)n;(void)id;abort();}
+static int menu_attach(struct wnd*w,u16 h){(void)w;(void)h;abort();}
 u32 brush_color(u16 h,int *n){(void)h;*n=0;return 0;}
 GR_COLOR rgb_to_gr(u32 c){return c;}
 static unsigned nextid=100, frame_parent, fail_frame,fail_client,destroyed[64],ndestroy;
