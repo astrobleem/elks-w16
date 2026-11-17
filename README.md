@@ -4,7 +4,7 @@
 
 **Windows 3.0 applications on ELKS, in 16 colours.**
 
-An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics for Tandy and PCjr.
+An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics for Tandy and PCjr and a separate experimental VGA build.
 
 [Get started](docs/build.md) · [Screenshots](docs/gallery.md) · [Technical guide](docs/technical.md) · [MIT license](LICENSE)
 
@@ -35,8 +35,9 @@ The project is deliberately small in scope. It runs the source-built examples he
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
 | **Windows 3.0 REVERSI** | Play against the computer, menus, hints, cursors, accelerators and About | Bring your own copy |
+| **Windows 3.0 SOLITAIRE** | Stock dealing, basic tableau moves, and Game → Options in the [experimental VGA build](docs/build.md#experimental-vga-solitaire) | Bring your own copy |
 
-These results come from emulator runs. Tandy configurations have been exercised in **86Box and MartyPC**; the expanded-PCjr configuration has been exercised in **DOSBox-X**. **No physical Tandy or PCjr validation is claimed.** The [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) explains the configurations, timings and memory limits.
+These results come from emulator runs. Tandy configurations have been exercised in **86Box and MartyPC**; the expanded-PCjr configuration has been exercised in **DOSBox-X**. **Solitaire was tested separately in **QEMU with 640×480 VGA**. No physical hardware validation is claimed.** The [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) explains the configurations, timings and memory limits.
 
 <table>
   <tr>
@@ -93,15 +94,15 @@ w16 reversi.exe
 
 1. **Load the NE file.** Validate its segments and imports, allocate real-mode memory, and apply relocations.
 2. **Bridge the Win16 calls.** 8086 assembly thunks switch between the application's stack and native ELKS handlers, including callbacks into the application.
-3. **Draw through Nano-X.** USER handles windows, messages, menus and dialogs; GDI maps drawing to the 320×200, 16-colour display.
+3. **Draw through Nano-X.** USER handles windows, messages, menus and dialogs; GDI maps drawing to the 16-colour display (320×200 on Tandy/PCjr; 640×480 on optional VGA).
 
 The implementation includes local memory and resource handling, timers, accelerators, cursors, WIN.INI access and a subset of KERNEL/USER/GDI. See [how it works](docs/technical.md#how-it-works) and the [API list](docs/technical.md#what-is-supported) for the details.
 
 ## Know the limits
 
 - **Real mode, 8086/8088 code only.** Protected-mode-only and 80286-flagged executables, 64 KB segments and DLL loading are unsupported.
-- **A small Win16 API subset.** Many applications require APIs that are not implemented. Unsupported imports are reported before the application starts.
-- **Basic UI and graphics.** No general `BitBlt`, bitmap-resource support, editable text fields, list boxes, modeless dialogs or full window management. The system menu implements Close only.
+- **A small Win16 API subset.** Many applications require APIs that are not implemented. The default loader rejects unsupported imports. The experimental `-u` option can bind certain known missing imports to diagnostic traps; calling a trap stops the program.
+- **Basic UI and graphics.** Bitmap resources and some `BitBlt` operations are implemented; some raster operations require the matching VGA server. No editable text fields, list boxes, modeless dialogs or full window management. The system menu implements Close only.
 - **Conventional memory matters.** The entire application must fit; memory is not discarded or moved. Only one Win16 program can run at a time.
 - **Emulation is not hardware validation.** In particular, the DOSBox-X PCjr runs use a fast fixed-cycle configuration and do not establish real-PCjr performance.
 

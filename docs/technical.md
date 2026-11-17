@@ -271,17 +271,18 @@ GetTextMetrics, GetTextExtent, GetNearestColor, CreateDC/DeleteDC (the display),
 AddFontResource/RemoveFontResource (accepted, fonts not loaded). KERNEL also: GetModuleUsage.
 INT 21h: 00h, 19h, 25h/35h (virtual vectors), 2Ah, 2Ch, 30h, 40h to stdout/stderr, 4Ch.
 
+Bitmap resources, compatible memory DCs and selected `BitBlt` operations are implemented. Pixel readback, screen-to-bitmap capture and screen AND depend on matching Nano-X server capabilities; see the [experimental VGA build](build.md#experimental-vga-solitaire). The modal dialog manager supports basic check boxes, radio buttons and group boxes.
+
 ## What is not (yet)
 
-DLLs and `LoadLibrary`; bitmaps from resources (`LoadBitmap`, `BitBlt`) and `LoadIcon` from the
+DLLs and `LoadLibrary`; `LoadIcon` from the
 program's own resources (the frame icon stands in); colour cursors; menus from `LoadMenu`/`SetMenu`
 (class menus only), nested popups, the system menu commands other than Close (and
 `GetSystemMenu`); modeless dialogs (`CreateDialog`) and
 `DialogBoxParam`; `SendMessage` and `PostMessage` to all windows;
-check boxes, radio buttons, group boxes, EDIT, LISTBOX, COMBOBOX and SCROLLBAR controls (drawn
-as empty boxes); keyboard focus moves between controls; child windows outside dialogs; the
+EDIT, LISTBOX, COMBOBOX and SCROLLBAR controls (drawn as empty boxes); keyboard focus moves between controls; the
 global heap (`GlobalAlloc`); font files and fonts other than the Nano-X system font (every
-`CreateFontIndirect` font draws with it); bitmaps and `BitBlt`; mapping modes; clipping to the
+`CreateFontIndirect` font draws with it); general `BitBlt` raster operations; mapping modes; clipping to the
 update region and `ETO_CLIPPED`; file I/O through INT 21h; 8087 OS fixups;
 self-loading, protected-mode-only and 80286-flagged executables; 64 KB segments; more than one
 Win16 program at a time (the loader keeps its data segment in its own code segment).

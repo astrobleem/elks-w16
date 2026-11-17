@@ -24,7 +24,7 @@ export MWDIR="$(cd ../microwindows && pwd)"
 git -C "$MWDIR" checkout ac1063aec73d341db04d5f08aa8eb601215a69bc
 ```
 
-No Windows SDK, DDK, ROM image or Windows installation media is needed to build the samples. To run WINVER, CLOCK or REVERSI, supply your own **Windows 3.0** copies; these are not downloaded or included by the build.
+No Windows SDK, DDK, ROM image or Windows installation media is needed to build the samples. To run WINVER, CLOCK, REVERSI or SOLITAIRE, supply your own **Windows 3.0** copies; these are not downloaded or included by the build.
 
 ## 2. Prepare ELKS
 
@@ -115,6 +115,28 @@ It builds:
 The two client archives are intentionally separate. **Do not overwrite the small-model archive with medium-model objects.** The helper cleans and rebuilds the Nano-X tree first, then builds the medium-model objects in this repository's `build/nanox-medium/` directory. It also supplies `MEM_GETPCJR=15` when compiling against Tandy headers that lack that ioctl definition.
 
 `nanox-w16.patch` supplies server request batching, keyboard decoding, line-endpoint behaviour and the cursor-redraw correction. `nanox-tandyfast.patch` accelerates the colour driver's line, fill, copy and glyph paths. The base display patch and license notices live in [`dependencies/`](../dependencies).
+
+### Experimental VGA Solitaire
+
+The regular Tandy/PCjr build above is unchanged. The 640×480, 16-colour VGA build uses a matching Nano-X server and medium-model client with pixel readback and screen capture. It has been exercised in QEMU on ELKS 0.9.2 with VGA and medium-model executable support. It is not a Tandy/PCjr or physical hardware result.
+
+After applying the three baseline patches above, build from the w16 repository root with your built ELKS and patched Microwindows trees:
+
+```bash
+export VGA_OUT="$PWD/build/nanox-vga"
+sh scripts/build-nanox-vga.sh
+make -C src clean
+make -C src TOPDIR="$TOPDIR" MWDIR="$VGA_OUT"
+```
+
+Copy `$VGA_OUT/nano-x` and `src/w16` to the ELKS disk. Supply your own Windows 3.0 `SOL.EXE`. On the VGA guest, start this Nano-X server rather than the Tandy/PCjr server:
+
+```sh
+nano-x -p &
+w16 -u sol.exe
+```
+
+The default loader rejects missing imports. `-u` allows this run to start by binding certain known missing imports to diagnostic traps. It does not implement them: if Solitaire calls one, the run stops and reports the import. Basic stock dealing, legal and rejected tableau moves, flipping an exposed card, and Game → Options have been exercised. Completing a game and all other game commands remain unverified.
 
 ## 4. Build the sample applications
 
