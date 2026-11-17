@@ -6,6 +6,11 @@ start=g.index('{');level=1;end=start+1
 while level:
     level+=(g[end]=='{')-(g[end]=='}');end+=1
 g=g[:end]+'\n'
+extra=(root/'src/gdi.c').read_text();extra=extra[extra.index('u32 g_PtVisible('):]
+start=extra.index('{');level=1;end=start+1
+while level:
+    level+=(extra[end]=='{')-(extra[end]=='}');end+=1
+g+=extra[:end]+'\n'
 pre='''#include "w16.h"
 #include <assert.h>
 #include <stdio.h>
@@ -21,6 +26,7 @@ static struct wnd w={100,80};static struct dc d={&w,4,5};
 static int cap=0x1000,region,readcalls,palcalls,pixel=12,palcount=16;
 u8 w16_scratch[W16_SCRATCH],host_mem[0x110000];
 u8*host_ptr(u16 s,u16 o,u16 n){assert((u32)o+n<=65536);return host_mem+LIN(s,o);}
+static u32 bitmap_getpixel(u16 h,i16 x,i16 y){(void)h;(void)x;(void)y;return 0xffffffffUL;}
 struct dc*dc_get(u16 h){return h==0x200?&d:0;}
 void GrGetGCInfo(unsigned gc,GR_GC_INFO*i){i->gcid=gc;i->mode=cap;i->region=region;}
 void GrReadArea(unsigned wid,int x,int y,int width,int height,GR_PIXELVAL*p){assert(wid==5&&x==17&&y==5&&width==1&&height==1);readcalls++;*p=pixel;}
@@ -28,12 +34,12 @@ void GrGetSystemPalette(GR_PALETTE*p){int i;palcalls++;p->count=palcount;for(i=0
 '''
 test='''int main(void){int before;
 wr16(0x1000,0,5);wr16(0x1000,2,17);wr16(0x1000,4,0x200);
-assert(g_GetPixel(0x1000,0)==0x24180c);assert(readcalls==1&&palcalls==1);
-before=readcalls;cap=0;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);cap=0x1000;
-region=1;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);region=0;
+assert(g_GetPixel(0x1000,0)==0x24180c);assert(readcalls==1&&palcalls==1);assert(g_PtVisible(0x1000,0)==1);
+before=readcalls;cap=0;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);assert(!g_PtVisible(0x1000,0));assert(readcalls==before);cap=0x1000;
+region=1;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);assert(!g_PtVisible(0x1000,0));assert(readcalls==before);region=0;
 wr16(0x1000,2,100);assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);
 wr16(0x1000,2,0xffff);assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);wr16(0x1000,2,17);
-pixel=255;assert(g_GetPixel(0x1000,0)==0xffffffffUL);pixel=12;palcount=0;assert(g_GetPixel(0x1000,0)==0xffffffffUL);
+pixel=255;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(!g_PtVisible(0x1000,0));pixel=12;palcount=0;assert(g_GetPixel(0x1000,0)==0xffffffffUL);
 assert(g_GetPixel(0x1000,0xfffb)==0xffffffffUL);
 puts("GetPixel palette RGB, oldserver refusal, clipping and bounds checks passed");return 0;}
 '''

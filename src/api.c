@@ -25,7 +25,7 @@ u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16,
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
-u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16);
+u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16),g_PtVisible(u16,u16),g_LineDDA(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
@@ -68,8 +68,8 @@ const struct api api_table[] = {
     { G,79,"GetDCOrg",2,0,H(g_GetDCOrg) },
     { G,82,"GetObject",8,0,H(g_GetObject) },
     { G,83,"GetPixel",6,0,H(g_GetPixel) },
-    { G,100,"LineDDA",0,API_MISSING,0 },
-    { G,103,"PtVisible",0,API_MISSING,0 },
+    { G,100,"LineDDA",16,0,H(g_LineDDA) },
+    { G,103,"PtVisible",6,0,H(g_PtVisible) },
     { G,148,"SetBrushOrg",6,0,H(g_SetBrushOrg) },
     { K,6,"LocalReAlloc",0,API_MISSING,0 },
     { K,15,"GlobalAlloc",0,API_MISSING,0 },
@@ -335,6 +335,8 @@ u32 w16_api_dispatch(u16 idx)
     if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
         wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
     r = a->fn(ss, (u16)(sp + 12));
+    if (opt_trace && !r && a->mod == MOD_USER && a->ord == 175 && sp <= 0xffe8u)
+        wlog("w16: LoadBitmap failed name=%04x:%04x instance=%04x\n",rd16(ss,sp+14),rd16(ss,sp+12),rd16(ss,sp+16));
     if (opt_trace && r == 0xffffffffUL && a->mod == MOD_GDI && (a->ord == 31 || a->ord == 83) && sp <= 0xffe8u)
         wlog("w16: pixel failed ord=%u args=%04x %04x %04x %04x %04x\n", a->ord,
              rd16(ss,sp+12),rd16(ss,sp+14),rd16(ss,sp+16),rd16(ss,sp+18),rd16(ss,sp+20));

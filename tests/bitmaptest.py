@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Actual resource bitmap/parser glue with bounded native and memory doubles."""
 from pathlib import Path
-import subprocess,tempfile,os
+import subprocess,tempfile,os,struct
 root=Path(__file__).resolve().parents[1]
 code=r"""
 #include <stdint.h>
@@ -27,15 +27,35 @@ static u16 args[10];
 #define GR_MODE_AND 1
 #define MWROP_COPY 0
 #define GR_RGB(r,g,b) ((r)|((g)<<8)|((b)<<16))
-static u8 resource[20000],rams[16][16384],output[65536];static u16 length;
+static u8 resource[65536],rams[16][16384],output[65536];static u16 length;
 #define ram rams[0]
 static int segused[16],pixused[16];
 static int outputwrites;
 static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
- assert(seg==2&&(u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;
+ if(seg==99){assert((u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;}
+ else{assert(seg>=1&&seg<=16&&segused[seg-1]&&(u32)off+n<=16384);memcpy(rams[seg-1]+off,p,n);}
 }
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[10000],pixdata[640*480],foreground=77;static int mode=3;
+
+#define GR_MODE_HAVE_CAPTUREPIXELS 0x4000
+static int capture_mode,capture_calls,capture_x,capture_y,capture_w,capture_h;
+static int GrCapturePixels(int wid,int gc,int x,int y,int w,int h,
+ void(*callback)(void*,unsigned,const unsigned char*,unsigned),void*ctx){
+ unsigned row,col,len=(w+1)/2;u8 packed[320];
+ assert(wid==1&&gc==2&&w>0&&w<=640&&h>0&&h<=480);
+ capture_calls++;capture_x=x;capture_y=y;capture_w=w;capture_h=h;
+ if(capture_mode==1)return 0;
+ for(row=0;row<(unsigned)h;row++){
+  if(capture_mode==2&&row==(unsigned)h-1)break;
+  memset(packed,0,sizeof packed);
+  for(col=0;col<(unsigned)w;col++)packed[col/2]|=((x+col+3*(y+row))&15)<<((col&1)?0:4);
+  callback(ctx,capture_mode==3&&row==1?row+1:row,packed,capture_mode==4&&row==1?len-1:len);
+ }
+ if(capture_mode==6)callback(ctx,h,packed,len);
+ if(capture_mode==7)memset(native_palette.palette,0,sizeof native_palette.palette);
+ return capture_mode!=5;
+}
 static int checks,indexed,capability;
 static int nearest(u32 c){int i,best=0;long closest=0x7fffffff;
  for(i=0;i<16;i++){long r=(long)(c&255)-native_palette.palette[i].r,g=(long)((c>>8)&255)-native_palette.palette[i].g,b=(long)((c>>16)&255)-native_palette.palette[i].b,d=r*r+g*g+b*b;if(d<closest){closest=d;best=i;}}return best;
@@ -92,17 +112,21 @@ static u16 dcnew(void){args[0]=0;return g_CreateCompatibleDC(0,0);}
 static int blit(u16 dc,int dx,int dy,int sx,int sy,int w,int h,u32 rop){
  args[0]=rop;args[1]=rop>>16;args[2]=sy;args[3]=sx;args[4]=dc;args[5]=h;args[6]=w;args[7]=dy;args[8]=dx;args[9]=9;return g_BitBlt(0,0);
 }
+static int memblit(u16 dst,u16 src,int dx,int dy,int sx,int sy,int w,int h,u32 rop){
+ args[0]=rop;args[1]=rop>>16;args[2]=sy;args[3]=sx;args[4]=src;args[5]=h;args[6]=w;args[7]=dy;args[8]=dx;args[9]=dst;return g_BitBlt(0,0);
+}
 static u16 compatible(u16 d,int w,int h){args[0]=h;args[1]=w;args[2]=d;return g_CreateCompatibleBitmap(0,0);}
 static void object_check(u16 b,int w,int h,int depth){
  int stride=((w*depth+15)/16)*2;
- args[0]=100;args[1]=2;args[2]=14;args[3]=b;
+ args[0]=100;args[1]=99;args[2]=14;args[3]=b;
  memset(output,0xa5,sizeof output);assert(g_GetObject(0,0)==14);
  assert(output[100]==0&&output[101]==0);
  assert((output[102]|output[103]<<8)==w&&(output[104]|output[105]<<8)==h);
+ if((output[106]|output[107]<<8)!=stride||output[109]!=depth)fprintf(stderr,"Object %d x %d expected depth%d actual%d stride%d/%d\n",w,h,depth,output[109],stride,output[106]|output[107]<<8);
  assert((output[106]|output[107]<<8)==stride&&output[108]==1&&output[109]==depth);
  assert(!output[110]&&!output[111]&&!output[112]&&!output[113]&&output[114]==0xa5);
 }
-int main(void){
+int main(int argc,char**argv){
  int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
  u16 b,d,e;
  native_palette.count=16;for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*17;}
@@ -114,7 +138,7 @@ int main(void){
  }
  setup(71,96,1);segfail=1;assert(!load());clean();
  for(k=1;k<10;k++){setup(71,96,1);readfail=k;assert(!load());clean();}
- setup(71,96,1);resource[40]=1;assert(!load());clean();
+ setup(71,96,1);resource[40]=1;b=load();assert(b&&bitmaps[bi(b)].bpp==4);bitmap_shutdown();clean();
  setup(71,96,4);segfail=1;assert(!load());clean();
  for(k=19;k<=306;k+=287){setup(71,96,4);readfail=k;assert(!load());clean();}
  setup(71,96,4);b=load();assert(b&&seglive&&!pixlive&&!gclive);
@@ -130,7 +154,7 @@ int main(void){
  assert(foreground==77&&mode==3);assert(surface[4*100+12]==0xaaaaaaaa);
  assert(!blit(d,0,0,0,0,3,3,0));assert(!blit(d,0,0,0,0,0,3,0x00cc0020));
  assert(blit(d,150,0,0,0,3,3,0x00cc0020));
- args[9]=d;assert(!g_BitBlt(0,0)); /* no memory destinations */
+ args[9]=d;args[0]=0xc6;args[1]=0x88;assert(!g_BitBlt(0,0)); /* memory AND unsupported */
 
  /* Both source and destination clipping preserve translation for both formats. */
  for(k=1;k<=4;k+=3){
@@ -154,18 +178,18 @@ int main(void){
   setup(71,96,k);b=load();expected[6]=k==1?10:36;expected[9]=k;
   for(off=0;off<=65522;off+=65522){
    memset(output,0xa5,sizeof output);outputwrites=0;
-   args[0]=off;args[1]=2;args[2]=14;args[3]=b;
+   args[0]=off;args[1]=99;args[2]=14;args[3]=b;
    assert(g_GetObject(0,0)==14&&outputwrites==1);
    for(n=0;n<65536;n++)assert(output[n]==(n>=off&&n<off+14?expected[n-off]:0xa5));
   }
   /* Larger cbBuffer does not authorize writing beyond the 14-byte structure. */
   memset(output,0xa5,sizeof output);outputwrites=0;
-  args[0]=100;args[1]=2;args[2]=32767;args[3]=b;
+  args[0]=100;args[1]=99;args[2]=32767;args[3]=b;
   assert(g_GetObject(0,0)==14&&outputwrites==1);
   assert(!memcmp(output+100,expected,14)&&output[114]==0xa5);
   for(bad=0;bad<7;bad++){
    memset(output,0xa5,sizeof output);outputwrites=0;
-   args[0]=100;args[1]=2;args[2]=14;args[3]=b;
+   args[0]=100;args[1]=99;args[2]=14;args[3]=b;
    if(bad==0)args[3]=b+1;
    if(bad==1)args[3]=0;
    if(bad==2)args[2]=13;
@@ -297,6 +321,138 @@ int main(void){
   }
  }
  indexed=0;capability=0;
+
+ /* Memory copies use a pre-copy oracle for every overlap direction. */
+ for(k=1;k<=4;k+=3){
+  int dx,dy,sx,sy;u8 before[17*11],expected[17*11];
+  setup(17,11,k);b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+  for(dx=0;dx<5;dx++)for(dy=0;dy<5;dy++)for(sx=0;sx<5;sx++)for(sy=0;sy<5;sy++){
+   for(y=0;y<11;y++)for(x=0;x<17;x++){u8 v=(x+3*y)&(k==1?1:15);bitmap_put(&bitmaps[bi(b)],x,y,v);before[y*17+x]=v;}
+   memcpy(expected,before,sizeof before);
+   for(y=0;y<6;y++)for(x=0;x<12;x++)expected[(dy+y)*17+dx+x]=before[(sy+y)*17+sx+x];
+   assert(memblit(d,d,dx,dy,sx,sy,12,6,0x00cc0020));
+   for(y=0;y<11;y++)for(x=0;x<17;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==expected[y*17+x]);
+  }
+ }
+ /* Exact Solitaire 71x96 source to destination y=-3 crop. */
+ setup(71,96,1);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ {u16 target=compatible(e,71,96);assert(bitmap_select(e,target)==DEFAULT_BITMAP);
+ assert(memblit(e,d,0,-3,0,0,71,96,0x00cc0020));
+ for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(&bitmaps[bi(target)],x,y)==(y<93?pattern(x,y+3):0));
+ }
+ /* Mono->color uses destination text/background; reverse uses source background. */
+ setup(16,4,1);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*11;}
+ {u16 target=compatible(9,16,4),mono;u32 text=13|(7UL<<8)|(11UL<<16),bk=39|(21UL<<8)|(33UL<<16);
+ assert(bitmap_select(e,target)==DEFAULT_BITMAP);
+ assert(bitmap_setcolor(e,text,0)==0&&bitmap_setcolor(e,bk,1)==0xffffff);
+ assert(memblit(e,d,0,0,0,0,16,4,0x00cc0020));
+ for(y=0;y<4;y++)for(x=0;x<16;x++)assert(bitmap_index(&bitmaps[bi(target)],x,y)==(pattern(x,y)?3:1));
+ assert(bitmap_setcolor(e,bk,1)==bk);
+ assert(memblit(d,e,0,0,0,0,16,4,0x00cc0020));
+ for(y=0;y<4;y++)for(x=0;x<16;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==pattern(x,y));
+ assert(bitmap_setpixel(e,0,0,text)==text&&bitmap_getpixel(e,0,0)==text);
+ assert(bitmap_setpixel(d,0,0,0x010101)==0&&bitmap_getpixel(d,0,0)==0);
+ assert(bitmap_setpixel(d,0,0,0xfefefe)==0xffffff&&bitmap_getpixel(d,0,0)==0xffffff);
+ for(k=0;k<4;k++){int xx=k==0?-1:k==1?16:0,yy=k==2?-1:k==3?4:0;
+ assert(bitmap_getpixel(e,xx,yy)==0xffffffffUL&&bitmap_setpixel(e,xx,yy,0)==0xffffffffUL);}
+ assert(bitmap_setpixel(e,0,0,0x01000000)==0xffffffffUL&&bitmap_getpixel(e,0,0)==text);
+ {u8 saved[32];memcpy(saved,rams[bitmaps[bi(target)].seg-1],32);
+ assert(!memblit(e,d,0,0,0,0,16,4,0x008800c6));assert(!memblit(e,d,0,0,0,0,16,4,0x00660046));
+ assert(!memcmp(saved,rams[bitmaps[bi(target)].seg-1],32));}
+ }
+ /* Color->color remaps through owned RGB palettes, nearest tie is first. */
+ setup(16,1,4);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ {u16 target=compatible(9,16,1);struct bitmap*s=&bitmaps[bi(b)],*t=&bitmaps[bi(target)];
+ assert(bitmap_select(e,target)==DEFAULT_BITMAP);
+ for(k=0;k<16;k++){s->palette[k].r=k*10;s->palette[k].g=s->palette[k].b=0;
+ t->palette[k].r=(15-k)*10;t->palette[k].g=t->palette[k].b=0;bitmap_put(s,k,0,k);}
+ assert(memblit(e,d,0,0,0,0,16,1,0x00cc0020));
+ for(k=0;k<16;k++)assert(bitmap_index(t,k,0)==15-k);
+ assert(bitmap_setpixel(e,0,0,145)==150&&bitmap_index(t,0,0)==0);
+ }
+ bitmap_shutdown();clean();d=dcnew();
+ assert(bitmap_getpixel(d,0,0)==0xffffffffUL&&bitmap_setpixel(d,0,0,0)==0xffffffffUL);
+ assert(bitmap_getpixel(999,0,0)==0xffffffffUL&&bitmap_setpixel(999,0,0,0)==0xffffffffUL);
+ assert(bitmap_setcolor(d,12,0)==0&&bitmap_setcolor(d,34,1)==0xffffff);
+ assert(bitmap_setcolor(d,0x01000000,0)==0xffffffffUL);
+ assert(bitmap_setcolor(d,56,0)==12);
+ bitmap_deletedc(d);d=dcnew();assert(bitmap_setcolor(d,1,0)==0&&bitmap_setcolor(d,2,1)==0xffffff);
+
+ /* Streamed display capture commits only after every validated row succeeds. */
+ setup(1,1,1);win.cw=640;win.ch=480;
+ for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*11;}
+ b=compatible(9,71,96);d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ {struct bitmap*target=&bitmaps[bi(b)];u8 saved[3456];
+  /* Reverse destination palette so capture must perform real palette remap. */
+  for(k=0;k<16;k++){target->palette[k].r=(15-k)*13;target->palette[k].g=(15-k)*7;target->palette[k].b=(15-k)*11;}
+  memset(rams[target->seg-1],0x65,3456);memcpy(saved,rams[target->seg-1],3456);
+  for(capture_mode=1;capture_mode<=6;capture_mode++){
+   capture_calls=0;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
+   assert(capture_calls==1&&seglive==1&&!memcmp(saved,rams[target->seg-1],3456));
+  }
+  capture_mode=0;segfail=1;capture_calls=0;
+  assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
+  assert(!capture_calls&&seglive==1&&!memcmp(saved,rams[target->seg-1],3456));segfail=0;
+  native_palette.count=15;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
+  assert(!capture_calls&&!memcmp(saved,rams[target->seg-1],3456));native_palette.count=16;
+  capture_mode=7;assert(memblit(d,9,0,0,281,116,71,96,0x00cc0020));
+  assert(capture_x==281&&capture_y==116&&capture_w==71&&capture_h==96&&seglive==1);
+  for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(target,x,y)==15-((281+x+3*(116+y))&15));
+  for(y=0;y<96;y++)assert((rams[target->seg-1][y*36+35]&15)==5); /* pad nibble unchanged */
+  for(n=3456;n<16384;n++)assert(rams[target->seg-1][n]==0xa5);
+  for(k=0;k<16;k++){native_palette.palette[k].r=k*13;native_palette.palette[k].g=k*7;native_palette.palette[k].b=k*11;}
+  capture_mode=0;memset(rams[target->seg-1],0x65,3456);
+  assert(memblit(d,9,-2,-3,281,116,71,96,0x00cc0020));
+  assert(capture_x==283&&capture_y==119&&capture_w==69&&capture_h==93);
+  for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(target,x,y)==(x<69&&y<93?15-((283+x+3*(119+y))&15):(x&1?5:6)));
+  capture_calls=0;assert(!memblit(d,9,0,0,0,0,3,3,0x008800c6)&&!capture_calls);
+ }
+ bitmap_shutdown();clean();win.cw=win.ch=100;
+
+ /* Colored one-bit resources preserve RGB instead of text/background expansion. */
+ for(k=0;k<4;k++){
+  u32 first,second;
+  setup(71,96,1);
+  if(k==0){resource[40]=resource[41]=0;resource[42]=255;}
+  if(k==1){resource[40]=17;resource[41]=29;resource[42]=41;resource[44]=53;resource[45]=67;resource[46]=79;}
+  if(k==2){ /* A single legal palette entry and all-zero indices. */
+   wordput(32,1);resource[40]=17;resource[41]=29;resource[42]=41;
+   memset(resource+44,0,length-44);
+  }
+  if(k==3){resource[40]=resource[41]=resource[42]=255;resource[44]=resource[45]=resource[46]=0;}
+  first=resource[42]|((u32)resource[41]<<8)|((u32)resource[40]<<16);
+  second=resource[46]|((u32)resource[45]<<8)|((u32)resource[44]<<16);
+  b=load();assert(b);object_check(b,71,96,4);
+  d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);dest.textcolor=0x123456;dest.bkcolor=0xabcdef;
+  assert(blit(d,0,0,0,0,71,96,0x00cc0020));
+  for(y=0;y<96;y++)for(x=0;x<71;x++){
+   int index=k==2?0:pattern(x,y),stored=index;
+   assert(bitmap_index(&bitmaps[bi(b)],x,y)==stored);
+   assert(surface[y*100+x]==(index?second:first));
+  }
+ }
+ /* Optional real NE resources are temporary inputs, never committed assets. */
+ for(k=1;k<argc;k++){
+  FILE*f;long size;struct dib_info parsed;struct resource rr;u8 indices[32];int reverse,mono;
+  bitmap_shutdown();clean();f=fopen(argv[k],"rb");assert(f);
+  assert(!fseek(f,0,SEEK_END));size=ftell(f);assert(size>0&&size<=65535);rewind(f);
+  assert(fread(resource,1,size,f)==(size_t)size);fclose(f);length=size;
+  readfail=readcount=segfail=0;rr.off=0;rr.len=length;
+  assert(dib_open(&parsed,read_bitmap,&rr,length));
+  mono=parsed.bpp==1&&parsed.colors==2&&parsed.palette[0].r==0&&parsed.palette[0].g==0&&parsed.palette[0].b==0&&parsed.palette[1].r==255&&parsed.palette[1].g==255&&parsed.palette[1].b==255;
+  reverse=0;
+  b=load();assert(b);object_check(b,parsed.width,parsed.height,mono?1:4);
+  for(y=0;y<parsed.height;y++)for(x=0;x<parsed.width;x+=32){
+   int j,count=parsed.width-x;if(count>32)count=32;
+   assert(dib_read_indices(&parsed,read_bitmap,&rr,x,y,indices,count));
+   for(j=0;j<count;j++){
+    int index=indices[j];assert(bitmap_index(&bitmaps[bi(b)],x+j,y)==(index^reverse));
+    if(!mono)assert(!memcmp(&bitmaps[bi(b)].palette[index],&parsed.palette[index],sizeof(struct dib_rgb)));
+   }
+  }
+ }
+ if(argc>1)printf("LoadBitmap: %d real resource payloads passed\n",argc-1);
  bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
  return 0;
 }
@@ -304,4 +460,23 @@ int main(void){
 with tempfile.TemporaryDirectory() as td:
  p=Path(td);(p/'t.c').write_text(code)
  subprocess.run(['cc','-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),'-o',str(p/'t')],check=True)
- subprocess.run([str(p/'t')],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))
+ args=[str(p/'t')]
+ if 'SOL_EXE' in os.environ:
+  data=Path(os.environ['SOL_EXE']).read_bytes()
+  ne=struct.unpack_from('<I',data,0x3c)[0]
+  assert data[ne:ne+2]==b'NE'
+  pos=ne+struct.unpack_from('<H',data,ne+0x24)[0]
+  shift=struct.unpack_from('<H',data,pos)[0];pos+=2
+  while True:
+   typ=struct.unpack_from('<H',data,pos)[0]
+   if not typ:break
+   count=struct.unpack_from('<H',data,pos+2)[0];pos+=8
+   for _ in range(count):
+    off,size=struct.unpack_from('<HH',data,pos);pos+=12
+    if typ!=0x8002:continue
+    off<<=shift;size<<=shift
+    assert off+size<=len(data)
+    target=p/('resource'+str(len(args))+'.dib')
+    target.write_bytes(data[off:off+size]);args.append(str(target))
+  assert len(args)>1
+ subprocess.run(args,check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

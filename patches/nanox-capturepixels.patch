@@ -1,0 +1,169 @@
+--- a/src/include/nano-X.h
++++ b/src/include/nano-X.h
+@@ -101,6 +101,7 @@
+ #define GR_MODE_EXCLUDECHILDREN	0x0100		/* exclude children on clip*/
+ #define GR_MODE_EXCLUDEENDPOINT	0x0200		/* GrLine leaves out its end point (Windows LineTo)*/
+ #define GR_MODE_HAVE_SCREENAND 0x2000 /* screen driver performs indexed AND */
++#define GR_MODE_HAVE_CAPTUREPIXELS 0x4000 /* atomic visible packed4bpp capture */
+ #define GR_MODE_HAVE_READPIXEL 0x1000 /* bounded one-pixel ReadArea, failure value255 */
+ #define GR_MODE_HAVE_EXCLUDEENDPOINT 0x0400	/* set by a server that implements the flag above*/
+ 
+@@ -1141,5 +1142,12 @@
+ #define INIT_PER_THREAD_DATA()
+ #endif
+ 
++/* Packed 4bpp rows, high nibble first; odd row's low nibble is zero. */
++typedef void (*GR_CAPTURE_CALLBACK)(void *ctx, unsigned int row,
++                                  const unsigned char *packed, unsigned int len);
++int GrCapturePixels(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
++                    GR_SIZE width, GR_SIZE height, GR_CAPTURE_CALLBACK row, void *ctx);
++
+ #endif /* _NANO_X_H*/
+ /* vim: set ts=8: */
++
+--- a/src/nanox/nxproto.h
++++ b/src/nanox/nxproto.h
+@@ -1397,4 +1397,11 @@
+ 	IDTYPE	imageid;
+ } nxDrawImagePartToFitReq;
+ 
+-#define GrTotalNumCalls         126
++#define GrNumCapturePixels 126
++typedef struct {
++ BYTE8 reqType, hilength;
++ UINT16 length;
++ IDTYPE drawid, gcid;
++ INT16 x,y,width,height;
++} nxCapturePixelsReq;
++#define GrTotalNumCalls         127
+--- a/src/nanox/client.c
++++ b/src/nanox/client.c
+@@ -4894,3 +4894,42 @@
+     UNLOCK(&nxGlobalLock);
+ }
+ #endif
++
++#if ELKS && !MW_FEATURE_AREAS
++int GrCapturePixels(GR_DRAW_ID id, GR_GC_ID gc, GR_COORD x, GR_COORD y,
++                    GR_SIZE width, GR_SIZE height, GR_CAPTURE_CALLBACK row, void *ctx)
++{
++    nxCapturePixelsReq *req;
++    GR_GC_INFO gi;
++    unsigned char packed[320];
++    unsigned short bytes, expected, pitch;
++    unsigned int i;
++    int ok = 0;
++    if (!row || x < 0 || y < 0 || width <= 0 || width > 640 ||
++        height <= 0 || height > 480) return 0;
++    pitch = (width+1)/2;
++    if ((unsigned)height > 16384u/pitch) return 0;
++    expected = pitch*height;
++    memset(&gi,0,sizeof(gi));GrGetGCInfo(gc,&gi);
++    if (gi.gcid != gc || gi.region || !(gi.mode & GR_MODE_HAVE_CAPTUREPIXELS)) return 0;
++    LOCK(&nxGlobalLock);
++    req=AllocReq(CapturePixels);
++    req->drawid=id;req->gcid=gc;req->x=x;req->y=y;req->width=width;req->height=height;
++    if (TypedReadBlock(&bytes,sizeof(bytes),GrNumCapturePixels) == -1) goto done;
++    if (!bytes) goto done;
++    if (bytes != expected) {
++        /* Drain an invalid response without invoking the destination callback. */
++        while (bytes) { unsigned n=bytes>sizeof(packed)?sizeof(packed):bytes;
++            if (ReadBlock(packed,n)==-1) goto done; bytes-=n; }
++        goto done;
++    }
++    for(i=0;i<(unsigned)height;i++) {
++        if (ReadBlock(packed,pitch)==-1) goto done;
++        row(ctx,i,packed,pitch);
++    }
++    ok=1;
++done:
++    UNLOCK(&nxGlobalLock);
++    return ok;
++}
++#endif
+--- a/src/nanox/srvfunc.c
++++ b/src/nanox/srvfunc.c
+@@ -957,7 +957,7 @@
+ 	gcip->mode |= GR_MODE_HAVE_SCREENAND;
+ #endif
+ #if ELKS && !MW_FEATURE_AREAS
+-	gcip->mode |= GR_MODE_HAVE_READPIXEL;
++	gcip->mode |= GR_MODE_HAVE_READPIXEL | GR_MODE_HAVE_CAPTUREPIXELS;
+ #endif
+ 	gcip->region = gcp->regionid;
+ 	gcip->xoff = gcp->xoff;
+@@ -2332,7 +2332,7 @@
+ 
+ 	SERVER_LOCK();
+ 
+-	mode &= ~(GR_MODE_HAVE_READPIXEL|GR_MODE_HAVE_SCREENAND); /* query-only capability is never drawing state */
++	mode &= ~(GR_MODE_HAVE_READPIXEL|GR_MODE_HAVE_SCREENAND|GR_MODE_HAVE_CAPTUREPIXELS); /* query-only capability is never drawing state */
+ 	if (mode & GR_MODE_EXCLUDEENDPOINT)
+ 		mode |= GR_MODE_HAVE_EXCLUDEENDPOINT;	/* tell clients the flag is understood */
+ 	gcp = GsFindGC(gc);
+--- a/src/nanox/srvnet.c
++++ b/src/nanox/srvnet.c
+@@ -916,6 +916,55 @@
+     GsWriteType(current_fd, GrNumReadArea);
+     GsWrite(current_fd, &pixel, sizeof(pixel));
+ #endif
++}
++
++/* Whole source is validated before the first status/pixel byte is returned. */
++static void GrCapturePixelsWrapper(void *r)
++{
++    nxCapturePixelsReq *req=r;
++    unsigned short bytes=0;
++#if ELKS && !MW_FEATURE_AREAS
++    GR_WINDOW *wp;
++    GR_GC *gc;
++    PSD psd;
++    unsigned char row[320];
++    unsigned pitch;
++    int x,y,i,j;
++    long sx,sy;
++    if (req->hilength || GetReqLen(req)!=sizeof(*req)) goto refuse;
++    if (req->width<=0 || req->width>640 || req->height<=0 || req->height>480 ||
++        req->x<0 || req->y<0) goto refuse;
++    pitch=(req->width+1)/2;
++    if ((unsigned)req->height>16384u/pitch) goto refuse;
++    wp=GsFindWindow(req->drawid);gc=GsFindGC(req->gcid);
++    if (!wp || !gc || gc->owner!=curclient || gc->regionid || !wp->realized || !wp->output ||
++        (wp!=rootwp && wp->owner!=curclient) || wp->psd->ncolors!=16 ||
++        req->x>wp->width || req->width>wp->width-req->x ||
++        req->y>wp->height || req->height>wp->height-req->y) goto refuse;
++    sx=(long)wp->x+req->x;sy=(long)wp->y+req->y;
++    if (sx<0 || sy<0 || sx+req->width>wp->psd->xvirtres ||
++        sy+req->height>wp->psd->yvirtres) goto refuse;
++    x=(int)sx;y=(int)sy;
++    for(j=0;j<req->height;j++) for(i=0;i<req->width;i++)
++        if(GsFindVisibleWindow(x+i,y+j)!=wp) goto refuse;
++    bytes=pitch*req->height;
++    psd=wp->psd; /* client disconnect can destroy wp during a write */
++    GdCheckCursor(psd,x,y,x+req->width-1,y+req->height-1);
++    if (GsWriteType(current_fd,GrNumCapturePixels)<0 ||
++        GsWrite(current_fd,&bytes,sizeof(bytes))<0) goto finish;
++    for(j=0;j<req->height;j++) {
++        memset(row,0,pitch);
++        for(i=0;i<req->width;i++)
++            row[i/2] |= psd->ReadPixel(psd,x+i,y+j) << ((i&1)?0:4);
++        if (GsWrite(current_fd,row,pitch)<0) goto finish;
++    }
++finish:
++    GdFixCursor(psd);
++    return;
++refuse:
++#endif
++    if (GsWriteType(current_fd,GrNumCapturePixels)>=0)
++        GsWrite(current_fd,&bytes,sizeof(bytes));
+ }
+ 
+ /* FIXME: fails with size > 64k if sizeof(int) == 2*/
+@@ -1807,6 +1856,7 @@
+ 	/* 123 */ {GrCreateFontFromBufferWrapper, "GrCreateFontFromBuffer"},
+ 	/* 124 */ {GrCopyFontWrapper, "GrCopyFont"},
+ 	/* 125 */ {GrDrawImagePartToFitWrapper, "GrDrawImagePartToFit"},
++    /* 126 */ {GrCapturePixelsWrapper, "GrCapturePixels"},
+ };
+ 
+ void

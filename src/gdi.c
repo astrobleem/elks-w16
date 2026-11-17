@@ -367,7 +367,7 @@ u32 g_SetTextColor(u16 ss, u16 ap)
 {
     struct dc *d = dc_get(AW(4));
     u32 prev;
-    if (!d) return 0x80000000ul;
+    if (!d) return bitmap_setcolor(AW(4),AL(0),0);
     prev = d->textcolor; d->textcolor = AL(0) & 0xFFFFFFul;
     return prev;
 }
@@ -376,7 +376,7 @@ u32 g_SetBkColor(u16 ss, u16 ap)
 {
     struct dc *d = dc_get(AW(4));
     u32 prev;
-    if (!d) return 0x80000000ul;
+    if (!d) return bitmap_setcolor(AW(4),AL(0),1);
     prev = d->bkcolor; d->bkcolor = AL(0) & 0xFFFFFFul;
     return prev;
 }
@@ -1059,15 +1059,16 @@ u32 g_SetBrushOrg(u16 ss,u16 ap)
  d->brushx=x;d->brushy=y;return old;
 }
 
-/* Display SetPixel uses the actual native 16-color palette. Unsupported color
- * encodings and memory DCs fail rather than aliasing the screen. */
+/* Display SetPixel uses the actual native 16-color palette; memory pixels
+ * use their owned storage and palette, never the screen. */
 typedef char pixel_palette_fits_scratch[(sizeof(GR_PALETTE)<=W16_SCRATCH)?1:-1];
 u32 g_SetPixel(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(8));i16 x=(i16)AW(6),y=(i16)AW(4);u32 c=AL(0),best=0;
  GR_PALETTE*p=(GR_PALETTE*)w16_scratch;GR_SCREEN_INFO si;
  long dr,dg,db,dist,closest=0x7fffffffL;int i,w,h;
- if(!d||x<0||y<0||(c&0xff000000UL))return 0xffffffffUL;
+ if(!d)return bitmap_setpixel(AW(8),x,y,c);
+ if(x<0||y<0||(c&0xff000000UL))return 0xffffffffUL;
  if(d->w){w=d->w->cw;h=d->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);w=si.cols;h=si.rows;}
  if(x>=w||y>=h)return 0xffffffffUL;
  memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0xffffffffUL;
@@ -1088,7 +1089,7 @@ void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n)
     GrText(d->wid, d->gc, x, y, text, n, GR_TFASCII | GR_TFTOP);
 }
 
-/* Negotiated visible native framebuffer readback; memory DCs are not accepted. */
+/* Owned memory pixel readback or negotiated visible framebuffer readback. */
 u32 g_GetPixel(u16 ss, u16 ap)
 {
     struct dc *d = 0;
@@ -1101,8 +1102,9 @@ u32 g_GetPixel(u16 ss, u16 ap)
     memset(&gi,0,sizeof(gi));
     if (ap > 0xfffa) goto failed;
     x=(i16)AW(2);y=(i16)AW(0);d=dc_get(AW(4));
+    if(!d)return bitmap_getpixel(AW(4),x,y);
     why=2;
-    if (!d || x<0 || y<0 || (d->w && (x>=d->w->cw || y>=d->w->ch)))
+    if (x<0 || y<0 || (d->w && (x>=d->w->cw || y>=d->w->ch)))
         goto failed;
     memset(&gi,0,sizeof(gi));GrGetGCInfo(d->gc,&gi);
     why=3;
@@ -1132,4 +1134,10 @@ u32 g_GetDCOrg(u16 ss,u16 ap)
  struct dc*d=dc_get(AW(0));int x=0,y=0;
  if(d&&d->w)win_client_origin(d->w,&x,&y);
  return (u16)x|((u32)(u16)y<<16);
+}
+
+/* Same bounded visible native DC domain as GetPixel, including clip refusal. */
+u32 g_PtVisible(u16 ss, u16 ap)
+{
+    return g_GetPixel(ss, ap) != 0xffffffffUL;
 }

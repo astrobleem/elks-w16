@@ -1,5 +1,5 @@
-/* Bounded resource bitmaps and source-only memory DCs. Unsupported raster
- * operations and memory destinations fail; no memory DC aliases the screen. */
+/* Bounded far-owned bitmaps and memory DCs. Unsupported raster operations
+ * fail; screen capture commits only after a complete negotiated snapshot. */
 #include <string.h>
 #include "wapi.h"
 #include "dib.h"
@@ -10,7 +10,7 @@
 #define DEFAULT_BITMAP 0x0aff
 struct bitmap {u16 w,h,seg,stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-static struct {u16 bitmap;u8 used;i16 brushx,brushy;} memory[ND];
+static struct {u16 bitmap;u8 used;i16 brushx,brushy;u32 textcolor,bkcolor;} memory[ND];
 static int bi(u16 h){u16 n=(h-BBASE)/2;return h>=BBASE&&!(h&1)&&n<NB&&bitmaps[n].used?n:-1;}
 static int di(u16 h){u16 n=(h-DBASE)/2;return h>=DBASE&&!(h&1)&&n<ND&&memory[n].used?n:-1;}
 static void release_bitmap(int i){if(bitmaps[i].seg)seg_free(bitmaps[i].seg);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
@@ -18,7 +18,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h),j;if(i<0)return -1;for(j=0;j<ND;j++)if(memory[j].used&&memory[j].bitmap==h)return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h),k;u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;for(k=0;k<ND;k++)if(k!=i&&memory[k].used&&memory[k].bitmap==h&&h!=DEFAULT_BITMAP)return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory[i].used=1;memory[i].bitmap=DEFAULT_BITMAP;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory[i].used=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
@@ -41,16 +41,49 @@ static void bitmap_put(struct bitmap*b,u16 x,u16 y,u8 index)
  u8 mask=(b->bpp==1?1:15)<<shift;
  wr8(b->seg,at,(rd8(b->seg,at)&~mask)|(index<<shift));
 }
+static u32 bitmap_rgb(struct bitmap*b,u8 index)
+{struct dib_rgb*c=&b->palette[index];return b->bpp==1?(index?0xffffffUL:0):(u32)c->r|((u32)c->g<<8)|((u32)c->b<<16);}
+static u8 bitmap_nearest(struct bitmap*b,u32 rgb)
+{
+ long closest=0x7fffffffL,dr,dg,db,dist;u32 c;u8 i,best=0;
+ for(i=0;i<(b->bpp==1?2:16);i++){
+  c=bitmap_rgb(b,i);dr=(long)(rgb&255)-(long)(c&255);dg=(long)((rgb>>8)&255)-(long)((c>>8)&255);db=(long)((rgb>>16)&255)-(long)((c>>16)&255);
+  dist=dr*dr+dg*dg+db*db;if(dist<closest){closest=dist;best=i;}
+ }return best;
+}
+u32 bitmap_getpixel(u16 h,i16 x,i16 y)
+{
+ int m=di(h),i;if(m<0||(i=bi(memory[m].bitmap))<0||x<0||y<0||x>=bitmaps[i].w||y>=bitmaps[i].h)return 0xffffffffUL;
+ return bitmap_rgb(&bitmaps[i],bitmap_index(&bitmaps[i],x,y));
+}
+u32 bitmap_setpixel(u16 h,i16 x,i16 y,u32 rgb)
+{
+ int m=di(h),i;u8 index;
+ if(m<0||(i=bi(memory[m].bitmap))<0||x<0||y<0||x>=bitmaps[i].w||y>=bitmaps[i].h||(rgb&0xff000000UL))return 0xffffffffUL;
+ index=bitmap_nearest(&bitmaps[i],rgb);bitmap_put(&bitmaps[i],x,y,index);return bitmap_rgb(&bitmaps[i],index);
+}
+u32 bitmap_setcolor(u16 h,u32 rgb,int bk)
+{
+ int m=di(h);u32 old;if(m<0||(rgb&0xff000000UL))return 0xffffffffUL;
+ old=bk?memory[m].bkcolor:memory[m].textcolor;if(bk)memory[m].bkcolor=rgb;else memory[m].textcolor=rgb;return old;
+}
 struct resource {u32 off;u16 len;};
 static int read_bitmap(void *ctx,u32 off,void *dst,u16 n){struct resource*r=ctx;if(off>r->len||n>r->len-off||r->off+off<r->off)return 0;return ne_read(w16_mod,r->off+off,dst,n)==0;}
 u32 u_LoadBitmap(u16 ss,u16 ap)
 {
- struct resource r;struct dib_info d;char name[34];u16 id,x,y,n,j;u8 pixels[32];int i;
+ struct resource r;struct dib_info d;char name[34];u16 id,x,y,n,j,bpp;u8 pixels[32];int i;
  if(!w16_mod||AW(4)!=w16_mod->dgroup)return 0;
  res_name(AW(0),AW(2),name,&id);
  if(ne_res_find(w16_mod,2,name[0]?name:0,id,&r.off,&r.len)||!dib_open(&d,read_bitmap,&r,r.len))return 0;
- if(d.bpp==1&&(d.colors!=2||d.palette[0].r||d.palette[0].g||d.palette[0].b||d.palette[1].r!=255||d.palette[1].g!=255||d.palette[1].b!=255))return 0;
- i=allocate_bitmap(d.width,d.height,d.bpp);if(i<0)return 0;
+ bpp=d.bpp;
+ if(bpp==1){
+  int black0=!d.palette[0].r&&!d.palette[0].g&&!d.palette[0].b;
+  int white1=d.colors==2&&d.palette[1].r==255&&d.palette[1].g==255&&d.palette[1].b==255;
+  /* A colored 1bpp DIB is not a monochrome DDB. Preserve its RGBs in
+   * color storage; only black/white resources use text/background expansion. */
+  if(!(black0&&white1))bpp=4;
+ }
+ i=allocate_bitmap(d.width,d.height,bpp);if(i<0)return 0;
  memcpy(bitmaps[i].palette,d.palette,d.colors*sizeof(d.palette[0]));
  for(y=0;y<d.height;y++)for(x=0;x<d.width;x+=n){
   n=d.width-x;if(n>32)n=32;if(!dib_read_indices(&d,read_bitmap,&r,x,y,pixels,n)){release_bitmap(i);return 0;}
@@ -60,12 +93,63 @@ u32 u_LoadBitmap(u16 ss,u16 ap)
 }
 /* Clip both rectangles together in widened arithmetic, preserving source phase. */
 static int clip_axis(long *dst,long *src,long *n,long limit,long slimit){long q;if(*dst<0){q=-*dst;*dst=0;*src+=q;*n-=q;}if(*src<0){q=-*src;*src=0;*dst+=q;*n-=q;}if(*n>limit-*dst)*n=limit-*dst;if(*n>slimit-*src)*n=slimit-*src;return *n>0;}
+/* Prevalidated clipped memory copy. Direction handles same-bitmap overlap;
+ * conversion tables are completed before the first destination mutation. */
+static void memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int sm,int sx,int sy,int w,int h)
+{
+ u8 map[16],i,index;int row,col,yy,xx;u32 rgb;
+ for(i=0;i<(s->bpp==1?2:16);i++){
+  if(d==s|| (s->bpp==1&&d->bpp==1))map[i]=i;
+  else if(d->bpp==1)map[i]=bitmap_rgb(s,i)==memory[sm].bkcolor;
+  else{rgb=s->bpp==1?(i?memory[dm].bkcolor:memory[dm].textcolor):bitmap_rgb(s,i);map[i]=bitmap_nearest(d,rgb);}
+ }
+ for(row=0;row<h;row++){
+  yy=d==s&&dy>sy?h-1-row:row;
+  for(col=0;col<w;col++){
+   xx=d==s&&dy==sy&&dx>sx?w-1-col:col;
+   index=bitmap_index(s,sx+xx,sy+yy);bitmap_put(d,dx+xx,dy+yy,map[index]);
+  }
+ }
+}
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+struct capture_stage {struct bitmap image;u16 rows;int valid;};
+static void capture_row(void *ctx,unsigned row,const unsigned char *packed,unsigned len)
+{
+ struct capture_stage*c=ctx;
+ if(!c->valid||row!=c->rows||row>=c->image.h||len!=c->image.stride){c->valid=0;return;}
+ fcopy_out(c->image.seg,row*c->image.stride,packed,len);c->rows++;
+}
+#endif
+static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,int h)
+{
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+ struct capture_stage c;struct bitmap*d;GR_PALETTE*p=(GR_PALETTE*)w16_scratch;
+ GR_SCREEN_INFO si;long xx=dx,yy=dy,ax=sx,ay=sy,ww=w,hh=h;int db=bi(memory[dm].bitmap),sw,sh,j,ok;
+ if(db<0||bitmaps[db].bpp!=4)return 0;d=&bitmaps[db];
+ if(src->w){sw=src->w->cw;sh=src->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);sw=si.cols;sh=si.rows;}
+ if(!clip_axis(&xx,&ax,&ww,d->w,sw)||!clip_axis(&yy,&ay,&hh,d->h,sh))return 1;
+ memset(&c,0,sizeof(c));c.image.w=ww;c.image.h=hh;c.image.stride=(ww+1)/2;c.image.bpp=4;c.valid=1;
+ if((u32)c.image.stride*c.image.h>16384UL)return 0;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;
+ for(j=0;j<16;j++){c.image.palette[j].r=p->palette[j].r;c.image.palette[j].g=p->palette[j].g;c.image.palette[j].b=p->palette[j].b;}
+ if(seg_alloc(((u32)c.image.stride*c.image.h+15)/16,&c.image.seg))return 0;
+ ok=GrCapturePixels(src->wid,src->gc,ax,ay,ww,hh,capture_row,&c)&&c.valid&&c.rows==c.image.h;
+ if(ok)memory_copy(d,dm,xx,yy,&c.image,0,0,0,ww,hh);
+ seg_free(c.image.seg);return ok;
+#else
+ (void)src;(void)dm;(void)dx;(void)dy;(void)sx;(void)sy;(void)w;(void)h;return 0;
+#endif
+}
 u32 g_BitBlt(u16 ss,u16 ap)
 {
- struct dc*d=dc_get(AW(18));int m=di(AW(8)),b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
- if(!d||m<0||(rop!=0x00cc0020UL&&rop!=0x008800c6UL)||w<=0||h<=0)return 0;b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
- if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
+ struct dc*d=dc_get(AW(18));int m=di(AW(8)),dm=di(AW(18)),db=-1,b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
+ if((!d&&dm<0)||(rop!=0x00cc0020UL&&rop!=0x008800c6UL)||w<=0||h<=0)return 0;
+ if(m<0){struct dc*src=dc_get(AW(8));return src&&dm>=0&&rop==0x00cc0020UL?capture_copy(src,dm,dx,dy,sx,sy,w,h):0;}
+ b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
+ if(dm>=0){db=bi(memory[dm].bitmap);if(db<0||rop!=0x00cc0020UL)return 0;dw=bitmaps[db].w;dh=bitmaps[db].h;}
+ else if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
  if(!clip_axis(&dx,&sx,&w,dw,s->w)||!clip_axis(&dy,&sy,&h,dh,s->h))return 1;
+ if(dm>=0){memory_copy(&bitmaps[db],dm,dx,dy,s,m,sx,sy,w,h);return 1;}
  GrGetGCInfo(d->gc,&old);
  /* Query-only native screen-AND capability; old/Tandy backends refuse. */
  if(rop==0x008800c6UL&&!(old.mode&0x2000))return 0;

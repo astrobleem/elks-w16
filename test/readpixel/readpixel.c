@@ -13,7 +13,7 @@ int main(void)
     if(GrOpen()<0)return 90;
     gc=GrNewGC();GrGetGCInfo(gc,&gi);
     if(!(gi.mode&GR_MODE_HAVE_READPIXEL)) { puts("READPIXEL unsupported server refused");GrDestroyGC(gc);GrClose();return 0; }
-    GrSetGCMode(gc,gi.mode);GrGetGCInfo(gc,&gi);check((gi.mode & ~GR_MODE_HAVE_READPIXEL)==GR_MODE_COPY);
+    GrSetGCMode(gc,gi.mode);GrGetGCInfo(gc,&gi);check((gi.mode & ~0x7000)==GR_MODE_COPY);
     GrGetScreenInfo(&si);GrGetSystemPalette(&pal);check(pal.count==16);
     for(i=0;i<16;i++) {
         GrSetGCForeground(gc,GR_RGB(pal.palette[i].r,pal.palette[i].g,pal.palette[i].b));

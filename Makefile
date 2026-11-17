@@ -16,6 +16,7 @@ test: host samples
 	python3 tests/image_setup_test.py
 	python3 tests/dibtest.py
 	python3 tests/registeredtest.py
+	python3 tests/lineddatest.py
 	python3 tests/recttest.py
 	python3 tests/childtest.py
 	python3 tests/textlayouttest.py
@@ -26,6 +27,7 @@ test: host samples
 	python3 tests/dcorgtest.py
 	python3 tests/getpixeltest.py
 	python3 tests/readpixelbackendtest.py
+	python3 tests/capturepixelstest.py
 	python3 tests/missingtraptest.py
 
 clean:

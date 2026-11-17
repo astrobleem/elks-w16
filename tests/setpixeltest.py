@@ -24,6 +24,7 @@ static u16 args[5];
 #define GS(d) (d)
 #define GR_MODE_COPY 0
 static int draws,palettecalls,mode=-1,fg,xout,yout,widout,gcout;
+static u32 bitmap_setpixel(u16 h,i16 x,i16 y,u32 c){return 0xffffffffUL;}
 static struct dc*dc_get(u16 h){return h==9?&dcs[0]:h==10?&dcs[1]:0;}
 static void GrGetScreenInfo(GR_SCREEN_INFO*i){i->cols=640;i->rows=480;}
 static void GrGetSystemPalette(GR_PALETTE*p){*p=palette;palettecalls++;}
