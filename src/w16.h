@@ -187,6 +187,7 @@ struct dlg_tmpl {
 int  dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t);   /* 0 ok, -1 malformed or too many items */
 
 /* menu templates (Windows 3.x MENUITEMTEMPLATE) */
+#define DESKTOP_HWND 1
 #define MF_GRAYED     0x0001
 #define MF_DISABLED   0x0002
 #define MF_CHECKED    0x0008

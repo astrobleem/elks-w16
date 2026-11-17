@@ -16,7 +16,6 @@
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
 
-#define DESKTOP_HWND 1
 #define QSIZE 24
 struct qmsg { u16 hwnd, msg, wp; u32 lp; i16 x, y; u32 time; u8 ch; };
 static struct qmsg queue[QSIZE];
