@@ -7,6 +7,17 @@
 #define GM_ZEROINIT 0x40
 struct global_block { u16 seg, bytes, locks, flags; u8 used, clipboard_owned; };
 static struct global_block blocks[GLOBAL_MAX];
+/* GlobalLRUNewest is an advisory ordering request, not an allocation or lock.
+ * Maintain the relative order without discarding data behind the guest. */
+static u8 lru[GLOBAL_MAX], nlru;
+static void mark_newest(u8 slot)
+{
+    u8 n;
+    for(n=0;n<nlru && lru[n]!=slot;n++) ;
+    if(n==nlru) nlru++;
+    else for(;n+1<nlru;n++) lru[n]=lru[n+1];
+    lru[nlru-1]=slot;
+}
 static int lookup(u16 h)
 {
     int i;
@@ -32,6 +43,14 @@ int global_pointer(u16 h,u32 *ptr)
     }
     return 1;
 }
+u32 k_GlobalLRUNewest(u16 ss,u16 ap)
+{
+    u16 h=AW(0);
+    int i=lookup(h);
+    if(i<0) return 0;
+    mark_newest((u8)i);
+    return h;
+}
 u32 global_unlock(u16 h)
 {
     int i=lookup(h);
@@ -54,6 +73,7 @@ u32 k_GlobalAlloc(u16 ss,u16 ap)
     if(n && (flags&GM_ZEROINIT)) fzero(seg,0,n);
     blocks[i].used=1;blocks[i].seg=seg;blocks[i].bytes=n;
     blocks[i].flags=flags;blocks[i].locks=0;blocks[i].clipboard_owned=0;
+    mark_newest((u8)i);
     return handle(i);
 }
 u32 k_GlobalFree(u16 ss,u16 ap)
@@ -95,6 +115,7 @@ u32 k_GlobalReAlloc(u16 ss,u16 ap)
 void global_shutdown(void)
 {
     int i;
+    nlru=0;
     for(i=0;i<GLOBAL_MAX;i++) {
         if(blocks[i].used && blocks[i].seg) seg_free(blocks[i].seg);
         blocks[i].used=0;

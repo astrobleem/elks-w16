@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 u32 k_GlobalAlloc(u16,u16),k_GlobalFree(u16,u16),k_GlobalReAlloc(u16,u16);
+u32 k_GlobalLRUNewest(u16,u16);
 extern int host_live,host_fail_after;
 void test_resource(u16);
 static u16 stack;
@@ -16,7 +17,9 @@ int main(void)
     u16 h,fix,i;u32 ptr,p2;u16 hs[48];
     assert(!seg_alloc(16,&stack));
     test_resource(stack);
+    wr16(stack,0,0xffff);assert(!k_GlobalLRUNewest(stack,0));
     h=alloc(0x42,64);assert(h && global_size(h)==64);
+    wr16(stack,0,h);assert(k_GlobalLRUNewest(stack,0)==h&&global_size(h)==64);
     assert(global_pointer(h,&ptr)&&ptr);for(i=0;i<64;i++)assert(!rd8(ptr>>16,i));
     wr8(ptr>>16,0,77);assert(global_pointer(h,&p2)&&p2==ptr);
     assert(global_unlock(h));assert(!global_unlock(h));assert(!global_unlock(h));

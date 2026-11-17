@@ -27,7 +27,7 @@ u32 k_GetTempDrive(u16,u16),k_GetTempFileName(u16,u16);
 u32 k_OpenFile(u16,u16),k_lclose(u16,u16),k_lread(u16,u16),k_lcreat(u16,u16),k_llseek(u16,u16),k_lopen(u16,u16),k_lwrite(u16,u16);
 u32 k_LocalInit(u16,u16),k_LocalReAlloc(u16,u16);
 u32 k_GetFreeSpace(u16,u16);
-u32 k_GlobalNotify(u16,u16);
+u32 k_GlobalNotify(u16,u16), k_GlobalLRUNewest(u16,u16);
 u32 k_GetVersion(u16, u16), k_WaitEvent(u16, u16), k_GetModuleFileName(u16, u16), k_InitTask(u16, u16);
 u32 u_OpenClipboard(u16,u16),u_CloseClipboard(u16,u16),u_EmptyClipboard(u16,u16);
 u32 u_SetClipboardData(u16,u16),u_GetClipboardData(u16,u16),u_GetPriorityClipboardFormat(u16,u16);
@@ -266,7 +266,7 @@ const struct api api_table[] = {
     { G, 75, "GetBkColor", 0, API_MISSING, 0 },
     { G,97,"GetWindowOrg",2,0,H(g_GetWindowOrg) },
     { K,97,"GetTempFileName",12,0,H(k_GetTempFileName) },
-    { K, 164, "GlobalLRUNewest", 0, API_MISSING, 0 },
+    { K, 164, "GlobalLRUNewest", 2, 0, H(k_GlobalLRUNewest) },
     /* Paintbrush imports. Entries marked API_MISSING are for -u diagnostics:
      * these terminate if executed; ordinary loads reject them. */
     { G,3,"SetMapMode",4,0,H(g_SetMapMode) },
