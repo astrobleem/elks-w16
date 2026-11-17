@@ -263,7 +263,7 @@ static void small_ddb_bits_test(void){
  bitmap_setcolor(dc,0xabcdef,1);assert(bitmap_restoredc(dc,-1));
  assert(g_GetBkColor(0,0)==0x123456);bitmap_shutdown();
  args[0]=0xffff;assert(g_GetBkColor(0,0)==0xffffffffUL);
- args[0]=1;dest.bkcolor=0x654321;assert(g_GetBkColor(0,0)==0x654321);
+ args[0]=9;dest.bkcolor=0x654321;assert(g_GetBkColor(0,0)==0x654321);
  memset(bmps,0,sizeof bmps);bmps[0].h=2;bmps[0].rows[0]=0x8123;bmps[0].rows[1]=0xabcd;
  args[4]=0x700;args[0]=20;args[1]=99;args[2]=4;args[3]=0;
  n=g_GetBitmapBits(0,0);assert(n==4&&output[20]==0x81&&output[21]==0x23&&output[23]==0xcd);
