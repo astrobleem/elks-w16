@@ -28,6 +28,9 @@ static struct { u8 used, w, h; u16 rows[16]; } bmps[MAXBMP];      /* monochrome 
 static struct gobj stock[NSTOCK];
 static struct gobj objs[MAXOBJ];
 static struct dc dcs[MAXDC];
+#define DC_SAVE_DEPTH 4
+static struct dc dc_saved[MAXDC][DC_SAVE_DEPTH];
+static u8 dc_saved_count[MAXDC];
 GR_GC_ID gdi_gc;
 
 #define PS_NULL 5
@@ -230,6 +233,7 @@ void gdi_shutdown(void)
     bitmap_shutdown();
     for (i = 0; i < MAXDC; i++) {
         dcs[i].used = 0;
+        dc_saved_count[i] = 0;
         if (gcs[i].gc)
             GrDestroyGC(gcs[i].gc);
         gcs[i].gc = 0;
@@ -258,6 +262,7 @@ u16 dc_create(struct wnd *w, int paint)
         return 0;
     }
     d = &dcs[i];
+    dc_saved_count[i] = 0;
     memset(d, 0, sizeof(*d));
     d->used = 1; d->paint = paint; d->hdc = HDC_BASE + 2 * i; d->w = w;
     d->wid = w ? w->client : GR_ROOT_WINDOW_ID;    /* no window: the whole screen */
@@ -285,7 +290,41 @@ void dc_release(u16 hdc)
         GrDestroyGC(d->gc);
         GS(d)->gc = 0;
     }
+    dc_saved_count[(hdc-HDC_BASE)>>1] = 0;
     d->used = 0;
+}
+
+/* Saved selections remain live references even after the live DC changes.
+ * ReleaseDC/DeleteDC drops all saves before a numeric handle can be reused. */
+static int saved_object(u16 h)
+{
+    int i,j;
+    for(i=0;i<MAXDC;i++)for(j=0;j<dc_saved_count[i];j++)
+        if(dc_saved[i][j].pen==h||dc_saved[i][j].brush==h||dc_saved[i][j].font==h)return 1;
+    return 0;
+}
+u32 g_SaveDC(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(0));int i,n;
+    if(!d)return bitmap_savedc(AW(0));
+    i=(AW(0)-HDC_BASE)>>1;n=dc_saved_count[i];
+    if(n==DC_SAVE_DEPTH)return 0;
+    dc_saved[i][n]=*d;dc_saved_count[i]++;return n+1;
+}
+u32 g_RestoreDC(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(2));int i,n,target; i16 level=(i16)AW(0);
+    if(!d)return bitmap_restoredc(AW(2),level);
+    i=(AW(2)-HDC_BASE)>>1;n=dc_saved_count[i];
+    target=level<0?(long)n+level:(long)level-1;
+    if(!level||target<0||target>=n)return 0;
+    *d=dc_saved[i][target];dc_saved_count[i]=target;
+    GS(d)->known=0; /* force the next draw to reapply restored server state */
+    return 1;
+}
+u32 g_GetROP2(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(0));return d?d->rop2:bitmap_rop2(AW(0),0);
 }
 
 /* ---------------------------------------------------------------- objects */
@@ -332,6 +371,10 @@ u32 g_DeleteObject(u16 ss, u16 ap)
     int bi = bmp_index(h);
     {int r=bitmap_delete(h);if(r>=0)return r;}
     if (bi >= 0) {
+        /* Pattern brushes currently retain their source rows rather than a
+         * private copy. Do not let a saved brush observe a recycled bitmap. */
+        for(i=0;i<MAXOBJ;i++)
+            if(objs[i].used&&objs[i].type==OBJ_BRUSH&&objs[i].style==BS_PATTERN&&objs[i].width==bi)return 0;
         bmps[bi].used = 0;
         return 1;
     }
@@ -339,6 +382,7 @@ u32 g_DeleteObject(u16 ss, u16 ap)
         return 0;
     if (h < HOBJ_BASE)
         return 1;                       /* stock objects are never deleted */
+    if(saved_object(h))return 0;
     for (i = 0; i < MAXDC; i++)
         if (dcs[i].used && (dcs[i].pen == h || dcs[i].brush == h || dcs[i].font == h)) {
             vlog("w16: DeleteObject %04x refused: still selected\n", h);
@@ -483,7 +527,7 @@ u32 g_SetROP2(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(2));
     u16 prev, r = AW(0);
     if (!d)
-        return 0;
+        return bitmap_rop2(AW(2),r);
     prev = d->rop2;
     if (r >= 1 && r <= 16)
         d->rop2 = (u8)r;

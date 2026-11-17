@@ -52,6 +52,7 @@ u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
 u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
 u32 g_DPtoLP(u16,u16),g_LPtoDP(u16,u16);
 u32 g_SetMapMode(u16,u16),g_SetWindowOrg(u16,u16),g_SetViewportOrg(u16,u16),g_SetWindowExt(u16,u16),g_SetViewportExt(u16,u16),g_GetWindowOrg(u16,u16);
+u32 g_SaveDC(u16,u16),g_RestoreDC(u16,u16),g_GetROP2(u16,u16);
 u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g_DeleteDC(u16, u16);
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
@@ -258,11 +259,11 @@ const struct api api_table[] = {
     { G,14,"SetViewportExt",6,0,H(g_SetViewportExt) },
     { G,  21, "EXCLUDECLIPRECT", 0, API_MISSING, 0 },
     { G,  28, "ROUNDRECT", 0, API_MISSING, 0 },
-    { G,  30, "SAVEDC", 0, API_MISSING, 0 },
+    { G, 30, "SaveDC", 2, 0, H(g_SaveDC) },
     { G,  36, "POLYGON", 0, API_MISSING, 0 },
     { G,  37, "POLYLINE", 0, API_MISSING, 0 },
     { G,  38, "ESCAPE", 0, API_MISSING, 0 },
-    { G,  39, "RESTOREDC", 0, API_MISSING, 0 },
+    { G, 39, "RestoreDC", 4, 0, H(g_RestoreDC) },
     { G,  44, "SELECTCLIPRGN", 0, API_MISSING, 0 },
     { G,  58, "CREATEHATCHBRUSH", 0, API_MISSING, 0 },
     { G,  63, "CREATEPOLYGONRGN", 0, API_MISSING, 0 },
@@ -272,7 +273,7 @@ const struct api api_table[] = {
     { G,  70, "ENUMFONTS", 0, API_MISSING, 0 },
     { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
     { G,  74, "GETBITMAPBITS", 0, API_MISSING, 0 },
-    { G,  85, "GETROP2", 0, API_MISSING, 0 },
+    { G, 85, "GetROP2", 2, 0, H(g_GetROP2) },
     { G, 106, "SETBITMAPBITS", 0, API_MISSING, 0 },
     { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },

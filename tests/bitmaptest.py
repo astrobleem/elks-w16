@@ -481,6 +481,20 @@ int main(int argc,char**argv){
   b=bitmap_create(3,1,1,4,src,0);assert(b);assert(bitmap_index(&bitmaps[bi(b)],0,0)==1&&bitmap_index(&bitmaps[bi(b)],2,0)==3);
   assert(bitmap_delete(b)==1);seg_free(src);clean();}
  win.cw=win.ch=100;
+
+ /* Saved bitmap selections own references until restore/delete/release. */
+ setup(1,1,1);d=dcnew();e=dcnew();b=compatible(9,71,96);
+ assert(bitmap_select(d,b)==DEFAULT_BITMAP);assert(bitmap_savedc(d)==1);
+ bitmap_setcolor(d,0x123456,0);bitmap_rop2(d,7);assert(bitmap_savedc(d)==2);
+ assert(bitmap_select(d,DEFAULT_BITMAP)==b);assert(!bitmap_delete(b));assert(!bitmap_select(e,b));
+ assert(!bitmap_restoredc(d,0)&&!bitmap_restoredc(d,-3));
+ assert(bitmap_restoredc(d,-1));assert(memory[di(d)].bitmap==b&&memory[di(d)].textcolor==0x123456&&bitmap_rop2(d,0)==7);
+ assert(bitmap_restoredc(d,1));assert(memory[di(d)].textcolor==0&&bitmap_rop2(d,0)==13);
+ assert(!bitmap_restoredc(d,-1));
+ for(k=0;k<4;k++)assert(bitmap_savedc(d)==k+1);assert(!bitmap_savedc(d));
+ assert(bitmap_deletedc(d)==1);assert(bitmap_select(e,b)==DEFAULT_BITMAP);
+ assert(bitmap_deletedc(e)==1);assert(bitmap_delete(b)==1);d=dcnew();assert(!bitmap_restoredc(d,-1));
+ assert(!bitmap_savedc(999)&&!bitmap_restoredc(999,-1));bitmap_shutdown();clean();
  /* Colored one-bit resources preserve RGB instead of text/background expansion. */
  for(k=0;k<4;k++){
   u32 first,second;

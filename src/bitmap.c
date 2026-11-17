@@ -12,9 +12,41 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-static struct {u16 bitmap;u8 used,stretchmode;i16 brushx,brushy;u32 textcolor,bkcolor;} memory[ND];
+struct memory_dc {u16 bitmap;u8 used,stretchmode,rop2;i16 brushx,brushy;u32 textcolor,bkcolor;};
+static struct memory_dc memory[ND];
+#define MEMORY_SAVE_DEPTH 4
+static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
+static u8 memory_saved_count[ND];
 static int bi(u16 h){u16 n=(h-BBASE)/2;return h>=BBASE&&!(h&1)&&n<NB&&bitmaps[n].used?n:-1;}
 static int di(u16 h){u16 n=(h-DBASE)/2;return h>=DBASE&&!(h&1)&&n<ND&&memory[n].used?n:-1;}
+static int bitmap_referenced(u16 h,int exclude)
+{
+ int i,j;
+ if(h==DEFAULT_BITMAP)return 0;
+ for(i=0;i<ND;i++)if(i!=exclude&&memory[i].used){
+  if(memory[i].bitmap==h)return 1;
+  for(j=0;j<memory_saved_count[i];j++)if(memory_saved[i][j].bitmap==h)return 1;
+ }
+ return 0;
+}
+u16 bitmap_savedc(u16 h)
+{
+ int i=di(h),n;if(i<0)return 0;n=memory_saved_count[i];
+ if(n==MEMORY_SAVE_DEPTH)return 0;
+ memory_saved[i][n]=memory[i];memory_saved_count[i]++;return n+1;
+}
+u16 bitmap_restoredc(u16 h,i16 level)
+{
+ int i=di(h),target;if(i<0)return 0;
+ target=level<0?(long)memory_saved_count[i]+level:(long)level-1;
+ if(!level||target<0||target>=memory_saved_count[i])return 0;
+ memory[i]=memory_saved[i][target];memory_saved_count[i]=target;return 1;
+}
+u16 bitmap_rop2(u16 h,u16 mode)
+{
+ int i=di(h);u16 old;if(i<0)return 0;old=memory[i].rop2;
+ if(mode>=1&&mode<=16)memory[i].rop2=mode;return old;
+}
 static void release_pixels(struct bitmap*b)
 {int j;for(j=0;j<BITMAP_BANKS;j++)if(b->bank[j]){seg_free(b->bank[j]);b->bank[j]=0;}}
 static void release_bitmap(int i){release_pixels(&bitmaps[i]);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
@@ -39,11 +71,11 @@ static void bitmap_write(struct bitmap*b,u32 at,const u8*src,u16 n)
   fcopy_out(b->bank[bank],off,src,part);src+=part;at+=part;n-=part;
  }
 }
-void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memory,0,sizeof(memory));}
-int bitmap_delete(u16 h){int i=bi(h),j;if(i<0)return -1;for(j=0;j<ND;j++)if(memory[j].used&&memory[j].bitmap==h)return 0;release_bitmap(i);return 1;}
-int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));return 1;}
-u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h),k;u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;for(k=0;k<ND;k++)if(k!=i&&memory[k].used&&memory[k].bitmap==h&&h!=DEFAULT_BITMAP)return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory[i].used=1;memory[i].stretchmode=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memory,0,sizeof(memory));memset(memory_saved_count,0,sizeof(memory_saved_count));}
+int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
+int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
+u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
