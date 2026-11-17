@@ -2029,6 +2029,7 @@ int user_init(void)
 {
     GR_SCREEN_INFO si;
     GR_SIZE w, h, b;
+    registered_reset();
     if (GrOpen() < 0) {
         wlog("w16: cannot connect to the Nano-X server (start nano-color first)\n");
         return -1;
@@ -2052,6 +2053,7 @@ int user_init(void)
 void user_shutdown(void)
 {
     int i, n = 0;
+    registered_reset();
     w16_census("exit");
     for (i = 0; i < MAXTIMER; i++)
         timers[i].used = 0;

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Actual resource bitmap/parser glue with bounded native and memory doubles."""
+from pathlib import Path
+import subprocess,tempfile,os
+root=Path(__file__).resolve().parents[1]
+code=r"""
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+#include <stdio.h>
+typedef uint8_t u8;typedef uint16_t u16;typedef uint32_t u32;typedef int16_t i16;
+typedef int GR_WINDOW_ID;typedef int GR_GC_ID;
+typedef struct{int cols,rows;}GR_SCREEN_INFO;
+typedef struct{int foreground,mode;}GR_GC_INFO;
+struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;};
+static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
+struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
+static u16 args[10];
+#define AW(n) args[(n)/2]
+#define AL(n) ((u32)AW(n)|((u32)AW((n)+2)<<16))
+#define GR_MODE_COPY 0
+#define MWROP_COPY 0
+#define GR_RGB(r,g,b) ((r)|((g)<<8)|((b)<<16))
+static u8 resource[20000],ram[16384],output[65536];static u16 length;
+static int outputwrites;
+static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
+ assert(seg==2&&(u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;
+}
+static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
+static u32 surface[10000],pixdata[640*480],foreground=77;static int mode=3;
+static int checks;
+static struct dc*dc_get(u16 h){return h==9?&dest:0;}
+static int rgb_to_gr(u32 c){return c;}
+static void res_name(u16 a,u16 b,char*n,u16*i){n[0]=0;*i=1;}
+static int ne_res_find(struct module*m,int t,char*n,u16 id,u32*o,u16*l){*o=0;*l=length;return 0;}
+static int ne_read(struct module*m,u32 o,void*p,u16 n){
+ if(++readcount==readfail)return -1;
+ if(o+n>length)return -1;memcpy(p,resource+o,n);return 0;
+}
+static int seg_alloc(u16 n,u16*s){if(segfail)return -1;assert(!seglive&&n*16<=sizeof ram);seglive=1;*s=1;memset(ram,0xa5,sizeof ram);return 0;}
+static void seg_free(u16 s){assert(s==1&&seglive);seglive=0;}
+static void fzero(u16 s,u16 o,u16 n){assert(s==1&&seglive&&o+n<=sizeof ram);memset(ram+o,0,n);}
+static u8 rd8(u16 s,u16 o){assert(s==1&&seglive&&o<sizeof ram);return ram[o];}
+static void wr8(u16 s,u16 o,u8 v){assert(s==1&&seglive&&o<sizeof ram);ram[o]=v;}
+static int GrNewPixmap(int w,int h,void*p){if(pixfail)return 0;assert(!pixlive);pixlive=1;return 3;}
+static void GrDestroyWindow(int p){assert(p==3&&pixlive);pixlive=0;}
+static int GrNewGC(void){if(gcfail)return 0;assert(!gclive);gclive=1;return 4;}
+static void GrDestroyGC(int g){assert(g==4&&gclive);gclive=0;}
+static void GrSetGCMode(int g,int m){mode=m;}
+static void GrSetGCForeground(int g,int c){foreground=c;}
+static void GrGetGCInfo(int g,GR_GC_INFO*i){i->foreground=foreground;i->mode=mode;}
+static void GrGetScreenInfo(GR_SCREEN_INFO*i){i->cols=i->rows=100;}
+static void GrPoint(int p,int g,int x,int y){assert(x>=0&&y>=0);if(p==3){assert(pixlive&&x<640&&y<480);pixdata[y*640+x]=foreground;}else{assert(p==1&&x<100&&y<100);surface[y*100+x]=foreground;}}
+static void GrFillRect(int p,int g,int x,int y,int w,int h){int a,b;for(b=0;b<h;b++)for(a=0;a<w;a++)GrPoint(p,g,x+a,y+b);}
+static void GrCopyArea(int p,int g,int dx,int dy,int w,int h,int s,int sx,int sy,int op){
+ int x,y;assert(p==1&&s==3&&pixlive&&op==0&&sx>=0&&sy>=0);
+ for(y=0;y<h;y++)for(x=0;x<w;x++){assert(dx+x>=0&&dx+x<100&&dy+y<100);surface[(dy+y)*100+dx+x]=pixdata[(sy+y)*640+sx+x];}
+}
+"""
+code+=(root/'src/dib.h').read_text().replace('#include "w16.h"','')
+code+=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
+code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
+code+=r"""
+static void wordput(int o,int v){resource[o]=v;resource[o+1]=v>>8;}
+static int pattern(int x,int y){return ((x*3+y*7)%11)<5;}
+static void setup(int w,int h,int bpp){
+ int stride=(w*bpp+31)/32*4,colors=1<<bpp,x,y,at;
+ bitmap_shutdown();assert(!seglive&&!pixlive&&!gclive);
+ memset(resource,0,sizeof resource);wordput(0,40);wordput(4,w);wordput(8,h);wordput(12,1);wordput(14,bpp);
+ resource[44]=resource[45]=resource[46]=255;
+ for(y=0;y<h;y++)for(x=0;x<w;x++){
+ at=40+colors*4+(h-1-y)*stride+x*bpp/8;
+ resource[at]|=pattern(x,y)<<(8-bpp-(x%(8/bpp))*bpp);
+ }
+ length=40+colors*4+h*stride;segfail=pixfail=gcfail=readfail=readcount=0;
+ memset(args,0,sizeof args);args[2]=5;
+}
+static u16 load(void){args[2]=5;return u_LoadBitmap(0,0);}
+static void clean(void){int i;assert(!seglive&&!pixlive&&!gclive);for(i=0;i<NB;i++)assert(!bitmaps[i].used&&!bitmaps[i].seg&&!bitmaps[i].pix);}
+static u16 dcnew(void){args[0]=0;return g_CreateCompatibleDC(0,0);}
+static int blit(u16 dc,int dx,int dy,int sx,int sy,int w,int h,u32 rop){
+ args[0]=rop;args[1]=rop>>16;args[2]=sy;args[3]=sx;args[4]=dc;args[5]=h;args[6]=w;args[7]=dy;args[8]=dx;args[9]=9;return g_BitBlt(0,0);
+}
+int main(void){
+ int widths[]={1,7,8,9,15,16,17,31,32,33,71},k,x,y,n;
+ u16 b,d,e;
+ for(k=0;k<11;k++){
+ setup(widths[k],96,1);b=load();assert(b==BBASE&&seglive&&!pixlive);
+ for(y=0;y<96;y++)for(x=0;x<bitmaps[0].stride*8;x++){
+ assert(((ram[y*bitmaps[0].stride+x/8]>>(7-x%8))&1)==(x<widths[k]?pattern(x,y):0));checks++;}
+ for(n=bitmaps[0].stride*96;n<sizeof ram;n++)assert(ram[n]==0xa5);
+ }
+ setup(71,96,1);segfail=1;assert(!load());clean();
+ for(k=1;k<10;k++){setup(71,96,1);readfail=k;assert(!load());clean();}
+ setup(71,96,1);resource[40]=1;assert(!load());clean();
+ setup(71,96,4);pixfail=1;assert(!load());clean();
+ setup(71,96,4);gcfail=1;assert(!load());clean();
+ setup(71,96,4);readfail=20;assert(!load());clean();
+ setup(71,96,4);b=load();assert(b&&pixlive&&!gclive);
+ for(y=0;y<96;y++)for(x=0;x<71;x++)assert(pixdata[y*640+x]==(pattern(x,y)?0xffffff:0));
+ d=dcnew();e=dcnew();assert(d&&e&&d!=e);
+ assert(bitmap_select(d,b)==DEFAULT_BITMAP);assert(!bitmap_select(e,b));assert(!bitmap_delete(b));
+ assert(bitmap_select(d,DEFAULT_BITMAP)==b);assert(bitmap_select(e,b)==DEFAULT_BITMAP);
+ assert(bitmap_deletedc(e)==1);assert(bitmap_delete(b)==1);clean();
+ setup(71,96,1);b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+ memset(surface,0xaa,sizeof surface);foreground=77;mode=3;
+ assert(blit(d,-3,4,2,1,15,7,0x00cc0020));
+ for(y=0;y<7;y++)for(x=0;x<12;x++)assert(surface[(y+4)*100+x]==(pattern(x+5,y+1)?dest.bkcolor:dest.textcolor));
+ assert(foreground==77&&mode==3);assert(surface[4*100+12]==0xaaaaaaaa);
+ assert(!blit(d,0,0,0,0,3,3,0));assert(!blit(d,0,0,0,0,0,3,0x00cc0020));
+ assert(blit(d,150,0,0,0,3,3,0x00cc0020));
+ args[9]=d;assert(!g_BitBlt(0,0)); /* no memory destinations */
+
+ /* Both source and destination clipping preserve translation for both formats. */
+ for(k=1;k<=4;k+=3){
+  int dx,dy,sx,sy,a,c;
+  setup(71,96,k);b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
+  for(dx=-5;dx<=95;dx+=50)for(dy=-3;dy<=97;dy+=50)
+  for(sx=-4;sx<=68;sx+=36)for(sy=-2;sy<=94;sy+=48){
+   memset(surface,0xaa,sizeof surface);assert(blit(d,dx,dy,sx,sy,17,9,0x00cc0020));
+   for(y=0;y<100;y++)for(x=0;x<100;x++){
+    u32 expected=0xaaaaaaaa;a=x-dx;c=y-dy;
+    if(a>=0&&a<17&&c>=0&&c<9&&sx+a>=0&&sx+a<71&&sy+c>=0&&sy+c<96)
+     expected=k==1?(pattern(sx+a,sy+c)?dest.bkcolor:dest.textcolor):(pattern(sx+a,sy+c)?0xffffff:0);
+    assert(surface[y*100+x]==expected);
+   }
+  }
+ }
+
+ /* Win16 BITMAP packed layout and full far-pointer write boundary. */
+ for(k=1;k<=4;k+=3){
+  int count,off,bad;u8 expected[14]={0,0,71,0,96,0,0,0,1,0,0,0,0,0};
+  setup(71,96,k);b=load();expected[6]=k==1?10:36;expected[9]=k;
+  for(off=0;off<=65522;off+=65522){
+   memset(output,0xa5,sizeof output);outputwrites=0;
+   args[0]=off;args[1]=2;args[2]=14;args[3]=b;
+   assert(g_GetObject(0,0)==14&&outputwrites==1);
+   for(n=0;n<65536;n++)assert(output[n]==(n>=off&&n<off+14?expected[n-off]:0xa5));
+  }
+  /* Larger cbBuffer does not authorize writing beyond the 14-byte structure. */
+  memset(output,0xa5,sizeof output);outputwrites=0;
+  args[0]=100;args[1]=2;args[2]=32767;args[3]=b;
+  assert(g_GetObject(0,0)==14&&outputwrites==1);
+  assert(!memcmp(output+100,expected,14)&&output[114]==0xa5);
+  for(bad=0;bad<7;bad++){
+   memset(output,0xa5,sizeof output);outputwrites=0;
+   args[0]=100;args[1]=2;args[2]=14;args[3]=b;
+   if(bad==0)args[3]=b+1;
+   if(bad==1)args[3]=0;
+   if(bad==2)args[2]=13;
+   if(bad==3)args[2]=0;
+   if(bad==4)args[2]=0xffff;
+   if(bad==5)args[0]=65523;
+   if(bad==6)args[1]=0;
+   assert(!g_GetObject(0,0)&&!outputwrites);
+   for(n=0;n<65536;n++)assert(output[n]==0xa5);
+  }
+ }
+ bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
+ return 0;
+}
+"""
+with tempfile.TemporaryDirectory() as td:
+ p=Path(td);(p/'t.c').write_text(code)
+ subprocess.run(['cc','-fsanitize=address,undefined','-fno-pie','-no-pie',str(p/'t.c'),'-o',str(p/'t')],check=True)
+ subprocess.run([str(p/'t')],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

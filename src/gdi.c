@@ -227,6 +227,7 @@ static int bmp_index(u16 h)
 void gdi_shutdown(void)
 {
     int i;
+    bitmap_shutdown();
     for (i = 0; i < MAXDC; i++) {
         dcs[i].used = 0;
         if (gcs[i].gc)
@@ -327,6 +328,7 @@ u32 g_DeleteObject(u16 ss, u16 ap)
     u16 h = AW(0), i;
     struct gobj *o = obj_get(h);
     int bi = bmp_index(h);
+    {int r=bitmap_delete(h);if(r>=0)return r;}
     if (bi >= 0) {
         bmps[bi].used = 0;
         return 1;
@@ -350,8 +352,8 @@ u32 g_SelectObject(u16 ss, u16 ap)
     u16 h = AW(0), prev;
     struct dc *d = dc_get(AW(2));
     struct gobj *o = obj_get(h);
-    if (!d || !o)
-        return 0;
+    if (!d) return bitmap_select(AW(2),h);
+    if (!o) return 0;
     switch (o->type) {
     case OBJ_PEN:   prev = d->pen;   d->pen = h;   return prev;
     case OBJ_BRUSH: prev = d->brush; d->brush = h; return prev;
@@ -869,13 +871,14 @@ u32 g_CreateDC(u16 ss, u16 ap)
 
 u32 g_DeleteDC(u16 ss, u16 ap)
 {
+    int r=bitmap_deletedc(AW(0));if(r>=0)return r;
     if (!dc_get(AW(0)))
         return 0;
     dc_release(AW(0));
     return 1;
 }
 
-/* GetDeviceCaps(hdc, nIndex) for the 320x200 16-colour Tandy screen on a 4:3 monitor */
+/* Pixel dimensions come from the display. Other legacy Tandy caps are unchanged. */
 u32 g_GetDeviceCaps(u16 ss, u16 ap)
 {
     switch (AW(0)) {
@@ -883,8 +886,11 @@ u32 g_GetDeviceCaps(u16 ss, u16 ap)
     case 2:  return 1;          /* TECHNOLOGY: DT_RASDISPLAY */
     case 4:  return 240;        /* HORZSIZE, mm */
     case 6:  return 180;        /* VERTSIZE, mm */
-    case 8:  return 320;        /* HORZRES */
-    case 10: return 200;        /* VERTRES */
+    case 8: case 10: {
+        GR_SCREEN_INFO si;
+        memset(&si,0,sizeof(si));GrGetScreenInfo(&si);
+        return AW(0)==8?si.cols:si.rows;
+    }
     case 12: return 4;          /* BITSPIXEL */
     case 14: return 1;          /* PLANES */
     case 16: return 16;         /* NUMBRUSHES */

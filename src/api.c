@@ -9,6 +9,8 @@
 #include <string.h>
 #include "w16.h"
 
+int opt_missing; /* explicit diagnostic mode; never returns success for missing APIs */
+
 const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI" };
 
 #ifdef W16_HOST
@@ -21,6 +23,10 @@ u32 u_EndPaint(u16, u16), u_CreateWindow(u16, u16), u_ShowWindow(u16, u16), u_De
 u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16), u_TranslateMessage(u16, u16);
 u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16, u16), u_LoadCursor(u16, u16);
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
+u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
+u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
+u32 g_GetObject(u16,u16);
+u32 u_RegisterWindowMessage(u16,u16);
 u32 g_SetBkColor(u16, u16), g_SetBkMode(u16, u16), g_SetTextColor(u16, u16), g_LineTo(u16, u16), g_MoveTo(u16, u16);
 u32 g_Ellipse(u16, u16), g_Rectangle(u16, u16), g_TextOut(u16, u16), g_SelectObject(u16, u16), g_CreatePen(u16, u16);
 u32 g_CreateSolidBrush(u16, u16), g_DeleteObject(u16, u16), g_GetStockObject(u16, u16);
@@ -51,6 +57,37 @@ u32 g_UnrealizeObject(u16, u16);
 #define U MOD_USER
 #define G MOD_GDI
 const struct api api_table[] = {
+    { U,175,"LoadBitmap",6,0,H(u_LoadBitmap) },
+    { G,52,"CreateCompatibleDC",2,0,H(g_CreateCompatibleDC) },
+    { G,34,"BitBlt",20,0,H(g_BitBlt) },
+    /* Optional diagnostic traps for the remaining Solitaire imports.
+     * Strict default lookup rejects these. -u binds a terminating thunk. */
+    { G,31,"SetPixel",0,API_MISSING,0 },
+    { G,35,"StretchBlt",0,API_MISSING,0 },
+    { G,51,"CreateCompatibleBitmap",0,API_MISSING,0 },
+    { G,79,"GetDCOrg",0,API_MISSING,0 },
+    { G,82,"GetObject",8,0,H(g_GetObject) },
+    { G,83,"GetPixel",0,API_MISSING,0 },
+    { G,100,"LineDDA",0,API_MISSING,0 },
+    { G,103,"PtVisible",0,API_MISSING,0 },
+    { G,148,"SetBrushOrg",0,API_MISSING,0 },
+    { K,6,"LocalReAlloc",0,API_MISSING,0 },
+    { K,15,"GlobalAlloc",0,API_MISSING,0 },
+    { K,16,"GlobalReAlloc",0,API_MISSING,0 },
+    { K,17,"GlobalFree",0,API_MISSING,0 },
+    { U,34,"EnableWindow",0,API_MISSING,0 },
+    { U,56,"MoveWindow",0,API_MISSING,0 },
+    { U,74,"CopyRect",8,0,H(u_CopyRect) },
+    { U,76,"PtInRect",8,0,H(u_PtInRect) },
+    { U,79,"IntersectRect",12,0,H(u_IntersectRect) },
+    { U,82,"InvertRect",0,API_MISSING,0 },
+    { U,83,"FrameRect",0,API_MISSING,0 },
+    { U,85,"DrawText",0,API_MISSING,0 },
+    { U,96,"CheckRadioButton",0,API_MISSING,0 },
+    { U,97,"CheckDlgButton",0,API_MISSING,0 },
+    { U,98,"IsDlgButtonChecked",0,API_MISSING,0 },
+    { U,118,"RegisterWindowMessage",4,0,H(u_RegisterWindowMessage) },
+
     /* KERNEL */
     { K,   3, "GetVersion",        0, 0, H(k_GetVersion) },
     { K,   5, "LocalAlloc",        4, 0, H(k_LocalAlloc) },
@@ -180,6 +217,7 @@ const struct api api_table[] = {
     { G, 351, "ExtTextOut",       22, 0, H(g_ExtTextOut) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
+typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=160)?1:-1];
 
 /* Names of common Windows 3.0 entry points this layer does NOT implement, for diagnostics only. */
 struct known { u8 mod; u16 ord; const char *name; };
@@ -215,7 +253,8 @@ int api_find_ord(int mod, u16 ord)
 {
     int i;
     for (i = 0; i < api_count; i++)
-        if (api_table[i].mod == mod && api_table[i].ord == ord)
+        if (api_table[i].mod == mod && api_table[i].ord == ord &&
+            (!(api_table[i].flags & API_MISSING) || opt_missing))
             return i;
     return -1;
 }
@@ -234,7 +273,8 @@ int api_find_name(int mod, const char *name)
 {
     int i;
     for (i = 0; i < api_count; i++)
-        if (api_table[i].mod == mod && ieq(api_table[i].name, name))
+        if (api_table[i].mod == mod && ieq(api_table[i].name, name) &&
+            (!(api_table[i].flags & API_MISSING) || opt_missing))
             return i;
     return -1;
 }
@@ -272,10 +312,17 @@ int api_target(int idx, u16 *seg, u16 *off)
  * DI SI DS BP IP CS, then the arguments. Pops Pascal arguments by moving the frame up. */
 u32 w16_api_dispatch(u16 idx)
 {
-    const struct api *a = &api_table[idx];
+    const struct api *a;
     u16 ss = w16_app_ss, sp = w16_app_sp, n, k;
     u32 r;
 
+    if (idx >= api_count) { w16_exit16(W16_EIMPORT); return W16_EIMPORT; }
+    a = &api_table[idx];
+    if (a->flags & API_MISSING) {
+        wlog("w16: MISSING API TRAP: %s.%u at %04x:%04x; stopping\n",
+             w16_modnames[a->mod],a->ord,rd16(ss,sp+10),rd16(ss,sp+8));
+        w16_exit16(W16_EIMPORT); return W16_EIMPORT;
+    }
     w16_ret_bx = 0;
     w16_ret_cx = 0;
     w16_ret_es = ss;

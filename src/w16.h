@@ -195,6 +195,9 @@ int  prof_put(const char *path, const char *app, const char *key, const char *va
 #define NMODS      3
 extern const char *const w16_modnames[NMODS];
 
+#define API_MISSING 0x08   /* diagnostic trap, disabled by default */
+extern int opt_missing;
+
 #define API_CONST  0x01     /* value import (selector constant), not callable */
 #define API_RAW    0x02     /* raw entry point in thunk.S, not via the dispatcher */
 #define API_CDECL  0x04     /* caller pops (wsprintf) */

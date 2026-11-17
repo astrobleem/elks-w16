@@ -188,4 +188,12 @@ void      menu_census(u16 *nmenus);
 
 /* frame dumps / readiness */
 void      paint_done(struct wnd *w);
+
+/* Resource bitmap/source-only memory DC support. */
+void registered_reset(void);
+void bitmap_shutdown(void);
+int bitmap_delete(u16 h);
+int bitmap_deletedc(u16 h);
+u16 bitmap_select(u16 dc,u16 h);
+
 #endif

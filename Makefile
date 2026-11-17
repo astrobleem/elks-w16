@@ -14,6 +14,11 @@ samples:
 test: host samples
 	bash tests/hosttest.sh
 	python3 tests/image_setup_test.py
+	python3 tests/dibtest.py
+	python3 tests/registeredtest.py
+	python3 tests/bitmaptest.py
+	python3 tests/devicecapstest.py
+	python3 tests/missingtraptest.py
 
 clean:
 	$(MAKE) -C src clean

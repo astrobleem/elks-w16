@@ -14,7 +14,8 @@ p.add_argument('--api', required=True); p.add_argument('--exports', required=Tru
 p.add_argument('--detail', action='store_true'); p.add_argument('files', nargs='+')
 a = p.parse_args()
 src = Path(a.api).read_text()
-provided = {(dict(K='KERNEL', U='USER', G='GDI')[m[1]], int(m[2])) for m in re.finditer(r'\{\s*([KUG]),\s*(\d+),\s*"\w+"', src[src.index('api_table[]'):src.index('api_count')])}
+table = '\n'.join(line for line in src[src.index('api_table[]'):src.index('api_count')].splitlines() if 'API_MISSING' not in line)
+provided = {(dict(K='KERNEL', U='USER', G='GDI')[m[1]], int(m[2])) for m in re.finditer(r'\{\s*([KUG]),\s*(\d+),\s*"\w+"', table)}
 names = {}
 for f in Path(a.exports).glob('exports-WINDOWS-*.json'):
     mod = f.stem.split('-')[-1]

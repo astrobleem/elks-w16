@@ -209,7 +209,7 @@ void w16_thunk_done(void);
 
 static void usage(void)
 {
-    fputs("usage: w16 [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] PROGRAM.EXE [ARGS...]\n", stderr);
+    fputs("usage: w16 [-u] [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] PROGRAM.EXE [ARGS...]\n", stderr);
     exit(2);
 }
 
@@ -230,6 +230,7 @@ int main(int argc, char **argv)
             switch (*o) {
             case 'v': opt_verbose = 1; break;
             case 't': opt_trace = 1; break;
+            case 'u': opt_missing = 1; break;
             case 'e': opt_debugport = 1; break;
             case 'n': checkonly = 1; break;
             case 's': opt_strict_dos = 1; break;
