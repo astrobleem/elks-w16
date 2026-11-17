@@ -48,6 +48,7 @@ u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
 u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
+u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
 u32 u_LoadAccelerators(u16, u16), u_TranslateAccelerator(u16, u16), u_WinHelp(u16, u16);
@@ -143,6 +144,8 @@ const struct api api_table[] = {
     { U,  18, "SetCapture",        2, 0, H(u_SetCapture) },
     { U,  19, "ReleaseCapture",    0, 0, H(u_ReleaseCapture) },
     { U,  22, "SetFocus",          2, 0, H(u_SetFocus) },
+    { U,  29, "ScreenToClient",    6, 0, H(u_ScreenToClient) },
+    { U,  32, "GetWindowRect",     6, 0, H(u_GetWindowRect) },
     { U,  28, "ClientToScreen",    6, 0, H(u_ClientToScreen) },
     { U,  31, "IsIconic",          2, 0, H(u_IsIconic) },
     { U,   6, "PostQuitMessage",   2, 0, H(u_PostQuitMessage) },

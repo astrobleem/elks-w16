@@ -1169,19 +1169,45 @@ u32 u_SetWindowText(u16 ss, u16 ap)
     return 0;
 }
 
-/* ClientToScreen(hWnd, lpPoint) */
-u32 u_ClientToScreen(u16 ss, u16 ap)
+/* POINT/RECT outputs may not wrap the segment or the real-mode address space. */
+static int valid_coords(u16 seg, u16 off, u16 bytes)
 {
-    u16 off = AW(0), seg = AW(2);
-    struct wnd *w = win_get(AW(4));
-    if (!w)
-        return 0;
-    {
-        int x, y;
-        client_origin(w, &x, &y);
-        wr16(seg, off, (u16)(rd16(seg, off) + x));
-        wr16(seg, off + 2, (u16)(rd16(seg, off + 2) + y));
-    }
+    return (seg || off) && (u32)off + bytes <= 0x10000UL &&
+           ((u32)seg << 4) + off + bytes <= 0x100000UL;
+}
+
+/* Convert POINT in place using the entire parent-client origin chain. */
+static u32 convert_point(u16 ss, u16 ap, int to_screen)
+{
+    u16 seg, off, dx, dy;
+    int x, y;
+    struct wnd *w;
+    if(ap > 0xfffa) return 0;
+    off = AW(0); seg = AW(2); w = win_get(AW(4));
+    if (!w || !valid_coords(seg,off,4)) return 0;
+    client_origin(w,&x,&y);
+    dx = (u16)x; dy = (u16)y;
+    if (!to_screen) { dx = (u16)(0u-dx); dy = (u16)(0u-dy); }
+    wr16(seg,off,(u16)(rd16(seg,off)+dx));
+    wr16(seg,off+2,(u16)(rd16(seg,off+2)+dy));
+    return 0;
+}
+
+u32 u_ClientToScreen(u16 ss,u16 ap) { return convert_point(ss,ap,1); }
+u32 u_ScreenToClient(u16 ss,u16 ap) { return convert_point(ss,ap,0); }
+
+u32 u_GetWindowRect(u16 ss, u16 ap)
+{
+    u16 seg,off,left,top;
+    int x,y;
+    struct wnd *w;
+    if(ap > 0xfffa) return 0;
+    off=AW(0); seg=AW(2); w=win_get(AW(4));
+    if(!w || !valid_coords(seg,off,8)) return 0;
+    client_origin(w,&x,&y);
+    left=(u16)x-(u16)w->cx; top=(u16)y-(u16)w->cy;
+    wr16(seg,off,left); wr16(seg,off+2,top);
+    wr16(seg,off+4,left+(u16)w->w); wr16(seg,off+6,top+(u16)w->h);
     return 0;
 }
 
