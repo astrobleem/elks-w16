@@ -10,6 +10,7 @@
 #define WM_MOVE          0x0003
 #define WM_SIZE          0x0005
 #define WM_SETFOCUS      0x0007
+#define WM_ENABLE        0x000A
 #define WM_PAINT         0x000F
 #define WM_CLOSE         0x0010
 #define WM_QUIT          0x0012
@@ -32,6 +33,7 @@
 #define SC_CLOSE         0xF060
 
 #define WS_CHILD         0x40000000ul
+#define WS_DISABLED      0x08000000ul
 #define WS_VISIBLE       0x10000000ul
 #define WS_CAPTION       0x00C00000ul
 #define WS_BORDER        0x00800000ul
@@ -101,7 +103,7 @@ struct wnd {
     char title[100];
     GR_WINDOW_ID frame, client; /* controls: one Nano-X window, frame == client */
     u16  parent;                /* controls: the dialog */
-    u8   ctl, pressed, isdialog, ended;
+    u8   ctl, pressed, isdialog, ended, checked;
     u16  id, result, defid;
     u8  *icon;                  /* SS_ICON: DIB of the chosen icon image (malloc) */
     u16  iconlen;

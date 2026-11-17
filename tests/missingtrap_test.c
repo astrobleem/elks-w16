@@ -18,6 +18,10 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_USER,74)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,76)].argbytes==8);
  assert(api_table[api_find_ord(MOD_USER,79)].argbytes==12);
+ assert(api_table[api_find_ord(MOD_USER,34)].argbytes==4);
+ assert(api_table[api_find_ord(MOD_USER,96)].argbytes==8);
+ assert(api_table[api_find_ord(MOD_USER,97)].argbytes==6);
+ assert(api_table[api_find_ord(MOD_USER,98)].argbytes==4);
  opt_missing=1;i=api_find_ord(MOD_GDI,35);
  assert(i>=0 && (api_table[i].flags&API_MISSING));
  assert(api_table[i].fn==0);
