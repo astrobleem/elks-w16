@@ -240,6 +240,7 @@ u32 enum_palette_objects(u16 kind,u16 proc_off,u16 proc_seg,u32 data,
 #define FOFF(f) ((u16)(u32)(f))
 #define FSEG(f) ((u16)((u32)(f) >> 16))
 #endif
+u32 enum_system_font(u16,u16,u16,u16,u32,u16,u16,u16,u16);
 extern struct ne_module *w16_mod;
 extern u16 w16_app_ss, w16_app_sp, w16_ldr_sp;
 extern u16 w16_ret_bx, w16_ret_cx, w16_ret_es;

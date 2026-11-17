@@ -19,6 +19,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH" };
 #define H(f) f
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
+u32 g_EnumFonts(u16,u16);
 u32 g_CreateIC(u16,u16),g_EnumObjects(u16,u16);
 u32 k_GlobalAlloc(u16,u16), k_GlobalFree(u16,u16), k_GlobalReAlloc(u16,u16), k_GlobalSize(u16,u16);
 u32 k_GetTempDrive(u16,u16),k_GetTempFileName(u16,u16);
@@ -277,7 +278,7 @@ const struct api api_table[] = {
     { G,  64, "CREATERECTRGN", 0, API_MISSING, 0 },
     { G,99,"LPtoDP",8,0,H(g_LPtoDP) },
     { G,67,"DPtoLP",8,0,H(g_DPtoLP) },
-    { G,  70, "ENUMFONTS", 0, API_MISSING, 0 },
+    { G,  70, "EnumFonts", 14, 0, H(g_EnumFonts) },
     { G,  71, "EnumObjects", 12, 0, H(g_EnumObjects) },
     { G,  74, "GETBITMAPBITS", 0, API_MISSING, 0 },
     { G, 85, "GetROP2", 2, 0, H(g_GetROP2) },

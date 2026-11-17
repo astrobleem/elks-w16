@@ -24,6 +24,7 @@ test: host samples
 	python3 tests/registeredtest.py
 	python3 tests/lineddatest.py
 	python3 tests/enumobjtest.py
+	python3 tests/enumfonttest.py
 	python3 tests/displayictest.py
 	python3 tests/ansistrtest.py
 	python3 tests/recttest.py

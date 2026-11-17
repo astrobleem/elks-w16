@@ -854,6 +854,13 @@ u32 g_SetTextAlign(u16 ss, u16 ap)
     return prev;
 }
 
+/* EnumFonts(hdc,face,callback,lParam): only the actual system raster font. */
+u32 g_EnumFonts(u16 ss,u16 ap)
+{
+    if(!dc_get(AW(12))) return 0;
+    return enum_system_font(AW(8),AW(10),AW(4),AW(6),AL(0),fm_h,fm_asc,fm_avg,fm_max);
+}
+
 /* GetTextMetrics(hdc, lpMetrics): the Nano-X system font, whatever font is selected */
 u32 g_GetTextMetrics(u16 ss, u16 ap)
 {
