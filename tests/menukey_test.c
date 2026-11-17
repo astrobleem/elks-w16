@@ -3,7 +3,13 @@
  * so the normal Alt+F4 path, which looks the window up by the event's window, cannot see it).
  * Nano-X and the rest of USER are stubbed; menu.c and dlgtmpl.c (menu_parse) are the real ones.
  * Build: gcc -DW16_HOST -I$MWDIR/src/include -Isrc tests/menukey_test.c src/dlgtmpl.c */
+#include <stdlib.h>
+/* Simulate the small free heap left after CLOCK/About interactions. */
+static size_t allocation_limit=512,last_allocation;
+static void *bounded_calloc(size_t n,size_t size){last_allocation=n*size;return last_allocation>allocation_limit?0:calloc(n,size);}
+#define calloc bounded_calloc
 #include "../src/menu.c"
+#undef calloc
 
 /* ---- stubs: Nano-X */
 static int next_wid = 100, destroyed, focus;
@@ -55,11 +61,13 @@ static const u8 menu_res[] = { 0, 0, 0, 0,
     0x90, 0, '&', 'S', 'e', 't', 't', 'i', 'n', 'g', 's', 0,
     0x00, 0, 1, 0, '&', 'A', 'n', 'a', 'l', 'o', 'g', 0,
     0x80, 0, 2, 0, '&', 'D', 'i', 'g', 'i', 't', 'a', 'l', 0 };
+static const u8 *active_res=menu_res;
+static u16 active_len=sizeof(menu_res);
 int ne_res_find(struct ne_module *m, u16 type, const char *name, u16 id, u32 *off, u16 *len)
 {
-    *off = 0; *len = sizeof(menu_res); return 0;
+    *off = 0; *len = active_len; return 0;
 }
-int ne_read(struct ne_module *m, u32 off, void *buf, u16 n) { memcpy(buf, menu_res + off, n); return 0; }
+int ne_read(struct ne_module *m, u32 off, void *buf, u16 n) { memcpy(buf, active_res + off, n); return 0; }
 
 /* ---- the test */
 static int fails, cases;
@@ -96,6 +104,7 @@ int main(void)
     struct wnd *w = mkwin(0, 0x100), *box = mkwin(1, 0x102);
     w->hmenu = menu_load(w, 0, 1);
     check(w->hmenu != 0, "menu bar loaded from a MENU resource");
+    check(last_allocation<=512&&menus[0]->capacity==3,"tiny menu fits fragmented 512-byte heap budget");
 
     /* menu bar popup, opened with F10 */
     nposts = 0;
@@ -108,6 +117,7 @@ int main(void)
     /* system menu, opened as Alt+Space does */
     nposts = 0;
     check(menu_sys_open(w, 1, 0) && pop.open && pop.mi == SYSMENU, "Alt+Space opens the system menu");
+    check(last_allocation<=512&&menus[SYSMENU]->capacity==2,"system menu allocates only its two entries");
     check(key(MWKEY_F4, MWKMOD_ALT) == 1 && !pop.open, "Alt+F4 with the system menu open closes it");
     check(nposts == 1 && post_hwnd == 0x100 && post_msg == WM_SYSCOMMAND && post_wp == SC_CLOSE,
           "the window gets WM_SYSCOMMAND SC_CLOSE");
@@ -129,6 +139,36 @@ int main(void)
     key(27, 0);
     check(key(MWKEY_F4, MWKMOD_ALT) == 0 && nposts == 0, "with no menu open Alt+F4 is left to the window");
 
+
+    allocation_limit=65535;
+    /* Large menu resources and later popup handles must not alias other menus. */
+    { int sub, i; u16 h;
+      menu_free(w->hmenu);
+      { static u8 large[1600];unsigned p=4,j;
+        for(j=0;j<104;j++) {
+            large[p++]=j==103?MF_END:0;large[p++]=0;
+            large[p++]=(u8)j;large[p++]=1;
+            memcpy(large+p,"Example",8);p+=8;
+        }
+        active_res=large;active_len=p;
+        check(menu_load(w,0,1)!=0 && menus[0]->t.n==104,
+              "runtime loader reads a complete 1252-byte menu");
+        menu_free(w->hmenu);
+      }
+      memset(&menus[0]->t,0,sizeof(menus[0]->t));
+      check(slot(0,MENU_MAXITEMS)!=0,"full-capacity menu allocation remains supported");
+      menus[0]->used=1;menus[0]->t.n=MENU_MAXITEMS;
+      for(i=0;i<MENU_MAXITEMS;i++) {
+          menus[0]->t.it[i].parent=0xff;
+          menus[0]->t.it[i].flags=MF_POPUP;
+      }
+      for(i=0;i<MENU_MAXITEMS;i++) {
+          h=HMENU_BASE+2*(i+1);
+          check(menu_of(h,&sub)==menus[0]&&sub==i,"popup handle retains full item index");
+      }
+      check(menu_of(HMENU_BASE+1,&sub)==0,"odd handles rejected");
+
+    }
     printf("== menus: %d passed, %d failed\n", cases - fails, fails);
     return fails != 0;
 }

@@ -37,6 +37,7 @@ static int modulo(long v,int n){long r=v%n;return r<0?r+n:r;}
 static void GrBitmap(int wid,int gc,int x,int y,int w,int h,GR_BITMAP*data){
  int row,col;struct dc*d=&dcs[wid-1];
  assert(gc==wid&&x==base_x&&w==width&&h>0&&h<=16);
+ assert(16+2*((w+15)/16)*h<=512);
  assert(y>=base_y&&y+h<=base_y+height);
  assert(mode==GR_MODE_COPY&&fg==d->bkcolor&&bg==d->textcolor&&usebg==1);
  calls++;
@@ -54,13 +55,14 @@ static void GrBitmap(int wid,int gc,int x,int y,int w,int h,GR_BITMAP*data){
 static void run(int x,int y,int w,int h){
  int i;base_x=x;base_y=y;width=w;height=h;calls=0;memset(seen,0,sizeof seen);
  assert(pat_fill(&dcs[0],x,y,w,h,0));
- assert(calls==(h+15)/16);
+ {int batch=480/(2*((w+15)/16));if(batch>16)batch=16;
+ assert(calls==(h+batch-1)/batch);}
  for(i=0;i<w*h;i++)assert(seen[i]);
 }
 int main(void){
  int bw,bh,i,j,k;
  int origins[]={-32768,-32767,-17,-1,0,1,17,32766,32767};
- int widths[]={1,7,15,16,17,31,32,33,639,640};
+ int widths[]={1,7,15,16,17,31,32,33,255,256,257,639,640};
  dcs[0].wid=dcs[0].gc=1;dcs[1].wid=dcs[1].gc=2;
  dcs[0].bkcolor=123;dcs[0].textcolor=456;
  args[2]=1;args[1]=32767;args[0]=0x8000;
@@ -76,7 +78,7 @@ int main(void){
   for(i=0;i<16;i++)bmps[0].rows[i]=(u16)(0xa591u^(0x3719u*i));
   for(j=0;j<9;j++){
    dcs[0].brushx=origins[j];dcs[0].brushy=origins[8-j];
-   for(k=0;k<10;k++)run(j%2?-29:23,j%2?31:-19,widths[k],17);
+   for(k=0;k<13;k++)run(j%2?-29:23,j%2?31:-19,widths[k],17);
   }
  }
  bmps[0].w=7;bmps[0].h=13;run(-32768,32288,640,480);

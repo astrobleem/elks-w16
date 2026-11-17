@@ -21,12 +21,13 @@ struct menu {
     u8   used, idx;
     u16  hwnd;
     i16  bar_y;                         /* frame row of the bar, set when drawn */
-    struct menu_tmpl t;
-    i16  x0[MENU_MAXITEMS], x1[MENU_MAXITEMS];  /* bar items: frame columns */
-    i16  tw[MENU_MAXITEMS], aw[MENU_MAXITEMS];  /* label and accelerator widths */
-    i16  mx[MENU_MAXITEMS], mw[MENU_MAXITEMS];  /* mnemonic underline offset and width, mw 0 if none */
+    struct {u8 n;struct menu_item *it;} t;
+    u16 capacity;
+    i16 *x0,*x1,*tw,*aw,*mx,*mw;
+
 };
-/* about 1 KB each, so allocated when first needed: most programs have one menu bar, many none */
+/* One allocation sized to the actual item count. Small CLOCK/system menus
+ * must not each reserve the full 128-item Paintbrush capacity. */
 static struct menu *menus[MAXMENU + 1];
 #define USED(i) (menus[i] && menus[i]->used)
 static int scr_w = 320, scr_h = 200, asc = 10;
@@ -47,7 +48,7 @@ static struct {
 
 static struct menu *menu_of(u16 h, int *sub)
 {
-    u16 k = (u16)(h - HMENU_BASE), mi = k / 0x20, r = k % 0x20;
+    u16 k = (u16)(h - HMENU_BASE), mi = k / HMENU_STRIDE, r = k % HMENU_STRIDE;
     if (h < HMENU_BASE || mi > SYSMENU || (r & 1) || !USED(mi))
         return 0;
     *sub = r ? r / 2 - 1 : -1;
@@ -128,23 +129,33 @@ static void measure(struct menu *mn, int x)
 }
 
 /* slot i, allocated on first use (zeroed) */
-static struct menu *slot(int i)
+static struct menu *slot(int i,u16 count)
 {
-    if (!menus[i] && (menus[i] = calloc(1, sizeof(struct menu))) != 0)
-        menus[i]->idx = (u8)i;
-    if (!menus[i])
-        wlog("w16: no memory for a menu\n");
-    return menus[i];
+    struct menu *mn;
+    u16 bytes;
+    if(!count||count>MENU_MAXITEMS)return 0;
+    if(menus[i]&&menus[i]->capacity==count)return menus[i];
+    if(menus[i]){free(menus[i]);menus[i]=0;}
+    bytes=sizeof(struct menu)+count*(sizeof(struct menu_item)+6*sizeof(i16));
+    mn=calloc(1,bytes);
+    if(!mn){wlog("w16: no memory for a menu (%u items, %u bytes)\n",count,bytes);return 0;}
+    mn->idx=(u8)i;mn->capacity=count;
+    mn->t.it=(struct menu_item*)(mn+1);
+    mn->x0=(i16*)(mn->t.it+count);mn->x1=mn->x0+count;
+    mn->tw=mn->x1+count;mn->aw=mn->tw+count;
+    mn->mx=mn->aw+count;mn->mw=mn->mx+count;
+    menus[i]=mn;return mn;
 }
 
 /* attach a MENU resource to w as its menu bar; widths are measured once, here */
 u16 menu_load(struct wnd *w, const char *name, u16 id)
 {
-    u8 *buf = w16_scratch;             /* 512 bytes of the shared scratch */
+    u8 *buf = w16_scratch;             /* shared scratch; never silently truncate a resource */
     struct menu *mn;
     GR_SCREEN_INFO si;
     u32 off;
     u16 len;
+    u8 count;
     int i;
     for (i = 0; i < MAXMENU && USED(i); i++)
         ;
@@ -156,14 +167,16 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
         wlog("w16: menu %s not found in the program's resources\n", name ? name : "(ordinal)");
         return 0;
     }
-    if (!(mn = slot(i)))
+    if (len > W16_SCRATCH) {
+        wlog("w16: menu resource too large (%u bytes)\n", len);
         return 0;
-    if (len > 512)
-        len = 512;
-    if (ne_read(w16_mod, off, buf, len) || menu_parse(buf, len, &mn->t)) {
+    }
+    if (ne_read(w16_mod, off, buf, len) || menu_parse_into(buf,len,0,MENU_MAXITEMS,&count)) {
         wlog("w16: menu %s is malformed or has more than %d items\n", name ? name : "(ordinal)", MENU_MAXITEMS);
         return 0;
     }
+    if(!(mn=slot(i,count)))return 0;
+    if(menu_parse_into(buf,len,mn->t.it,count,&mn->t.n))return 0;
     GrGetScreenInfo(&si);
     if (si.cols > 0) {
         scr_w = si.cols;
@@ -173,7 +186,7 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
     mn->hwnd = w->hwnd;
     mn->bar_y = (i16)(border_w(w->style) + ((w->style & WS_CAPTION) == WS_CAPTION ? font_h + 2 : 0));
     measure(mn, border_w(w->style) + 2);
-    w->hmenu = (u16)(HMENU_BASE + 0x20 * i);
+    w->hmenu = (u16)(HMENU_BASE + HMENU_STRIDE * i);
     vlog("w16: menu %s: %u items on window %04x -> %04x\n", name ? name : "(ordinal)", mn->t.n, w->hwnd, w->hmenu);
     return w->hmenu;
 }
@@ -358,14 +371,14 @@ static void open_popup(int mi, int top, int sel_first)
     if (pop.open)
         close_popup(0);
     if (entering)
-        win_send(w, WM_INITMENU, (u16)(HMENU_BASE + 0x20 * mi), 0);
+        win_send(w, WM_INITMENU, (u16)(HMENU_BASE + HMENU_STRIDE * mi), 0);
     {
         int pos = 0;
         for (k = 0; k < top; k++)
             if (mn->t.it[k].parent == 0xFF)
                 pos++;
         /* the high word of lParam is TRUE for the system menu */
-        win_send(w, WM_INITMENUPOPUP, (u16)(HMENU_BASE + 0x20 * mi + 2 * (top + 1)),
+        win_send(w, WM_INITMENUPOPUP, (u16)(HMENU_BASE + HMENU_STRIDE * mi + 2 * (top + 1)),
                  (u32)pos | (mi == SYSMENU ? 0x10000ul : 0));
     }
     if (!win_get(mn->hwnd) || !mn->used)
@@ -418,7 +431,7 @@ int menu_sys_open(struct wnd *w, int sel_first, u32 click_time)
     static const struct menu_item close_item = { 0, SC_CLOSE, 0, "&Close\tAlt+F4" };
     struct menu *mn;
     int b = border_w(w->style);
-    if (!(w->style & WS_SYSMENU) || (w->style & WS_CAPTION) != WS_CAPTION || w->ctl || !(mn = slot(SYSMENU)))
+    if (!(w->style & WS_SYSMENU) || (w->style & WS_CAPTION) != WS_CAPTION || w->ctl || !(mn = slot(SYSMENU,2)))
         return 0;
     if (!mn->used) {
         mn->used = 1;
@@ -670,7 +683,7 @@ u32 u_GetSubMenu(u16 ss, u16 ap)
         return 0;
     for (k = 0; k < mn->t.n; k++)
         if (mn->t.it[k].parent == (sub < 0 ? 0xFF : sub) && pos++ == want)
-            return (mn->t.it[k].flags & MF_POPUP) ? (u16)(HMENU_BASE + 0x20 * mn->idx + 2 * (k + 1)) : 0;
+            return (mn->t.it[k].flags & MF_POPUP) ? (u16)(HMENU_BASE + HMENU_STRIDE * mn->idx + 2 * (k + 1)) : 0;
     return 0;
 }
 
@@ -693,6 +706,40 @@ static struct menu_item *find_item(u16 h, u16 idpos, u16 flags, struct menu **pm
     return 0;
 }
 
+/* GetMenuState(hMenu,idOrPosition,flags). Popup count occupies high byte. */
+u32 u_GetMenuState(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it=find_item(AW(4),AW(2),AW(0),&mn);
+    int k,n=0,index;
+    u16 state;
+    if(!it) return 0xffff;
+    state=it->flags & ~MF_END;
+    if(it->flags & MF_POPUP) {
+        index=it-mn->t.it;
+        for(k=0;k<mn->t.n;k++) if(mn->t.it[k].parent==index) n++;
+        state=(state & 0xff) | ((u16)n<<8);
+    }
+    return state;
+}
+
+/* GetMenuString(hMenu,idOrPosition,out,maxChars,flags). Preserve the raw
+ * ampersand mnemonic/tab accelerator bytes from the real resource. */
+u32 u_GetMenuString(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it;
+    u16 off=AW(4),seg=AW(6),n=0,max=AW(2);
+    if((i16)max<=0 || !(off||seg) || (u32)off+max>0x10000UL ||
+       ((u32)seg<<4)+off+max>0x100000UL) return 0;
+    it=find_item(AW(10),AW(8),AW(0),&mn);
+    if(it) while(n+1<max && it->text[n]) {
+        wr8(seg,off+n,it->text[n]);n++;
+    }
+    wr8(seg,off+n,0);
+    return n;
+}
+
 static void menu_changed(struct menu *mn)
 {
     struct wnd *w = win_get(mn->hwnd);
@@ -700,6 +747,35 @@ static void menu_changed(struct menu *mn)
         draw_popup();
     else if (w && w->visible)
         menu_draw_bar(w, mn->bar_y);
+}
+
+/* ModifyMenu: update existing string commands/separators. Popup replacement
+ * and bitmap/owner-drawn items need different ownership and are refused. */
+u32 u_ModifyMenu(u16 ss,u16 ap)
+{
+    struct menu *mn;
+    struct menu_item *it;
+    u16 flags=AW(6),off=AW(0),seg=AW(2),i;
+    char text[sizeof(mn->t.it[0].text)];
+    if(flags&~(MF_BYPOSITION|MF_CHECKED|MF_DISABLED|MF_GRAYED|MF_SEPARATOR)) return 0;
+    it=find_item(AW(10),AW(8),flags,&mn);
+    if(!it || (it->flags&MF_POPUP)) return 0;
+    text[0]=0;
+    if(!(flags&MF_SEPARATOR)) {
+        if(!(seg||off)) return 0;
+        for(i=0;i<sizeof(text);i++) {
+            if((u32)off+i>0xffffUL || ((u32)seg<<4)+off+i>0xfffffUL) return 0;
+            text[i]=rd8(seg,off+i);
+            if(!text[i]) break;
+        }
+        if(i==sizeof(text)) return 0;
+    }
+    it->id=flags&MF_SEPARATOR?0:AW(4);
+    it->flags=(it->flags&MF_END)|(flags&~MF_BYPOSITION);
+    strcpy(it->text,text);
+    measure(mn,mn->x0[0]);
+    menu_changed(mn);
+    return 1;
 }
 
 /* CheckMenuItem(hMenu, wIDCheckItem, wCheck): previous state, or -1 */

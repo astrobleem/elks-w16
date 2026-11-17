@@ -94,12 +94,12 @@ int dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t)
 
 /* MENUITEMTEMPLATEHEADER {WORD version, WORD offset}, then items {WORD flags, [WORD id unless MF_POPUP], text\0};
  * a popup's items follow it; MF_END marks the last item at each level. Popups nest at most two deep. */
-static int menu_items(const u8 *d, u16 len, u16 *p, struct menu_tmpl *t, u8 parent, int depth)
+static int menu_items(const u8 *d, u16 len, u16 *p, struct menu_item *items, u16 capacity, u8 *count, u8 parent, int depth)
 {
     for (;;) {
-        struct menu_item *it;
+        struct menu_item dummy, *it;
         u16 fl, id = 0, k = 0;
-        if (*p + 2 > len || t->n >= MENU_MAXITEMS)
+        if (*p + 2 > len || *count >= capacity)
             return -1;
         fl = g16(d + *p);
         *p += 2;
@@ -109,7 +109,8 @@ static int menu_items(const u8 *d, u16 len, u16 *p, struct menu_tmpl *t, u8 pare
             id = g16(d + *p);
             *p += 2;
         }
-        it = &t->it[t->n++];
+        it = items ? &items[*count] : &dummy;
+        (*count)++;
         it->flags = fl & (u16)~MF_END;
         it->id = id;
         it->parent = parent;
@@ -125,7 +126,7 @@ static int menu_items(const u8 *d, u16 len, u16 *p, struct menu_tmpl *t, u8 pare
         if (!k && !id && !(fl & MF_POPUP))
             it->flags |= MF_SEPARATOR;
         if (fl & MF_POPUP) {
-            if (depth >= 2 || menu_items(d, len, p, t, (u8)(t->n - 1), depth + 1))
+            if (depth >= 2 || menu_items(d, len, p, items, capacity, count, (u8)(*count - 1), depth + 1))
                 return -1;
         }
         if (fl & MF_END)
@@ -133,14 +134,24 @@ static int menu_items(const u8 *d, u16 len, u16 *p, struct menu_tmpl *t, u8 pare
     }
 }
 
-int menu_parse(const u8 *d, u16 len, struct menu_tmpl *t)
+/* With items == NULL, validate and count without allocating a maximum-sized
+ * template. The second pass writes into exactly capacity items. */
+int menu_parse_into(const u8 *d,u16 len,struct menu_item *items,u16 capacity,u8 *count)
 {
     u16 p;
-    memset(t, 0, sizeof(*t));
+    *count=0;
+    if(!capacity||capacity>MENU_MAXITEMS)return -1;
+    if(items)memset(items,0,capacity*sizeof(*items));
     if (len < 6 || g16(d) != 0)
+        return -1;
+    if (g16(d + 2) > len - 4u)
         return -1;
     p = (u16)(4 + g16(d + 2));
     if (p >= len)
         return -1;
-    return menu_items(d, len, &p, t, 0xFF, 0);
+    return menu_items(d,len,&p,items,capacity,count,0xFF,0);
+}
+int menu_parse(const u8 *d,u16 len,struct menu_tmpl *t)
+{
+    return menu_parse_into(d,len,t->it,MENU_MAXITEMS,&t->n);
 }

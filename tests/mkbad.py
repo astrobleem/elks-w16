@@ -63,7 +63,7 @@ case('os2.exe', patched(ne + 0x36, '<B', 1), 12, 'OS/2 1.x')
 case('iter.exe', patched(ne + segtab + 4, '<H', segs[0][2] | 0x0008), 12, 'iterated')
 case('seg64k.exe', patched(ne + segtab + 6, '<H', 0), 12, '64 KB')
 case('noseg.exe', patched(ne + 0x1C, '<H', 0), 11, '0 segments')
-case('manyseg.exe', patched(ne + 0x1C, '<H', 40), 12, '40 segments')
+case('manyseg.exe', patched(ne + 0x1C, '<H', 255), 12, '255 segments')
 case('autods.exe', patched(ne + 0x0E, '<H', 9), 11, 'out of range')
 case('bigdata.exe', patched(ne + 0x10, '<H', 0xF800), 14, 'over 64 KB')
 # regression (review): DGROUP of 61440 data bytes with minalloc 65520 used to wrap to a 5104-byte allocation

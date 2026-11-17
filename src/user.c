@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include "wapi.h"
+#include "filelist.h"
 
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
@@ -56,6 +57,45 @@ struct wnd *win_get(u16 hwnd)
     if (hwnd < HWND_BASE || ((hwnd - HWND_BASE) & 3) || i >= MAXWIN || !wins[i].used)
         return 0;
     return &wins[i];
+}
+
+u32 u_GetDesktopHwnd(u16 ss,u16 ap) { (void)ss;(void)ap;return DESKTOP_HWND; }
+u32 u_IsWindow(u16 ss,u16 ap) { return AW(0)==DESKTOP_HWND || win_get(AW(0)) != 0; }
+
+u32 u_IsWindowVisible(u16 ss,u16 ap)
+{
+    struct wnd *w=win_get(AW(0)); int n=0;
+    if(AW(0)==DESKTOP_HWND)return 1;
+    while(w && n++<MAXWIN) {
+        if(!w->visible) return 0;
+        if(!w->parent) return 1;
+        w=win_get(w->parent);
+    }
+    return 0;
+}
+
+/* GWL_STYLE and GWL_WNDPROC are DWORD values even in 16-bit Windows.
+ * A style write alone does not move, resize or recreate the native frame. */
+u32 u_GetWindowLong(u16 ss,u16 ap)
+{
+    struct wnd *w; i16 index;
+    if(ap>0xfffcu) return 0;
+    w=win_get(AW(2)); index=(i16)AW(0); if(!w) return 0;
+    if(index==-16) return w->style;
+    if(index==-4) return ((u32)w->procseg<<16)|w->procoff;
+    return 0;
+}
+u32 u_SetWindowLong(u16 ss,u16 ap)
+{
+    struct wnd *w; i16 index; u32 old,v;
+    if(ap>0xfff8u) return 0;
+    w=win_get(AW(6)); index=(i16)AW(4); v=AL(0); if(!w) return 0;
+    if(index==-16) {old=w->style; w->style=v; return old;}
+    if(index==-4 && v) {
+        old=((u32)w->procseg<<16)|w->procoff;
+        w->procoff=(u16)v; w->procseg=(u16)(v>>16);return old;
+    }
+    return 0;
 }
 
 /* Child frame positions are relative to the parent's client, not the screen. */
@@ -106,7 +146,7 @@ u32 win_send(struct wnd *w, u16 msg, u16 wp, u32 lp)
 void win_invalidate_all(struct wnd *w, int erase)
 {
     w->ul = 0; w->ut = 0; w->ur = w->cw; w->ub = w->ch;
-    w->invalid = 1;
+    w->invalid = w->cw > 0 && w->ch > 0;
     if (erase)
         w->erase = 1;
 }
@@ -169,6 +209,7 @@ static void draw_nc(struct wnd *w)
         gdi_fill(f, gray, W - b, top, b, H - b - top);
     }
     gdi_fg(black);
+    scrollbar_draw(w);
     GrRect(f, gc, 0, 0, W, H);
     if (b > 1)
         GrRect(f, gc, b - 1, b - 1, W - 2 * (b - 1), H - 2 * (b - 1));
@@ -411,7 +452,23 @@ static u16 vk_from_key(GR_KEY ch, u8 *ascii)
     return 0;
 }
 
+/* Win16 button types used by dialog templates. */
+#define BS_CHECKBOX      2
+#define BS_AUTOCHECKBOX  3
+#define BS_RADIOBUTTON   4
+#define BS_GROUPBOX      7
+#define BUTTON_TYPE(w) ((int)((w)->style & 0xF))
+
+static void toggle_button(struct wnd *w)
+{
+    if (BUTTON_TYPE(w) == BS_AUTOCHECKBOX)
+        w->checked = !w->checked;
+}
+
 static void paint_control(struct wnd *w);
+static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp);
+static struct wnd *find_ctl(u16 hdlg,u16 id);
+static u32 list_message(struct wnd *w,u16 msg,u16 wp,u32 lp);
 
 static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x, int y, int rx, int ry)
 {
@@ -426,7 +483,13 @@ static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x
 /* a modal dialog is up and w is not part of it (Windows disables the dialog's owner) */
 static int blocked(struct wnd *w)
 {
-    return modal_hwnd && top_window(w)->hwnd != modal_hwnd;
+    int n = 0;
+    if (modal_hwnd && top_window(w)->hwnd != modal_hwnd)
+        return 1;
+    for (; w && n++ < MAXWIN; w = win_get(w->parent))
+        if (w->style & WS_DISABLED)
+            return 1;
+    return 0;
 }
 
 static void translate_event(GR_EVENT *ev)
@@ -438,6 +501,7 @@ static void translate_event(GR_EVENT *ev)
         lat_input("click");
     else if (ev->type == GR_EVENT_TYPE_KEY_DOWN)
         lat_input("key");
+    pointer_event(ev);
     if (menu_event(ev))                    /* an open menu takes the input */
         return;
     switch (ev->type) {
@@ -504,6 +568,8 @@ static void translate_event(GR_EVENT *ev)
         int down = ev->type == GR_EVENT_TYPE_BUTTON_DOWN;
         w = win_by_nx(ev->button.wid, &isclient);
         mouse_buttons = ev->button.buttons;
+        if((ev->button.changebuttons & MWBUTTON_L) && (!w || !blocked(w)) &&
+           scrollbar_input(w,down?1:2,ev->button.rootx,ev->button.rooty))break;
         if (capture_hwnd && (!w || !w->ctl)) {  /* SetCapture: button events go to that window */
             struct wnd *cw = win_get(capture_hwnd);
             if (cw && !blocked(cw)) {
@@ -517,13 +583,26 @@ static void translate_event(GR_EVENT *ev)
         }
         if (!w || blocked(w))
             break;
+        if(w->ctl==CTL_LIST && down && w->list){
+            int row=(ev->button.y-2)/12+w->list->top;
+            focus_hwnd=w->hwnd;GrSetFocus(w->frame);
+            if(row>=0&&row<w->list->count){
+                struct wnd *d=win_get(w->parent);w->list->selected=row;paint_control(w);
+                if(d)win_send(d,WM_COMMAND,w->id,((u32)1<<16)|w->hwnd);
+            }
+        }
+        if (w->ctl==CTL_EDIT && down) {
+            focus_hwnd=w->hwnd;GrSetFocus(w->frame);
+            w->edit_cursor=(u8)strlen(w->title);w->edit_anchor=w->edit_cursor;paint_control(w);
+        }
         if (w->ctl) {                   /* built-in control: push buttons notify their dialog */
-            if (w->ctl == CTL_BUTTON && (ev->button.changebuttons & MWBUTTON_L)) {
+            if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) != BS_GROUPBOX && (ev->button.changebuttons & MWBUTTON_L)) {
                 if (down) {
                     w->pressed = 1;
                     paint_control(w);
                 } else if (w->pressed) {
                     w->pressed = 0;
+                    toggle_button(w);
                     paint_control(w);
                     vlog("w16: button control %u clicked -> WM_COMMAND to %04x\n", w->id, w->parent);
                     post(w->parent, WM_COMMAND, w->id, ((u32)BN_CLICKED << 16) | w->hwnd, ev->button.rootx, ev->button.rooty);
@@ -547,6 +626,7 @@ static void translate_event(GR_EVENT *ev)
         u16 mk;
         w = win_by_nx(ev->mouse.wid, &isclient);
         mouse_buttons = ev->mouse.buttons;
+        if((!w || !blocked(w)) && scrollbar_input(w,0,ev->mouse.rootx,ev->mouse.rooty))break;
         if (capture_hwnd && (t = win_get(capture_hwnd)) != 0) {
             int ox, oy;
             if (blocked(t)) break;
@@ -586,13 +666,100 @@ u32 u_PostQuitMessage(u16 ss, u16 ap)
     return 0;
 }
 
+/* Standard non-client scrollbars. SB_CTL must not alias a window axis. */
+static struct wnd *scroll_window(u16 hwnd,u16 bar)
+{
+    struct wnd *w=win_get(hwnd);
+    if(!w || bar>1) return 0;
+    if(!(w->scroll_init & (1u<<bar))) {
+        w->scroll_min[bar]=0;w->scroll_max[bar]=100;w->scroll_pos[bar]=0;
+        w->scroll_init|=1u<<bar;
+    }
+    return w;
+}
+static void scroll_redraw(struct wnd *w,u16 redraw)
+{
+    if(redraw && w->visible) scrollbar_draw(w);
+}
+u32 u_SetScrollRange(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    u16 bar;
+    i16 min,max;
+    if(ap>0xfff6) return 0;
+    bar=AW(6);min=(i16)AW(4);max=(i16)AW(2);
+    if(min>max || (long)max-(long)min>32767L) return 0;
+    w=scroll_window(AW(8),bar);if(!w)return 0;
+    w->scroll_min[bar]=min;w->scroll_max[bar]=max;
+    if(w->scroll_pos[bar]<min)w->scroll_pos[bar]=min;
+    if(w->scroll_pos[bar]>max)w->scroll_pos[bar]=max;
+    scroll_redraw(w,AW(0));return 0; /* Win16 void Pascal */
+}
+u32 u_SetScrollPos(u16 ss,u16 ap)
+{
+    struct wnd *w;u16 bar; i16 pos,old;
+    if(ap>0xfff8)return 0;
+    bar=AW(4);w=scroll_window(AW(6),bar);if(!w)return 0;
+    pos=(i16)AW(2);old=w->scroll_pos[bar];
+    if(pos<w->scroll_min[bar])pos=w->scroll_min[bar];
+    if(pos>w->scroll_max[bar])pos=w->scroll_max[bar];
+    w->scroll_pos[bar]=pos;scroll_redraw(w,AW(0));return (u16)old;
+}
+u32 u_GetScrollPos(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    if(ap>0xfffc)return 0;
+    w=scroll_window(AW(2),AW(0));return w?(u16)w->scroll_pos[AW(0)]:0;
+}
+static int scroll_word(u16 seg,u16 off)
+{
+    return (seg||off) && off<=0xfffe && (((u32)seg<<4)+off)<=0xffffeUL;
+}
+u32 u_GetScrollRange(u16 ss,u16 ap)
+{
+    struct wnd *w;u16 bar,lo,ls,hi,hs;
+    if(ap>0xfff4)return 0;
+    hi=AW(0);hs=AW(2);lo=AW(4);ls=AW(6);bar=AW(8);
+    if(!scroll_word(ls,lo)||!scroll_word(hs,hi))return 0;
+    w=scroll_window(AW(10),bar);if(!w)return 0;
+    wr16(ls,lo,(u16)w->scroll_min[bar]);wr16(hs,hi,(u16)w->scroll_max[bar]);
+    return 0; /* Win16 void Pascal */
+}
+
+/* ScrollWindow: redraw the invalidated client from the application's backing
+ * store instead of copying obscured screen pixels. This is a genuine Win16
+ * invalidation path; no pixel content is synthesized. */
+u32 u_ScrollWindow(u16 ss,u16 ap)
+{
+    u16 hwnd=AW(12),ro=AW(4),rs=AW(6),co=AW(0),cs=AW(2);
+    int dx=(i16)AW(10),dy=(i16)AW(8),i;
+    struct wnd*w=win_get(hwnd);
+    if(!w)return 0;
+    if((ro||rs) && (!scroll_word(rs,ro)||ro>0xfff8||((u32)rs<<4)+ro>0xffff8UL))return 0;
+    if((co||cs) && (!scroll_word(cs,co)||co>0xfff8||((u32)cs<<4)+co>0xffff8UL))return 0;
+    /* A null scroll rectangle moves child windows as well. Preflight every
+     * child before changing any geometry, preserving signed 16-bit positions. */
+    if(!ro&&!rs) {
+        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+            long x=(long)wins[i].x+dx,y=(long)wins[i].y+dy;
+            if(x< -32768L||x>32767L||y< -32768L||y>32767L)return 0;
+        }
+        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+            wins[i].x+=dx;wins[i].y+=dy;
+            GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
+        }
+    }
+    win_invalidate_all(w,1);
+    return 0; /* Win16 void Pascal */
+}
+
 /* GetClientRect(hwnd, lpRect) */
 u32 u_GetClientRect(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2);
     struct wnd *w = win_get(AW(4));
     wr16(seg, off, 0); wr16(seg, off + 2, 0);
-    wr16(seg, off + 4, w ? w->cw : 0); wr16(seg, off + 6, w ? w->ch : 0);
+    wr16(seg, off + 4, w ? w->cw : AW(4)==DESKTOP_HWND?scr_w:0); wr16(seg, off + 6, w ? w->ch : AW(4)==DESKTOP_HWND?scr_h:0);
     return 0;
 }
 
@@ -659,6 +826,21 @@ static int find_class(u16 off, u16 seg)
     return -1;
 }
 
+/* SetClassWord(hWnd, GCW_HCURSOR, hCursor): all instances of this
+ * registered class share the association. System controls have no entry. */
+u32 u_SetClassWord(u16 ss,u16 ap)
+{
+    struct wnd *w;struct wclass *c;u16 old,h;int i;
+    if(ap>0xfffau || (i16)AW(2)!=-12) return 0;
+    w=win_get(AW(4)); h=AW(0);
+    if(!w || w->ctl || w->isdialog || w->cls<0 || w->cls>=MAXCLASS) return 0;
+    c=&classes[w->cls];if(!c->used)return 0;
+    old=c->hcursor;c->hcursor=h;
+    for(i=0;i<MAXWIN;i++) if(wins[i].used && !wins[i].ctl && !wins[i].isdialog && wins[i].cls==w->cls)
+        cursor_class(wins[i].frame,wins[i].client,h);
+    return old;
+}
+
 /* RegisterClass(lpWndClass) */
 u32 u_RegisterClass(u16 ss, u16 ap)
 {
@@ -683,6 +865,7 @@ u32 u_RegisterClass(u16 ss, u16 ap)
     c->procoff = rd16(seg, off + 2); c->procseg = rd16(seg, off + 4);
     c->cbwndextra = rd16(seg, off + 8);
     c->hinst = rd16(seg, off + 10);
+    c->hcursor = rd16(seg, off + 14);
     c->hbrush = rd16(seg, off + 16);
     {
         char mn[34];
@@ -729,7 +912,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         pw = win_get(parent);
         /* Bounded registered children: plain/bordered client windows only. */
         if (!pw || pw->active || (style & (WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) != (style & WS_BORDER) ||
-            wd <= 0 || h <= 0 || wd > 32760 || h > 32760) {
+            wd < 0 || h < 0 || wd > 32760 || h > 32760) {
             wlog("w16: CreateWindow: unsupported child geometry, decoration or parent\n");
             return 0;
         }
@@ -775,20 +958,24 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if (tseg)
         fstrncpy_in(w->title, tseg, toff, sizeof(w->title));
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
-    if (w->cw <= 0 || w->ch <= 0) { w->used = 0; return 0; }
+    if(style & WS_VSCROLL) w->cw-=SCROLLBAR_SIZE;
+    if(style & WS_HSCROLL) w->ch-=SCROLLBAR_SIZE;
+    if (w->cw < 0) w->cw = 0;
+    if (w->ch < 0) w->ch = 0;
     w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
-                             x < 0 ? 0 : x, y < 0 ? 0 : y, wd, h, GR_RGB(170, 170, 170));
+                             x < 0 ? 0 : x, y < 0 ? 0 : y, wd ? wd : 1, h ? h : 1, GR_RGB(170, 170, 170));
     if (!w->frame) { w->used = 0; return 0; }
     /* Nano-X creation interprets any negative coordinate as auto-placement.
      * Move the still-unmapped frame to preserve Win16 signed positions. */
     if (x < 0 || y < 0) GrMoveWindow(w->frame, x, y);
-    w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw, w->ch, 0, bg, 0);
+    w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw ? w->cw : 1, w->ch ? w->ch : 1, 0, bg, 0);
     if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
-                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
+                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_BUTTON_UP | GR_EVENT_MASK_MOUSE_POSITION);
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_MOUSE_POSITION);
     cursor_attach(w->frame, w->client);
+    if(c->hcursor) cursor_class(w->frame,w->client,c->hcursor);
     vlog("w16: CreateWindow \"%s\" class \"%s\" style %08lx at %d,%d %dx%d -> hwnd %04x (client %dx%d)\n",
           w->title, c->name, (unsigned long)style, x, y, wd, h, w->hwnd, w->cw, w->ch);
 
@@ -816,12 +1003,78 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         return 0;
     }
     if (style & WS_VISIBLE) {
-        GrMapWindow(w->client);
-        GrMapWindow(w->frame);
+        if (w->cw && w->ch) GrMapWindow(w->client);
+        if (w->w && w->h) GrMapWindow(w->frame);
         w->visible = 1;
         win_invalidate_all(w, 1);
     }
     return w->hwnd;
+}
+
+/* MoveWindow(hwnd, x, y, width, height, repaint). Empty Win16 clients
+ * retain a one-pixel Nano-X backing window which must stay unmapped. */
+static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
+{
+    struct wnd *w=win_get(hwnd);
+    int moved, resized, cw, ch;
+    if(!w || wd<0 || h<0 || wd>32760 || h>32760) return 0;
+    moved=w->x!=x || w->y!=y;
+    resized=w->w!=wd || w->h!=h;
+    cw=wd-w->cx-(w->ctl?0:border_of(w->style));
+    ch=h-w->cy-(w->ctl?0:border_of(w->style));
+    if(w->style & WS_VSCROLL)cw-=SCROLLBAR_SIZE;
+    if(w->style & WS_HSCROLL)ch-=SCROLLBAR_SIZE;
+    if(cw<0) cw=0;
+    if(ch<0) ch=0;
+    w->x=x;w->y=y;w->w=wd;w->h=h;w->cw=cw;w->ch=ch;
+    GrMoveWindow(w->frame,x,y);
+    if(!cw || !ch) GrUnmapWindow(w->client);
+    if(!wd || !h) GrUnmapWindow(w->frame);
+    GrResizeWindow(w->frame,wd?wd:1,h?h:1);
+    if(w->client!=w->frame)
+        GrResizeWindow(w->client,cw?cw:1,ch?ch:1);
+    if(w->visible) {
+        if(cw && ch) GrMapWindow(w->client);
+        if(wd && h) GrMapWindow(w->frame);
+    }
+    if(!cw || !ch) w->invalid=0;
+    if(moved) win_send(w,WM_MOVE,0,((u32)(u16)(y+w->cy)<<16)|(u16)(x+w->cx));
+    if(win_get(hwnd)!=w) return 1;
+    if(resized) win_send(w,WM_SIZE,0,((u32)(u16)ch<<16)|(u16)cw);
+    if(win_get(hwnd)!=w) return 1;
+    if(repaint) {
+        win_invalidate_all(w,1);
+        if(w->visible && w->invalid) win_send(w,WM_PAINT,0,0);
+    }
+    return 1;
+}
+
+u32 u_MoveWindow(u16 ss,u16 ap)
+{
+    return move_window(AW(10),(i16)AW(8),(i16)AW(6),(i16)AW(4),(i16)AW(2),AW(0));
+}
+/* SetWindowPos(hwnd,insertAfter,x,y,cx,cy,flags). Screen top/bottom ordering
+ * is real Nano-X stacking; arbitrary sibling and topmost policies fail. */
+u32 u_SetWindowPos(u16 ss,u16 ap)
+{
+    u16 flags=AW(0),after=AW(10),hwnd=AW(12);
+    int x=(i16)AW(8),y=(i16)AW(6),width=(i16)AW(4),height=(i16)AW(2);
+    struct wnd*w=win_get(hwnd);
+    vlog("w16: SetWindowPos hwnd=%04x after=%04x xy=%d,%d size=%d,%d flags=%04x\n",hwnd,after,x,y,width,height,flags);
+    if(!w||(flags&~0x03df)||(!(flags&4)&&after!=0&&after!=1))return 0;
+    if(flags&2){x=w->x;y=w->y;}if(flags&1){width=w->w;height=w->h;}
+    if(!move_window(hwnd,x,y,width,height,!(flags&8)))return 0;
+    w=win_get(hwnd);if(!w)return 1;
+    if(!(flags&4)){if(after==0)GrRaiseWindow(w->frame);else GrLowerWindow(w->frame);}
+    if(flags&0x80){GrUnmapWindow(w->frame);w->visible=0;w->style&=~WS_VISIBLE;}
+    else if(flags&0x40){
+        if(w->cw&&w->ch)GrMapWindow(w->client);
+        if(w->w&&w->h)GrMapWindow(w->frame);
+        w->visible=1;w->style|=WS_VISIBLE;
+        if(!(flags&8))win_invalidate_all(w,1);
+    }
+    if(!(flags&0x10)&&w->visible){focus_hwnd=hwnd;GrSetFocus(w->client);}
+    return 1;
 }
 
 /* ShowWindow(hwnd, nCmdShow) */
@@ -835,13 +1088,13 @@ u32 u_ShowWindow(u16 ss, u16 ap)
     prev = w->visible;
     if (cmd == 0) {
         GrUnmapWindow(w->frame);
-        w->visible = 0;
+        w->visible = 0; w->style &= ~WS_VISIBLE;
         return prev;
     }
-    GrMapWindow(w->client);
-    GrMapWindow(w->frame);
-    GrSetFocus(w->client);
-    w->visible = 1;
+    if (w->cw && w->ch) GrMapWindow(w->client);
+    if (w->w && w->h) GrMapWindow(w->frame);
+    if (w->cw && w->ch) GrSetFocus(w->client);
+    w->visible = 1; w->style |= WS_VISIBLE;
     if (!w->shown) {
         w->shown = 1;
         win_send(w, WM_SIZE, 0, ((u32)w->ch << 16) | (u16)w->cw);
@@ -862,6 +1115,7 @@ static void free_controls(u16 parent)
             if (wins[i].icon)
                 free(wins[i].icon);
             wins[i].icon = 0;
+            if(wins[i].list){filelist_clear(wins[i].list);free(wins[i].list);wins[i].list=0;}
             wins[i].used = 0;
         }
 }
@@ -1092,6 +1346,24 @@ u32 u_PeekMessage(u16 ss, u16 ap)
     return 1;
 }
 
+/* SendMessage is synchronous. Unlike DispatchMessage it must not interpret
+ * a WM_TIMER lParam as a callback address: the window procedure receives it. */
+u32 u_SendMessage(u16 ss,u16 ap)
+{
+    struct wnd *w;
+    u16 hwnd,msg,wp,i; u32 lp;
+    if(ap>0xfff6u) return 0;
+    hwnd=AW(8); msg=AW(6); wp=AW(4); lp=AL(0);
+    if(hwnd==0xffffu) {
+        /* This runtime owns only one task. Broadcast to its top-level windows. */
+        for(i=0;i<MAXWIN;i++) if(wins[i].used && !wins[i].parent)
+            (void)win_send(&wins[i],msg,wp,lp);
+        return 0;
+    }
+    w=win_get(hwnd);
+    return w?(w->ctl?control_message(w,msg,wp,lp):win_send(w,msg,wp,lp)):0;
+}
+
 /* PostMessage(hWnd, wMsg, wParam, lParam) */
 u32 u_PostMessage(u16 ss, u16 ap)
 {
@@ -1118,6 +1390,16 @@ u32 u_ReleaseCapture(u16 ss, u16 ap)
     (void)ss; (void)ap;
     capture_hwnd = 0;
     return 0;
+}
+
+/* The active window is the top-level owner of the actual Nano-X focus,
+ * not necessarily the child HWND that last received keyboard input. */
+u32 u_GetActiveWindow(u16 ss,u16 ap)
+{
+    int client;
+    struct wnd *w=top_window(win_by_nx(GrGetFocus(),&client));
+    (void)ss; (void)ap;
+    return w?w->hwnd:0;
 }
 
 /* SetFocus(hWnd): returns the window that had the focus */
@@ -1149,19 +1431,50 @@ u32 u_SetWindowText(u16 ss, u16 ap)
     return 0;
 }
 
-/* ClientToScreen(hWnd, lpPoint) */
-u32 u_ClientToScreen(u16 ss, u16 ap)
+/* POINT/RECT outputs may not wrap the segment or the real-mode address space. */
+static int valid_coords(u16 seg, u16 off, u16 bytes)
 {
-    u16 off = AW(0), seg = AW(2);
-    struct wnd *w = win_get(AW(4));
-    if (!w)
-        return 0;
-    {
-        int x, y;
-        client_origin(w, &x, &y);
-        wr16(seg, off, (u16)(rd16(seg, off) + x));
-        wr16(seg, off + 2, (u16)(rd16(seg, off + 2) + y));
+    return (seg || off) && (u32)off + bytes <= 0x10000UL &&
+           ((u32)seg << 4) + off + bytes <= 0x100000UL;
+}
+
+/* Convert POINT in place using the entire parent-client origin chain. */
+static u32 convert_point(u16 ss, u16 ap, int to_screen)
+{
+    u16 seg, off, dx, dy;
+    int x, y;
+    struct wnd *w;
+    if(ap > 0xfffa) return 0;
+    off = AW(0); seg = AW(2); w = win_get(AW(4));
+    if (!w || !valid_coords(seg,off,4)) return 0;
+    client_origin(w,&x,&y);
+    dx = (u16)x; dy = (u16)y;
+    if (!to_screen) { dx = (u16)(0u-dx); dy = (u16)(0u-dy); }
+    wr16(seg,off,(u16)(rd16(seg,off)+dx));
+    wr16(seg,off+2,(u16)(rd16(seg,off+2)+dy));
+    return 0;
+}
+
+u32 u_ClientToScreen(u16 ss,u16 ap) { return convert_point(ss,ap,1); }
+u32 u_ScreenToClient(u16 ss,u16 ap) { return convert_point(ss,ap,0); }
+
+u32 u_GetWindowRect(u16 ss, u16 ap)
+{
+    u16 seg,off,left,top;
+    int x,y;
+    struct wnd *w;
+    if(ap > 0xfffa) return 0;
+    off=AW(0); seg=AW(2); w=win_get(AW(4));
+    if(!valid_coords(seg,off,8)) return 0;
+    if(AW(4)==DESKTOP_HWND){
+        wr16(seg,off,0);wr16(seg,off+2,0);
+        wr16(seg,off+4,scr_w);wr16(seg,off+6,scr_h);return 0;
     }
+    if(!w)return 0;
+    client_origin(w,&x,&y);
+    left=(u16)x-(u16)w->cx; top=(u16)y-(u16)w->cy;
+    wr16(seg,off,left); wr16(seg,off+2,top);
+    wr16(seg,off+4,left+(u16)w->w); wr16(seg,off+6,top+(u16)w->h);
     return 0;
 }
 
@@ -1259,7 +1572,7 @@ u32 u_GetDC(u16 ss, u16 ap)
 {
     u16 hwnd = AW(0);
     struct wnd *w = win_get(hwnd);
-    if (hwnd && !w)
+    if (hwnd && hwnd!=DESKTOP_HWND && !w)
         return 0;
     return dc_create(w, 0);
 }
@@ -1507,8 +1820,26 @@ static void paint_control(struct wnd *w)
     txt[n] = 0;
     if (n)
         gdi_text_size(txt, n, &tw, &th, &tb);
+    if (w->style & WS_DISABLED)
+        black = dark;
     gdi_usebg(0);
     switch (w->ctl) {
+    case CTL_LIST:
+        gdi_fill(f,white,0,0,w->w,w->h);gdi_fg(black);GrRect(f,gc,0,0,w->w,w->h);
+        if(w->list)for(k=w->list->top,y=2;k<w->list->count&&y+12<w->h;k++,y+=12){
+            if(k==w->list->selected)gdi_fill(f,black,1,y,w->w-2,12);
+            gdi_fg(k==w->list->selected?white:black);
+            GrText(f,gc,2,y,w->list->text[k],strlen(w->list->text[k]),GR_TFASCII|GR_TFTOP);
+        }
+        break;
+    case CTL_EDIT:
+        gdi_fill(f,white,0,0,w->w,w->h);gdi_fg(black);GrRect(f,gc,0,0,w->w,w->h);
+        if(w->title[0]) GrText(f,gc,2,1,w->title,strlen(w->title),GR_TFASCII|GR_TFTOP);
+        if(focus_hwnd==w->hwnd){
+            gdi_text_size(w->title,w->edit_cursor,&tw,&th,&tb);
+            if(tw+2<w->w) GrLine(f,gc,tw+2,2,tw+2,w->h-3);
+        }
+        break;
     case CTL_STATIC:
         gdi_fill(f, white, 0, 0, w->w, w->h);
         if (kind == 3) {                        /* SS_ICON: drawn at the control's top-left */
@@ -1549,6 +1880,36 @@ static void paint_control(struct wnd *w)
             GrText(f, gc, x < 0 ? 0 : x, 0, txt, n, GR_TFASCII | GR_TFTOP);
         break;
     case CTL_BUTTON:
+        if (kind == BS_GROUPBOX) {
+            gdi_fill(f, white, 0, 0, w->w, w->h);
+            gdi_fg(dark);
+            GrRect(f, gc, 0, font_h / 2, w->w, w->h - font_h / 2);
+            if (n)
+                gdi_fill(f, white, 5, 0, tw + 4, font_h);
+            gdi_fg(black);
+            if (n)
+                GrText(f, gc, 7, 0, txt, n, GR_TFASCII | GR_TFTOP);
+            break;
+        }
+        if (kind == BS_CHECKBOX || kind == BS_AUTOCHECKBOX || kind == BS_RADIOBUTTON) {
+            y = (w->h - 9) / 2;
+            gdi_fill(f, white, 0, 0, w->w, w->h);
+            gdi_fg(black);
+            if (kind == BS_RADIOBUTTON) {
+                GrEllipse(f, gc, 5, y + 4, 4, 4);
+                if (w->checked)
+                    GrFillEllipse(f, gc, 5, y + 4, 2, 2);
+            } else {
+                GrRect(f, gc, 1, y, 9, 9);
+                if (w->checked) {
+                    GrLine(f, gc, 3, y + 4, 5, y + 6);
+                    GrLine(f, gc, 5, y + 6, 8, y + 2);
+                }
+            }
+            if (n)
+                GrText(f, gc, 13, (w->h - th) / 2, txt, n, GR_TFASCII | GR_TFTOP);
+            break;
+        }
         gdi_fill(f, gray, 0, 0, w->w, w->h);
         gdi_fg(black);
         GrRect(f, gc, 0, 0, w->w, w->h);
@@ -1589,13 +1950,16 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
     w->hinst = d->hinst;
     w->id = it->id;
     w->style = it->style;
-    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : CTL_OTHER;
+    w->ctl = it->cls == 0x80 ? CTL_BUTTON : it->cls == 0x82 ? CTL_STATIC : it->cls == 0x81 ? CTL_EDIT : it->cls == 0x83 ? CTL_LIST : CTL_OTHER;
     if (w->ctl == CTL_OTHER)
         wlog("w16: dialog control %u of class %s is not provided; drawn as an empty box\n", it->id,
              it->cls >= 0x80 && it->cls <= 0x85 ? names[it->cls - 0x80] : it->clsname);
-    if (w->ctl == CTL_BUTTON && (it->style & 0xF) > 1)
+    if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) > BS_RADIOBUTTON && BUTTON_TYPE(w) != BS_GROUPBOX)
         wlog("w16: button control %u style %lx drawn as a push button\n", it->id, (unsigned long)(it->style & 0xF));
     strncpy(w->title, text ? text : it->text, sizeof(w->title) - 1);
+    if(w->ctl==CTL_LIST){w->list=calloc(1,sizeof(*w->list));if(!w->list){w->used=0;return 0;}w->list->selected=-1;}
+    w->edit_limit=sizeof(w->title)-1;
+    w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
     w->x = DX(it->x); w->y = DY(it->y); w->w = DX(it->cx); w->h = DY(it->cy);
     if (w->w < 1) w->w = 1;
     if (w->h < 1) w->h = 1;
@@ -1638,7 +2002,7 @@ static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
     int i;
     for (i = 0; i < MAXWIN; i++) {
         const char *a;
-        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || wins[i].parent != d->hwnd || !wins[i].visible)
+        if (!wins[i].used || wins[i].ctl != CTL_BUTTON || BUTTON_TYPE(&wins[i]) == BS_GROUPBOX || wins[i].parent != d->hwnd || !wins[i].visible || (wins[i].style & WS_DISABLED))
             continue;
         for (a = wins[i].title; (a = strchr(a, '&')) != 0 && a[1] == '&'; a += 2)
             ;
@@ -1651,6 +2015,8 @@ static struct wnd *mnemonic_button(struct wnd *d, u16 vk)
 static void dlg_command(struct wnd *d, u16 id)
 {
     struct wnd *c = find_ctl(d->hwnd, id);
+    if (c && (c->style & WS_DISABLED))
+        return;
     vlog("w16: dialog command %u\n", id);
     if (!d->procoff && !d->procseg) {           /* message box: its buttons end it */
         if (id == IDCANCEL && !c) {             /* Esc without a Cancel button works only with one button */
@@ -1668,6 +2034,49 @@ static void dlg_command(struct wnd *d, u16 id)
         return;
     }
     win_send(d, WM_COMMAND, id, ((u32)BN_CLICKED << 16) | (c ? c->hwnd : 0));
+}
+
+/* Single-line EDIT semantics for filename entry. Offsets remain inside the
+ * fixed control-owned string and all far destination writes are bounded. */
+static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
+{
+    u16 len=(u16)strlen(w->title),a,b,n,off=(u16)lp,seg=(u16)(lp>>16);
+    if(w->ctl==CTL_LIST)return list_message(w,msg,wp,lp);
+    if(msg==0x000e) return len; /* WM_GETTEXTLENGTH */
+    if(msg==0x000d){ /* WM_GETTEXT */
+        if(!wp || (!off&&!seg) || (u32)off+wp>65536UL || ((u32)seg<<4)+off+wp>0x100000UL)return 0;
+        n=len;if(n>=wp)n=wp-1;fcopy_out(seg,off,w->title,n);wr8(seg,off+n,0);return n;
+    }
+    if(msg==0x000c){ /* WM_SETTEXT */
+        if(!seg || (u32)off+sizeof(w->title)>65536UL || ((u32)seg<<4)+off+sizeof(w->title)>0x100000UL)return 0;
+        fstrncpy_in(w->title,seg,off,sizeof(w->title));w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
+        if(w->visible)paint_control(w);
+        return 1;
+    }
+    if(w->ctl!=CTL_EDIT)return 0;
+    if(msg==0x0400)return (u16)w->edit_anchor|((u32)w->edit_cursor<<16); /* EM_GETSEL */
+    if(msg==0x0401){a=(u16)lp;b=(u16)(lp>>16); /* EM_SETSEL */
+        if(a==0xffff)a=b=w->edit_cursor;
+        w->edit_anchor=a>len?len:a;w->edit_cursor=b>len?len:b;return 0;}
+    if(msg==0x0415){w->edit_limit=wp&&wp<sizeof(w->title)?wp:sizeof(w->title)-1;return 0;}
+    if(msg==WM_KEYDOWN){
+        if(wp==0x24)w->edit_cursor=0;
+        else if(wp==0x23)w->edit_cursor=len;
+        else if(wp==0x25&&w->edit_cursor)w->edit_cursor--;
+        else if(wp==0x27&&w->edit_cursor<len)w->edit_cursor++;
+        else if(wp==0x2e){if(w->edit_anchor==w->edit_cursor){if(w->edit_cursor==len)return 0;w->edit_cursor++;}msg=WM_CHAR;wp=8;}
+        else return 0;
+        if(msg==WM_KEYDOWN){if(!(key_mods&MWKMOD_SHIFT))w->edit_anchor=w->edit_cursor;paint_control(w);return 1;}
+    }
+    if(msg!=WM_CHAR || (wp!=8 && (wp<32||wp>255)))return 0;
+    a=w->edit_anchor;b=w->edit_cursor;if(a>b){n=a;a=b;b=n;}
+    if(wp==8&&a==b&&a)a--;
+    if(a==b&&wp!=8&&len>=w->edit_limit)return 0;
+    memmove(w->title+a,w->title+b,len-b+1);len-=b-a;
+    if(wp!=8){memmove(w->title+a+1,w->title+a,len-a+1);w->title[a++]=(char)wp;}
+    w->edit_anchor=w->edit_cursor=a;paint_control(w);
+    {struct wnd *d=win_get(w->parent);if(d)win_send(d,WM_COMMAND,w->id,((u32)0x0300<<16)|w->hwnd);}
+    return 1;
 }
 
 static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int pixels, const char *text0);
@@ -1773,7 +2182,15 @@ u32 u_MessageBox(u16 ss, u16 ap)
     else
         strcpy(caption, "Error");
     fstrncpy_in(text, AW(8), AW(6), sizeof(text));
+    vlog("w16: MessageBox caption=\"%s\" text=\"%s\" type=%04x\n",caption,text,AW(0));
     return message_box(text, caption, AW(0));
+}
+
+static int dialog_slots_available(u16 controls)
+{
+    int i,free_slots=0;
+    for(i=0;i<MAXWIN;i++)if(!wins[i].used)free_slots++;
+    return controls<MAXWIN && free_slots>(int)controls;
 }
 
 /* Create the dialog in dtmpl (dialog units, or pixels), run its modal loop, return EndDialog's result.
@@ -1787,6 +2204,10 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     GR_SIZE tw, th, tb;
     u32 r;
 
+    if(!dialog_slots_available(dtmpl.nitems)){
+        wlog("w16: not enough window slots for complete dialog (%u controls)\n",dtmpl.nitems);
+        return 0xffff;
+    }
     /* dialog units: base units from the Nano-X system font, shrunk if the dialog would not fit */
     gdi_text_size("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, &tw, &th, &tb);
     dbx_num = tw; dbx_den = 52 * 4; dby_num = font_h; dby_den = 8;
@@ -1832,16 +2253,21 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
         if (w->ctl == CTL_BUTTON && (it->style & 0xF) == 1)
             d->defid = it->id;
     }
+    if(k!=dtmpl.nitems){
+        GrDestroyWindow(d->frame);free_controls(d->hwnd);d->used=0;
+        wlog("w16: failed to create every dialog control\n");return 0xffff;
+    }
     vlog("w16: DialogBox \"%s\": %u controls, %dx%d at %d,%d, default button %u\n", name, dtmpl.nitems,
          W, H, x, y, d->defid);
 
     r = win_send(d, WM_INITDIALOG, hfocus, 0);
-    (void)r;
+    if(r && hfocus) focus_hwnd=hfocus;
     prev_modal = modal_hwnd;
     modal_hwnd = d->hwnd;
     GrMapWindow(d->client);
     GrMapWindow(d->frame);
-    GrSetFocus(d->client);
+    w=win_get(focus_hwnd);
+    GrSetFocus(w&&w->parent==d->hwnd?w->frame:d->client);
     d->visible = 1;
 
     while (!d->ended) {
@@ -1861,14 +2287,31 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
         if (w == d || (w->ctl && w->parent == d->hwnd)) {
             switch (m.msg) {
             case WM_KEYDOWN:                    /* the dialog manager's keyboard interface */
+                if(m.wp==9){
+                    u16 start=focus_hwnd?((focus_hwnd-HWND_BASE)/4):0,j;
+                    for(j=1;j<=MAXWIN;j++){struct wnd *c=&wins[(start+((key_mods&MWKMOD_SHIFT)?MAXWIN-j:j))%MAXWIN];
+                        if(c->used&&c->parent==d->hwnd&&c->visible&&(c->style&WS_TABSTOP)&&!(c->style&WS_DISABLED)){
+                            focus_hwnd=c->hwnd;GrSetFocus(c->frame);paint_control(c);break;}}
+                    break;
+                }
+                {struct wnd *e=win_get(focus_hwnd);
+                 if(e&&e->parent==d->hwnd&&e->ctl==CTL_LIST&&m.wp!=13&&m.wp!=27&&!(key_mods&MWKMOD_ALT)){control_message(e,WM_KEYDOWN,m.wp,0);break;}
+                 if(e&&e->parent==d->hwnd&&e->ctl==CTL_EDIT&&m.wp!=13&&m.wp!=27&&!(key_mods&MWKMOD_ALT)){
+                    if(m.ch)control_message(e,WM_CHAR,m.ch,0);else control_message(e,WM_KEYDOWN,m.wp,0);break;}}
+
                 if (m.wp == 0x0D)
                     dlg_command(d, d->defid);
                 else if (m.wp == 0x1B)
                     dlg_command(d, IDCANCEL);
-                else if ((w = mnemonic_button(d, m.wp)) != 0)    /* a button's underlined letter */
+                else if ((w = mnemonic_button(d, m.wp)) != 0) {  /* a button's underlined letter */
+                    toggle_button(w);
+                    paint_control(w);
                     dlg_command(d, w->id);
+                }
                 break;
             case WM_CHAR:
+                {struct wnd *e=win_get(focus_hwnd);if(e&&e->parent==d->hwnd)control_message(e,WM_CHAR,m.wp,0);}
+                break;
             case WM_KEYUP:
                 break;
             case WM_COMMAND:                    /* a button: through dlg_command, which also ends message boxes */
@@ -1935,6 +2378,77 @@ u32 u_EndDialog(u16 ss, u16 ap)
     return 1;
 }
 
+/* EnableWindow(hWnd, enable) returns whether the window was disabled. */
+u32 u_EnableWindow(u16 ss, u16 ap)
+{
+    struct wnd *w = win_get(AW(2));
+    int enable = AW(0) != 0;
+    int was_disabled;
+    if (!w)
+        return 0;
+    was_disabled = (w->style & WS_DISABLED) != 0;
+    if (was_disabled == !enable)
+        return was_disabled;
+    if (enable)
+        w->style &= ~WS_DISABLED;
+    else {
+        w->style |= WS_DISABLED;
+        w->pressed = 0;
+        if (capture_hwnd == w->hwnd)
+            capture_hwnd = 0;
+    }
+    if (w->ctl) {
+        if (w->visible)
+            paint_control(w);
+    } else {
+        win_send(w, WM_ENABLE, enable, 0);
+    }
+    return was_disabled;
+}
+
+/* CheckDlgButton(hDlg, id, check) and IsDlgButtonChecked(hDlg, id). */
+static void set_button_check(struct wnd *c, u8 check)
+{
+    if (c->checked != check) {
+        c->checked = check;
+        if (c->visible)
+            paint_control(c);
+    }
+}
+
+u32 u_CheckDlgButton(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(4), AW(2));
+    if (!c || c->ctl != CTL_BUTTON || AW(0) > 1)
+        return 0;
+    set_button_check(c, (u8)AW(0));
+    return 1;
+}
+
+u32 u_IsDlgButtonChecked(u16 ss, u16 ap)
+{
+    struct wnd *c = find_ctl(AW(2), AW(0));
+    return c && c->ctl == CTL_BUTTON ? c->checked : 0;
+}
+
+/* CheckRadioButton(hDlg, first, last, selected): other groups are untouched. */
+u32 u_CheckRadioButton(u16 ss, u16 ap)
+{
+    u16 dlg = AW(6), first = AW(4), last = AW(2), selected = AW(0);
+    struct wnd *c = find_ctl(dlg, selected);
+    int i;
+    if (first > last || selected < first || selected > last ||
+        !c || c->ctl != CTL_BUTTON || BUTTON_TYPE(c) != BS_RADIOBUTTON)
+        return 0;
+    for (i = 0; i < MAXWIN; i++) {
+        struct wnd *w = &wins[i];
+        if (w->used && w->parent == dlg && w->ctl == CTL_BUTTON &&
+            BUTTON_TYPE(w) == BS_RADIOBUTTON && w->id >= first && w->id <= last)
+            set_button_check(w, w == c);
+    }
+    return 1;
+}
+
 /* SetDlgItemText(hDlg, nIDDlgItem, lpString) */
 u32 u_SetDlgItemText(u16 ss, u16 ap)
 {
@@ -1945,6 +2459,7 @@ u32 u_SetDlgItemText(u16 ss, u16 ap)
         return 0;
     }
     fstrncpy_in(c->title, seg, off, sizeof(c->title));
+    c->edit_cursor=c->edit_anchor=(u8)strlen(c->title);
     vlog("w16: SetDlgItemText(%u, \"%s\")\n", id, c->title);
     if (c->visible)
         paint_control(c);
@@ -2127,4 +2642,90 @@ void user_shutdown(void)
         vlog("w16: destroyed %d window(s) the program left open\n", n);
     gdi_shutdown();
     GrClose();
+}
+
+/* GetDlgItemText(hDlg,id,out,max) and SendDlgItemMessage(hDlg,id,msg,wp,lp). */
+u32 u_GetDlgItemText(u16 ss,u16 ap)
+{
+    struct wnd *c=find_ctl(AW(8),AW(6));
+    return c?control_message(c,0x000d,AW(0),((u32)AW(4)<<16)|AW(2)):0;
+}
+u32 u_SendDlgItemMessage(u16 ss,u16 ap)
+{
+    struct wnd *c=find_ctl(AW(10),AW(8));
+    return c?control_message(c,AW(6),AW(4),AL(0)):0;
+}
+
+/* File-dialog list support uses the same confined DOS cwd as OpenFile. */
+static int list_directory(struct wnd *w,char *spec,u16 flags,int change)
+{
+    char dir[124],pattern[124],path[124];char *p,*last=0;
+    for(p=spec;*p;p++)if(*p=='/'||*p=='\\'||*p==':')last=p;
+    if(last){strcpy(pattern,last+1);p=last+1;*p=0;strcpy(dir,spec);}
+    else {strcpy(pattern,spec);dir[0]=0;}
+    if(!pattern[0])strcpy(pattern,"*.*");
+    if(files_directory(dir,path,change))return -1;
+    strcpy(spec,pattern);
+    if((flags&0x10)&&strcmp(path,".")&&filelist_add(w->list,"[..]",1)<0)return -2;
+    if((flags&0x4000)&&filelist_add(w->list,"[-c-]",1)<0)return -2;
+    return filelist_scan(w->list,path,pattern,flags);
+}
+static u32 list_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
+{
+    struct filelist *l=w->list;u16 seg=lp>>16,off=lp,n;char text[124];int i;
+    if(!l)return 0xffff;
+    switch(msg){
+    case 0x405:filelist_clear(l);paint_control(w);return 0;
+    case 0x40c:return l->count;
+    case 0x409:return (u16)l->selected;
+    case 0x407:
+        l->selected=wp<l->count?(i16)wp:-1;
+        if(l->selected>=0)l->top=wp;
+        paint_control(w);return (u16)l->selected;
+    case 0x40b:return wp<l->count?strlen(l->text[wp]):0xffff;
+    case 0x40a:
+        if(wp>=l->count)return 0xffff;
+        n=strlen(l->text[wp]);
+        if((!seg&&!off)||(u32)off+n+1>65536UL||((u32)seg<<4)+off+n+1>0x100000UL)return 0xffff;
+        fcopy_out(seg,off,l->text[wp],n+1);return n;
+    case 0x401:case 0x40e:
+        if(!seg||(u32)off+sizeof(text)>65536UL||((u32)seg<<4)+off+sizeof(text)>0x100000UL)return 0xffff;
+        fstrncpy_in(text,seg,off,sizeof(text));
+        i=msg==0x401?filelist_add(l,text,(w->style&2)!=0):list_directory(w,text,wp,0);
+        paint_control(w);return (u16)i;
+    case WM_KEYDOWN:
+        i=l->selected;
+        if(wp==0x26&&i>0)i--;else if(wp==0x28&&i+1<l->count)i++;
+        else if(wp==0x24&&l->count)i=0;else if(wp==0x23&&l->count)i=l->count-1;else return 0;
+        l->selected=i;
+        if(i<l->top)l->top=i;
+        if(i>=l->top+(w->h-4)/12)l->top=i-(w->h-4)/12+1;
+        paint_control(w);
+        {struct wnd *d=win_get(w->parent);if(d)win_send(d,WM_COMMAND,w->id,((u32)1<<16)|w->hwnd);}
+        return 1;
+    }
+    return 0;
+}
+u32 u_DlgDirList(u16 ss,u16 ap)
+{
+    u16 flags=AW(0),label=AW(2),id=AW(4),off=AW(6),seg=AW(8),dlg=AW(10);
+    struct wnd *w=find_ctl(dlg,id),*t=find_ctl(dlg,label);char spec[124],path[128];
+    if(!w||!w->list||!seg||(u32)off+sizeof(spec)>65536UL||((u32)seg<<4)+off+sizeof(spec)>0x100000UL)return 0;
+    fstrncpy_in(spec,seg,off,sizeof(spec));filelist_clear(w->list);
+    if(list_directory(w,spec,flags,1)<0){filelist_clear(w->list);paint_control(w);return 0;}
+    fcopy_out(seg,off,spec,strlen(spec)+1);paint_control(w);
+    if(t){files_directory_label(path);strncpy(t->title,path,sizeof(t->title)-1);t->title[sizeof(t->title)-1]=0;paint_control(t);}
+    return 1;
+}
+u32 u_DlgDirSelect(u16 ss,u16 ap)
+{
+    u16 id=AW(0),off=AW(2),seg=AW(4),dlg=AW(6),n,dir=0;char text[128];
+    struct wnd *w=find_ctl(dlg,id);const char *s;
+    if(!w||!w->list||w->list->selected<0)return 0;
+    s=w->list->text[w->list->selected];n=strlen(s);
+    if(!strcmp(s,"[-c-]")){strcpy(text,"C:\\");n=3;dir=1;}
+    else if(n>1&&s[0]=='['&&s[n-1]==']'){memcpy(text,s+1,n-2);text[n-2]='\\';text[n-1]=0;n--;dir=1;}
+    else memcpy(text,s,n+1);
+    if((!seg&&!off)||(u32)off+n+1>65536UL||((u32)seg<<4)+off+n+1>0x100000UL)return 0;
+    fcopy_out(seg,off,text,n+1);return dir;
 }

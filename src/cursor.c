@@ -74,6 +74,15 @@ static void cur_apply(void)
         }
 }
 
+/* A class cursor belongs to that window (including registered children).
+ * A NULL class cursor falls back to its parent/default Nano-X cursor. */
+void cursor_class(GR_WINDOW_ID frame,GR_WINDOW_ID client,u16 h)
+{
+    GR_CURSOR_ID id=cur_id(h);
+    GrSetWindowCursor(frame,id);
+    GrSetWindowCursor(client,id);
+}
+
 /* a new top-level window takes the current cursor */
 void cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client)
 {
@@ -168,14 +177,6 @@ u32 u_ShowCursor(u16 ss, u16 ap)
     cur_show += AW(0) ? 1 : -1;
     cur_apply();
     return (u16)cur_show;
-}
-
-/* SetCursorPos(X, Y) */
-u32 u_SetCursorPos(u16 ss, u16 ap)
-{
-    vlog("w16: SetCursorPos(%d,%d)\n", (i16)AW(2), (i16)AW(0));
-    GrMoveCursor((i16)AW(2), (i16)AW(0));
-    return 1;
 }
 
 void cursor_census(u16 *n)

@@ -28,7 +28,7 @@ typedef short          i16;
 typedef long           i32;
 #endif
 
-#define MAXSEG   32          /* NE segments per module */
+#define MAXSEG   254         /* NE entry bundles reserve segment 0xff for movable entries */
 #define MAXMOD   8           /* imported module names */
 
 /* ---------------------------------------------------------------- far memory */
@@ -68,6 +68,17 @@ extern u8 w16_scratch[W16_SCRATCH];
 int  seg_alloc(u16 paras, u16 *seg);
 void seg_free(u16 seg);
 
+/* DOS directory helpers: outputs need 124 bytes, except label needs 128. */
+int files_directory(const char *input,char *out,int change);
+void files_directory_label(char *out);
+u16 files_getcwd(u16 drive,u16 seg,u16 off);
+
+int palette_valid(u16 h);
+int palette_delete(u16 h);
+void palette_shutdown(void);
+int palette_entry(u16 h,u16 index,u8 *out);
+u16 palette_nearest(u16 h,u32 rgb,const u32 *device,u16 count);
+
 /* ---------------------------------------------------------------- logging */
 extern int opt_verbose, opt_trace, opt_debugport;
 void wlog(const char *fmt, ...);        /* stderr (and port 0xE9 with -e) */
@@ -85,16 +96,21 @@ struct ne_seg {
 };
 
 struct ne_module {
+    u32 discard_notify; /* registered far callback; no task-driven discard/compaction yet */
     const char *path;
     int  fd;
     u32  ne_off;        /* file offset of the NE header */
     u32  filesize;
+    u32  nonres_off;
+    u16  nonres_len;
+    u8   library, loaded;
+    struct ne_module *dependencies[MAXMOD]; /* borrowed; caller owns their lifetime */
     /* header fields */
     u16  ent_off, ent_len, flags, autodata, heap, stack, ip, cs, sp, ss;
     u16  nseg, nmod, segtab_off, rsrc_off, resn_off, modref_off, impn_off;
     u16  nmov, align, nres, expver;
     u8   target_os, flags2;
-    struct ne_seg seg[MAXSEG];
+    struct ne_seg *seg;         /* allocated for this image, zeroed for partial-load cleanup */
     char modname[MAXMOD][9];
     int  modid[MAXMOD];         /* index into the provided-module table, -1 if unknown */
     u8  *enttab;                /* copy of the entry table */
@@ -107,6 +123,7 @@ struct ne_module {
     u16  dgroup_size;           /* bytes, including stack and local heap */
     u16  init_sp;
     u16  heap_start;
+    u16  local_start, local_end;
     u16  psp, envseg;
     u16  nreloc, nimport, npatched;
     u32  total_bytes;           /* all memory allocated for the module */
@@ -124,6 +141,10 @@ enum {
 };
 
 int  ne_open(struct ne_module *m, const char *path);   /* read and validate headers */
+int  ne_reserve_library_heap(struct ne_module *m, u16 bytes); /* before any load */
+int  ne_open_library(struct ne_module *m, const char *path); /* single-data DLL, not initialized */
+int  ne_bind_library(struct ne_module *m, u16 import_index, struct ne_module *dll);
+int  ne_export(struct ne_module *m, const char *name, u16 ordinal, u16 *seg, u16 *off);
 int  ne_check_imports(struct ne_module *m);            /* every import provided? */
 int  ne_load(struct ne_module *m);                     /* allocate, read, relocate */
 void ne_free(struct ne_module *m);
@@ -167,6 +188,7 @@ struct dlg_tmpl {
 int  dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t);   /* 0 ok, -1 malformed or too many items */
 
 /* menu templates (Windows 3.x MENUITEMTEMPLATE) */
+#define DESKTOP_HWND 1
 #define MF_GRAYED     0x0001
 #define MF_DISABLED   0x0002
 #define MF_CHECKED    0x0008
@@ -174,13 +196,14 @@ int  dlg_parse(const u8 *d, u16 len, struct dlg_tmpl *t);   /* 0 ok, -1 malforme
 #define MF_END        0x0080
 #define MF_BYPOSITION 0x0400
 #define MF_SEPARATOR  0x0800
-#define MENU_MAXITEMS 24
+#define MENU_MAXITEMS 128
 struct menu_item {
     u16  flags, id;
     u8   parent;                /* index of the popup item it belongs to, 0xFF on the menu bar */
     char text[28];
 };
 struct menu_tmpl { u8 n; struct menu_item it[MENU_MAXITEMS]; };
+int menu_parse_into(const u8 *d,u16 len,struct menu_item *items,u16 capacity,u8 *count);
 int  menu_parse(const u8 *d, u16 len, struct menu_tmpl *t);  /* 0 ok, -1 malformed or too many items */
 
 /* ---------------------------------------------------------------- WIN.INI (profile.c, portable) */
@@ -192,7 +215,8 @@ int  prof_put(const char *path, const char *app, const char *key, const char *va
 #define MOD_KERNEL 0
 #define MOD_USER   1
 #define MOD_GDI    2
-#define NMODS      3
+#define MOD_PBRUSH 3       /* diagnostic-only table; no DLL loading implied */
+#define NMODS      4
 extern const char *const w16_modnames[NMODS];
 
 #define API_MISSING 0x08   /* diagnostic trap, disabled by default */
@@ -219,15 +243,21 @@ int  api_find_name(int mod, const char *name);
 const char *api_known_name(int mod, u16 ord);     /* diagnostic names of unimplemented entries */
 int  api_target(int idx, u16 *seg, u16 *off);     /* far address an import binds to */
 
+int ic_handle(u16 h,int release);
+u32 enum_palette_objects(u16 kind,u16 proc_off,u16 proc_seg,u32 data,
+                         const u32 *colors,u16 count);
+
 /* ---------------------------------------------------------------- runtime (ELKS) */
 #ifndef W16_HOST
 /* medium model: a function's address is a far pointer; these take it apart */
 #define FOFF(f) ((u16)(u32)(f))
 #define FSEG(f) ((u16)((u32)(f) >> 16))
 #endif
+u32 enum_system_font(u16,u16,u16,u16,u32,u16,u16,u16,u16);
 extern struct ne_module *w16_mod;
 extern u16 w16_app_ss, w16_app_sp, w16_ldr_sp;
 extern u16 w16_ret_bx, w16_ret_cx, w16_ret_es;
+u16  w16_init16(const u16 *regs); /* far-call DLL initializer; traps unwind here */
 u32  w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words);
 void w16_exit16(u16 code);                  /* terminate the app, unwind to w16_run() */
 u16  w16_get_cs(void);
@@ -252,5 +282,16 @@ extern u16 w16_exit_code;
 int  w16_dump_frame(const char *tag);       /* frame buffer dump with -d */
 extern char opt_dump[40];
 extern int  opt_ready;
+
+/* global.c: single-segment task-owned global memory */
+int global_pointer(u16 h,u32 *ptr);
+u32 global_unlock(u16 h);
+u32 global_size(u16 h);
+void global_shutdown(void);
+int global_clipboard_take(u16 h);
+void global_clipboard_release(u16 h);
+void clipboard_shutdown(void);
+void files_shutdown(void);
+u16 files_unlink(u16 seg,u16 off);
 
 #endif

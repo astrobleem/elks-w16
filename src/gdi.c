@@ -28,6 +28,9 @@ static struct { u8 used, w, h; u16 rows[16]; } bmps[MAXBMP];      /* monochrome 
 static struct gobj stock[NSTOCK];
 static struct gobj objs[MAXOBJ];
 static struct dc dcs[MAXDC];
+#define DC_SAVE_DEPTH 4
+static struct dc dc_saved[MAXDC][DC_SAVE_DEPTH];
+static u8 dc_saved_count[MAXDC];
 GR_GC_ID gdi_gc;
 
 #define PS_NULL 5
@@ -167,6 +170,7 @@ int gdi_init(void)
     stock[8].type = OBJ_PEN; stock[8].null = 1; stock[8].used = 1;             /* NULL_PEN */
     for (i = 10; i <= 16; i++)              /* fonts: all map to the Nano-X system font */
         if (i != 15) { stock[i].type = OBJ_FONT; stock[i].used = 1; }
+    stock[15].type=5;stock[15].used=1; /* DEFAULT_PALETTE */
     gdi_gc = GrNewGC();
     memset(gcs, 0, sizeof(gcs));
     gcs[MAXDC].gc = gdi_gc;
@@ -228,8 +232,10 @@ void gdi_shutdown(void)
 {
     int i;
     bitmap_shutdown();
+    palette_shutdown();
     for (i = 0; i < MAXDC; i++) {
         dcs[i].used = 0;
+        dc_saved_count[i] = 0;
         if (gcs[i].gc)
             GrDestroyGC(gcs[i].gc);
         gcs[i].gc = 0;
@@ -258,6 +264,7 @@ u16 dc_create(struct wnd *w, int paint)
         return 0;
     }
     d = &dcs[i];
+    dc_saved_count[i] = 0;
     memset(d, 0, sizeof(*d));
     d->used = 1; d->paint = paint; d->hdc = HDC_BASE + 2 * i; d->w = w;
     d->wid = w ? w->client : GR_ROOT_WINDOW_ID;    /* no window: the whole screen */
@@ -267,8 +274,11 @@ u16 dc_create(struct wnd *w, int paint)
     }
     d->gc = gcs[i].gc;
     d->rop2 = R2_COPYPEN;
+    d->stretchmode = 1;
+    gdi_map_init(d);
     d->pen = HSTOCK + 2 * 7;        /* BLACK_PEN */
     d->brush = HSTOCK + 2 * 0;      /* WHITE_BRUSH */
+    d->palette=HSTOCK+2*15;
     d->font = HSTOCK + 2 * 13;      /* SYSTEM_FONT */
     d->textcolor = 0; d->bkcolor = 0xFFFFFFul; d->bkmode = OPAQUE;
     return d->hdc;
@@ -283,7 +293,41 @@ void dc_release(u16 hdc)
         GrDestroyGC(d->gc);
         GS(d)->gc = 0;
     }
+    dc_saved_count[(hdc-HDC_BASE)>>1] = 0;
     d->used = 0;
+}
+
+/* Saved selections remain live references even after the live DC changes.
+ * ReleaseDC/DeleteDC drops all saves before a numeric handle can be reused. */
+static int saved_object(u16 h)
+{
+    int i,j;
+    for(i=0;i<MAXDC;i++)for(j=0;j<dc_saved_count[i];j++)
+        if(dc_saved[i][j].pen==h||dc_saved[i][j].brush==h||dc_saved[i][j].font==h||dc_saved[i][j].palette==h)return 1;
+    return 0;
+}
+u32 g_SaveDC(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(0));int i,n;
+    if(!d)return bitmap_savedc(AW(0));
+    i=(AW(0)-HDC_BASE)>>1;n=dc_saved_count[i];
+    if(n==DC_SAVE_DEPTH)return 0;
+    dc_saved[i][n]=*d;dc_saved_count[i]++;return n+1;
+}
+u32 g_RestoreDC(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(2));int i,n,target; i16 level=(i16)AW(0);
+    if(!d)return bitmap_restoredc(AW(2),level);
+    i=(AW(2)-HDC_BASE)>>1;n=dc_saved_count[i];
+    target=level<0?(long)n+level:(long)level-1;
+    if(!level||target<0||target>=n)return 0;
+    *d=dc_saved[i][target];dc_saved_count[i]=target;
+    GS(d)->known=0; /* force the next draw to reapply restored server state */
+    return 1;
+}
+u32 g_GetROP2(u16 ss,u16 ap)
+{
+    struct dc*d=dc_get(AW(0));return d?d->rop2:bitmap_rop2(AW(0),0);
 }
 
 /* ---------------------------------------------------------------- objects */
@@ -330,13 +374,24 @@ u32 g_DeleteObject(u16 ss, u16 ap)
     int bi = bmp_index(h);
     {int r=bitmap_delete(h);if(r>=0)return r;}
     if (bi >= 0) {
+        /* Pattern brushes currently retain their source rows rather than a
+         * private copy. Do not let a saved brush observe a recycled bitmap. */
+        for(i=0;i<MAXOBJ;i++)
+            if(objs[i].used&&objs[i].type==OBJ_BRUSH&&objs[i].style==BS_PATTERN&&objs[i].width==bi)return 0;
         bmps[bi].used = 0;
         return 1;
+    }
+    if(palette_valid(h)){
+        if(h==HSTOCK+2*15)return 1;
+        if(saved_object(h)||bitmap_object_used(h))return 0;
+        for(i=0;i<MAXDC;i++)if(dcs[i].used&&dcs[i].palette==h)return 0;
+        return palette_delete(h);
     }
     if (!o)
         return 0;
     if (h < HOBJ_BASE)
         return 1;                       /* stock objects are never deleted */
+    if(saved_object(h)||bitmap_object_used(h))return 0;
     for (i = 0; i < MAXDC; i++)
         if (dcs[i].used && (dcs[i].pen == h || dcs[i].brush == h || dcs[i].font == h)) {
             vlog("w16: DeleteObject %04x refused: still selected\n", h);
@@ -352,7 +407,7 @@ u32 g_SelectObject(u16 ss, u16 ap)
     u16 h = AW(0), prev;
     struct dc *d = dc_get(AW(2));
     struct gobj *o = obj_get(h);
-    if (!d) return bitmap_select(AW(2),h);
+    if (!d) return o?bitmap_object(AW(2),o->type,h):bitmap_select(AW(2),h);
     if (!o) return 0;
     switch (o->type) {
     case OBJ_PEN:   prev = d->pen;   d->pen = h;   return prev;
@@ -370,6 +425,12 @@ u32 g_SetTextColor(u16 ss, u16 ap)
     if (!d) return bitmap_setcolor(AW(4),AL(0),0);
     prev = d->textcolor; d->textcolor = AL(0) & 0xFFFFFFul;
     return prev;
+}
+
+u32 g_GetBkColor(u16 ss,u16 ap)
+{
+    struct dc *d=dc_get(AW(0));
+    return d?d->bkcolor:bitmap_getcolor(AW(0),1);
 }
 
 u32 g_SetBkColor(u16 ss, u16 ap)
@@ -416,20 +477,25 @@ static int brush_pat(struct dc *d)
 }
 
 /* Monochrome pattern phase is relative to the DC brush origin. Scratch holds
- * sixteen 640-pixel rows; unsupported larger extents fail before drawing. */
+ * bounded rows; each packet leaves room for the Nano-X request header. */
 static int pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
 {
     GR_BITMAP *buf = (GR_BITMAP *)w16_scratch;      /* at most1280 bytes */
-    int wpr, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
+    int wpr, batch, r, k, y0, bw = bmps[bi].w, bh = bmps[bi].h, same = 16 % bw == 0;
     if (w <= 0 || h <= 0)return 1;
     if (w>640||h>480||(long)x+w-1>32767L||(long)y+h-1>32767L)return 0;
     wpr = (w + 15) / 16;
+    /* ELKS Nano-X accepts 512-byte requests, including the 16-byte header.
+     * Its legacy GrBitmap splitter only checks payload size. Keep 32 bytes
+     * spare here so neither exact-512 payloads nor full-width rows kill it. */
+    batch = 480 / (2 * wpr);
+    if (batch > 16) batch = 16;
     gs_mode(GS(d), GR_MODE_COPY);
     gs_fg(GS(d), rgb_to_gr(d->bkcolor));
     gs_bg(GS(d), rgb_to_gr(d->textcolor));
     gs_usebg(GS(d), 1);
-    for (y0 = 0; y0 < h; y0 += 16) {
-        int rows = h - y0 > 16 ? 16 : h - y0;
+    for (y0 = 0; y0 < h; y0 += batch) {
+        int rows = h - y0 > batch ? batch : h - y0;
         for (r = 0; r < rows; r++) {
             u16 pr = bmps[bi].rows[(((long)y + y0 + r - d->brushy) % bh + bh) % bh], word = 0;
             for (k = 0; k < wpr; k++) {
@@ -481,7 +547,7 @@ u32 g_SetROP2(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(2));
     u16 prev, r = AW(0);
     if (!d)
-        return 0;
+        return bitmap_rop2(AW(2),r);
     prev = d->rop2;
     if (r >= 1 && r <= 16)
         d->rop2 = (u8)r;
@@ -495,7 +561,12 @@ u32 g_Rectangle(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(8));
     GR_COLOR pc, bc;
     int pen, bi;
-    if (!d || r <= l || b <= t)
+    if(!d){
+        struct gobj*p=obj_get(bitmap_object(AW(8),OBJ_PEN,0)),*br=obj_get(bitmap_object(AW(8),OBJ_BRUSH,0));
+        if(!p||!br)return 0;
+        return bitmap_rectangle(AW(8),l,t,r,b,p->color,p->style,p->width,p->null,br->color,br->style,br->null);
+    }
+    if (!d || !gdi_map_rect(d,&l,&t,&r,&b) || r <= l || b <= t)
         return 0;
     pen = pen_of(d, &pc);
     if ((bi = brush_pat(d)) >= 0) {             /* pattern brush inside the outline */
@@ -525,10 +596,10 @@ u32 g_Ellipse(u16 ss, u16 ap)
 {
     int b = (i16)AW(0), r = (i16)AW(2), t = (i16)AW(4), l = (i16)AW(6);
     struct dc *d = dc_get(AW(8));
-    int rx = (r - l - 1) / 2, ry = (b - t - 1) / 2;
+    int rx,ry;
     GR_COLOR c;
-    if (!d || rx < 0 || ry < 0)
-        return 0;
+    if(!d || !gdi_map_rect(d,&l,&t,&r,&b) || r<=l || b<=t)return 0;
+    rx=(r-l-1)/2;ry=(b-t-1)/2;
     if (brush_of(d, &c) && set_rop(d, c))
         GrFillEllipse(d->wid, d->gc, l + rx, t + ry, rx, ry);
     if (pen_of(d, &c) && set_rop(d, c))
@@ -542,7 +613,7 @@ u32 g_MoveTo(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(4));
     u32 prev;
     if (!d)
-        return 0;
+        return bitmap_moveto(AW(4),(i16)AW(2),(i16)AW(0));
     prev = ((u32)(u16)d->cury << 16) | (u16)d->curx;
     d->curx = (i16)AW(2); d->cury = (i16)AW(0);
     return prev;
@@ -555,17 +626,42 @@ u32 g_MoveTo(u16 ss, u16 ap)
  * screen it is drawn again to undo it. In plain copy modes on a stock server it stays drawn. */
 u32 g_LineTo(u16 ss, u16 ap)
 {
-    int y = (i16)AW(0), x = (i16)AW(2), k;
-    struct dc *d = dc_get(AW(4));
-    GR_COLOR c;
-    if (!d)
-        return 0;
-    if ((x != d->curx || y != d->cury) && pen_of(d, &c) && (k = set_rop(d, c)) != 0) {
-        GrLine(d->wid, d->gc, d->curx, d->cury, x, y);
-        if (k == 2 && !srv_exclend)
-            GrPoint(d->wid, d->gc, x, y);
+    int y=(i16)AW(0),x=(i16)AW(2),tx=x,ty=y,fx,fy,k;
+    struct dc*d=dc_get(AW(4));GR_COLOR c;
+    if(!d){
+        struct gobj*p=obj_get(bitmap_object(AW(4),OBJ_PEN,0));if(!p)return 0;
+        return bitmap_lineto(AW(4),x,y,p->color,p->style,p->width,p->null);
     }
-    d->curx = x; d->cury = y;
+    fx=d->curx;fy=d->cury;
+    if(!gdi_map_point(d,&fx,&fy)||!gdi_map_point(d,&tx,&ty))return 0;
+    if((fx!=tx||fy!=ty)&&pen_of(d,&c)&&(k=set_rop(d,c))!=0){
+        GrLine(d->wid,d->gc,fx,fy,tx,ty);
+        if(k==2&&!srv_exclend)GrPoint(d->wid,d->gc,tx,ty);
+    }
+    d->curx=x;d->cury=y;return 1;
+}
+
+/* Display InvertRect: clip signed, exclusive Win16 bounds before computing
+ * dimensions so a far offscreen RECT cannot wrap in 16-bit arithmetic. */
+u32 u_InvertRect(u16 ss,u16 ap)
+{
+    struct dc *d; u16 off,seg; int l,t,r,b,width,height;
+    GR_SCREEN_INFO si;
+    if(ap>0xfffau) return 0;
+    off=AW(0);seg=AW(2);d=dc_get(AW(4));
+    if(!d || (!seg&&!off) || off>0xfff8u || ((u32)seg<<4)+off>0xffff8UL) return 0;
+    if(d->w){width=d->w->cw;height=d->w->ch;}
+    else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
+    l=(i16)rd16(seg,off);t=(i16)rd16(seg,off+2);
+    r=(i16)rd16(seg,off+4);b=(i16)rd16(seg,off+6);
+    if(l<0)l=0;
+    if(t<0)t=0;
+    if(r>width)r=width;
+    if(b>height)b=height;
+    if(r>l&&b>t){
+        gs_mode(GS(d),GR_MODE_INVERT); gs_fg(GS(d),GR_RGB(255,255,255));
+        GrFillRect(d->wid,d->gc,l,t,r-l,b-t);
+    }
     return 1;
 }
 
@@ -579,6 +675,7 @@ u32 u_FillRect(u16 ss, u16 ap)
     if (!d)
         return 0;
     l = (i16)rd16(seg, off); t = (i16)rd16(seg, off + 2); r = (i16)rd16(seg, off + 4); b = (i16)rd16(seg, off + 6);
+    if(!gdi_map_rect(d,&l,&t,&r,&b))return 0;
     c = brush_color(hbr, &isnull);
     if (isnull || r <= l || b <= t)
         return 1;
@@ -595,10 +692,10 @@ u32 g_CreateBitmap(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2), bpp = AW(4), planes = AW(6), h = AW(8), w = AW(10), y;
     int i;
-    if (planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
-        wlog("w16: CreateBitmap %ux%u, %u planes, %u bits: only monochrome bitmaps up to 16x16 are provided\n",
-             w, h, planes, bpp);
-        return 0;
+    /* The 1x1 mono placeholder is selected to detach a DDB before GetDIBits.
+     * Unlike legacy brush-row handles, owned bitmaps are real memory-DC objects. */
+    if ((w==1 && h==1) || planes != 1 || bpp != 1 || w < 1 || w > 16 || h < 1 || h > 16) {
+        return bitmap_create(w,h,planes,bpp,seg,off);
     }
     for (i = 0; i < MAXBMP && bmps[i].used; i++)
         ;
@@ -611,6 +708,28 @@ u32 g_CreateBitmap(u16 ss, u16 ap)
         bmps[i].rows[y] = (seg || off) ? (u16)((rd8(seg, (u16)(off + 2 * y)) << 8) | rd8(seg, (u16)(off + 2 * y + 1))) : 0;
     return (u16)(HBMP_BASE + 2 * i);
 }
+
+/* Get/SetBitmapBits(hBitmap,LONG count,far bits), including brush DDBs. */
+static u32 transfer_bitmap_bits(u16 ss,u16 ap,int set)
+{
+ int i=bmp_index(AW(8));u32 count=AL(4),at,size;u16 seg=AW(2),off=AW(0),row;u8 v;
+ if(i<0)return bitmap_bits(AW(8),count,seg,off,set);
+ if(count&0x80000000UL)return 0;
+ size=2*bmps[i].h;
+ if(!seg&&!off)return set?0:size;
+ if(count>size)count=size;
+ if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
+ for(at=0;at<count;at++){
+  row=at/2;
+  if(set){v=rd8(seg,(u16)(off+at));
+   if(at&1)bmps[i].rows[row]=(bmps[i].rows[row]&0xff00)|v;
+   else bmps[i].rows[row]=(bmps[i].rows[row]&0xff)|((u16)v<<8);
+  }else wr8(seg,(u16)(off+at),(u8)(bmps[i].rows[row]>>((at&1)?0:8)));
+ }
+ return count;
+}
+u32 g_GetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,0);}
+u32 g_SetBitmapBits(u16 ss,u16 ap){return transfer_bitmap_bits(ss,ap,1);}
 
 /* CreatePatternBrush(hBitmap) */
 u32 g_CreatePatternBrush(u16 ss, u16 ap)
@@ -628,8 +747,11 @@ u32 g_PatBlt(u16 ss, u16 ap)
     int h = (i16)AW(4), w = (i16)AW(6), y = (i16)AW(8), x = (i16)AW(10), bi;
     struct dc *d = dc_get(AW(12));
     GR_COLOR c;
-    if (!d)
-        return 0;
+    if (!d) {
+        struct gobj*o=obj_get(bitmap_object(AW(12),OBJ_BRUSH,0));
+        if(!o)return 0;
+        return bitmap_patblt(AW(12),x,y,w,h,rop,o->color,o->style,o->null);
+    }
     if (w < 0) { x += w; w = -w; }
     if (h < 0) { y += h; h = -h; }
     if (!w || !h)
@@ -776,6 +898,13 @@ u32 g_SetTextAlign(u16 ss, u16 ap)
     return prev;
 }
 
+/* EnumFonts(hdc,face,callback,lParam): only the actual system raster font. */
+u32 g_EnumFonts(u16 ss,u16 ap)
+{
+    if(!dc_get(AW(12))) return 0;
+    return enum_system_font(AW(8),AW(10),AW(4),AW(6),AL(0),fm_h,fm_asc,fm_avg,fm_max);
+}
+
 /* GetTextMetrics(hdc, lpMetrics): the Nano-X system font, whatever font is selected */
 u32 g_GetTextMetrics(u16 ss, u16 ap)
 {
@@ -868,7 +997,8 @@ u32 g_CreateDC(u16 ss, u16 ap)
 
 u32 g_DeleteDC(u16 ss, u16 ap)
 {
-    int r=bitmap_deletedc(AW(0));if(r>=0)return r;
+    int r=ic_handle(AW(0),1); if(r>=0)return r;
+    r=bitmap_deletedc(AW(0));if(r>=0)return r;
     if (!dc_get(AW(0)))
         return 0;
     dc_release(AW(0));
@@ -878,6 +1008,7 @@ u32 g_DeleteDC(u16 ss, u16 ap)
 /* Pixel dimensions come from the display. Other legacy Tandy caps are unchanged. */
 u32 g_GetDeviceCaps(u16 ss, u16 ap)
 {
+    if(ic_handle(AW(2),0)==0) return 0;
     switch (AW(0)) {
     case 0:  return 0x0300;     /* DRIVERVERSION */
     case 2:  return 1;          /* TECHNOLOGY: DT_RASDISPLAY */
@@ -1140,4 +1271,44 @@ u32 g_GetDCOrg(u16 ss,u16 ap)
 u32 g_PtVisible(u16 ss, u16 ap)
 {
     return g_GetPixel(ss, ap) != 0xffffffffUL;
+}
+
+/* EnumObjects(hDC, OBJ_PEN/OBJ_BRUSH, callback, callerData). Enumerate the
+ * actual sixteen physical colors advertised by our indexed display driver. */
+u32 g_EnumObjects(u16 ss,u16 ap)
+{
+    GR_PALETTE *p=(GR_PALETTE *)w16_scratch;
+    u32 colors[16]; u16 i,kind,hdc;
+    if(ap>0xfff4u) return 0;
+    kind=AW(8); hdc=AW(10);
+    if((kind!=OBJ_PEN && kind!=OBJ_BRUSH) || !dc_get(hdc)) return 0;
+    memset(p,0,sizeof(*p)); GrGetSystemPalette(p);
+    if(p->count!=16) return 0;
+    for(i=0;i<16;i++) colors[i]=(u32)p->palette[i].r |
+        ((u32)p->palette[i].g<<8) | ((u32)p->palette[i].b<<16);
+    return enum_palette_objects(kind,AW(4),AW(6),AL(0),colors,16);
+}
+
+/* SelectPalette is USER in Win16, although the object belongs to GDI. */
+u32 u_SelectPalette(u16 ss,u16 ap)
+{
+    u16 h=AW(2),dc=AW(4),old;struct dc*d=dc_get(dc);
+    if(!palette_valid(h))return 0;
+    if(!d)return bitmap_object(dc,5,h);
+    old=d->palette;d->palette=h;return old;
+}
+u32 u_RealizePalette(u16 ss,u16 ap)
+{
+    /* RC_PALETTE is not advertised for this fixed-color VGA device. No
+     * physical palette entries can change. Return zero changed entries. */
+    struct dc*d=dc_get(AW(0));
+    if(!d&&!bitmap_object(AW(0),5,0))return 0;
+    return 0;
+}
+u32 g_GetNearestPaletteIndex(u16 ss,u16 ap)
+{
+    GR_PALETTE*p=(GR_PALETTE*)w16_scratch;u32 colors[16];int i,n;
+    memset(p,0,sizeof(*p));GrGetSystemPalette(p);n=p->count;if(n>16)n=16;
+    for(i=0;i<n;i++)colors[i]=(u32)p->palette[i].r|((u32)p->palette[i].g<<8)|((u32)p->palette[i].b<<16);
+    return palette_nearest(AW(4),AL(0),colors,n);
 }

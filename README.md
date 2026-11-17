@@ -4,7 +4,13 @@
 
 **Windows 3.0 applications on ELKS, in 16 colours.**
 
-An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics for Tandy and PCjr.
+An experimental Win16 compatibility layer for the 8086/8088, with Nano-X graphics on VGA, Tandy and PCjr displays.
+
+<a href="docs/screenshots/paintbrush-elks-logo-qemu-vga.png"><img src="docs/screenshots/paintbrush-elks-logo-qemu-vga.png" width="640" alt="Windows 3.0 Paintbrush on ELKS with a dark-blue ELKS logo drawn on its white canvas"></a>
+
+**Windows 3.0 Paintbrush on ELKS · 640×480 VGA · QEMU**
+
+The logo was drawn with Paintbrush’s line tool using emulated mouse input. This is an emulator capture, not a physical-hardware test. Paintbrush support is experimental: this drawing does not establish that every tool or file operation works.
 
 [Get started](docs/build.md) · [Screenshots](docs/gallery.md) · [Technical guide](docs/technical.md) · [MIT license](LICENSE)
 
@@ -32,6 +38,7 @@ The project is deliberately small in scope. It runs the source-built examples he
 | **HELLO16** | Drawing, colours, text, mouse and keyboard input | [Source included](test/hello16) |
 | **DLGTEST** | Modal dialogs, resources, buttons, menus and string tables | [Source included](test/dlgtest) |
 | **MBTEST** | Message boxes, icons and button results | [Source included](test/mbtest) |
+| **Windows 3.0 Paintbrush** | Line drawing in colour; opens indexed BMPs on the experimental VGA configuration | Bring your own EXE and companion DLL |
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
 | **Windows 3.0 REVERSI** | Play against the computer, menus, hints, cursors, accelerators and About | Bring your own copy |
@@ -87,21 +94,29 @@ W16INI=/root/win.ini w16 clock.exe
 w16 reversi.exe
 ```
 
+For the experimental VGA Paintbrush setup shown above, put your own Windows 3.0 `pbrush.exe` and `pbrush.dll` in the working directory:
+
+```sh
+w16 -u -l PBRUSH=pbrush.dll pbrush.exe
+```
+
+`-l` binds the companion DLL explicitly. `-u` permits startup with unresolved imports; calling one stops the program rather than pretending the operation succeeded.
+
 `-p` keeps Nano-X running between programs. Run one Win16 application at a time. The [keyboard patches](docs/build.md#2-prepare-elks) enable shortcuts such as Alt+F4 and Alt+Space; the system-menu Close command is also available with the mouse.
 
 ## How it fits together
 
 1. **Load the NE file.** Validate its segments and imports, allocate real-mode memory, and apply relocations.
 2. **Bridge the Win16 calls.** 8086 assembly thunks switch between the application's stack and native ELKS handlers, including callbacks into the application.
-3. **Draw through Nano-X.** USER handles windows, messages, menus and dialogs; GDI maps drawing to the 320×200, 16-colour display.
+3. **Draw through Nano-X.** USER handles windows, messages, menus and dialogs; GDI maps drawing to the Nano-X display, including 320×200 Tandy/PCjr and 640×480 VGA configurations.
 
 The implementation includes local memory and resource handling, timers, accelerators, cursors, WIN.INI access and a subset of KERNEL/USER/GDI. See [how it works](docs/technical.md#how-it-works) and the [API list](docs/technical.md#what-is-supported) for the details.
 
 ## Know the limits
 
-- **Real mode, 8086/8088 code only.** Protected-mode-only and 80286-flagged executables, 64 KB segments and DLL loading are unsupported.
-- **A small Win16 API subset.** Many applications require APIs that are not implemented. Unsupported imports are reported before the application starts.
-- **Basic UI and graphics.** No general `BitBlt`, bitmap-resource support, editable text fields, list boxes, modeless dialogs or full window management. The system menu implements Close only.
+- **Real mode, 8086/8088 code only.** Protected-mode-only and 80286-flagged executables, 64 KB segments and general-purpose DLL loading are unsupported. The Paintbrush example uses an explicitly bound companion DLL.
+- **A small Win16 API subset.** Many applications require APIs that are not implemented. By default, unsupported imports are reported before the application starts.
+- **Basic UI and graphics.** Bitmap transfers, indexed image formats, editable text and file-dialog lists cover the exercised cases, not the full Windows APIs. Modeless dialogs and full window management remain unsupported. The system menu implements Close only.
 - **Conventional memory matters.** The entire application must fit; memory is not discarded or moved. Only one Win16 program can run at a time.
 - **Emulation is not hardware validation.** In particular, the DOSBox-X PCjr runs use a fast fixed-cycle configuration and do not establish real-PCjr performance.
 
