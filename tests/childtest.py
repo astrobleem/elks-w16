@@ -27,7 +27,7 @@ typedef unsigned GR_WINDOW_ID, GR_COLOR;
 #define GR_EVENT_MASK_BUTTON_UP 32
 #define GR_EVENT_MASK_MOUSE_POSITION 64
 #define CAPH 14
-#define MENUH 16
+#define MENUH 16\n#define SCROLLBAR_SIZE 16
 #define wlog(...) ((void)0)
 #define vlog(...) ((void)0)
 '''
@@ -64,7 +64,7 @@ void GrSetFocus(unsigned w){(void)w;}
 
 static u16 senthw,sentm,sentp;static u32 sentl;
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
-void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
+void scrollbar_forget(u16 w){(void)w;}\nvoid menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''

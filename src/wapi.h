@@ -32,6 +32,11 @@
 #define WM_RBUTTONUP     0x0205
 #define SC_CLOSE         0xF060
 
+#define WS_HSCROLL       0x00100000ul
+#define WS_VSCROLL       0x00200000ul
+#define SCROLLBAR_SIZE 16
+#define WM_HSCROLL 0x0114
+#define WM_VSCROLL 0x0115
 #define WS_CHILD         0x40000000ul
 #define WS_DISABLED      0x08000000ul
 #define WS_VISIBLE       0x10000000ul
@@ -219,3 +224,7 @@ int bitmap_deletedc(u16 h);
 u16 bitmap_select(u16 dc,u16 h);
 
 #endif
+
+void scrollbar_draw(struct wnd *w);
+int scrollbar_input(struct wnd *w,int kind,int rx,int ry);
+void scrollbar_forget(u16 hwnd);

@@ -206,6 +206,7 @@ static void draw_nc(struct wnd *w)
         gdi_fill(f, gray, W - b, top, b, H - b - top);
     }
     gdi_fg(black);
+    scrollbar_draw(w);
     GrRect(f, gc, 0, 0, W, H);
     if (b > 1)
         GrRect(f, gc, b - 1, b - 1, W - 2 * (b - 1), H - 2 * (b - 1));
@@ -560,6 +561,8 @@ static void translate_event(GR_EVENT *ev)
         int down = ev->type == GR_EVENT_TYPE_BUTTON_DOWN;
         w = win_by_nx(ev->button.wid, &isclient);
         mouse_buttons = ev->button.buttons;
+        if((ev->button.changebuttons & MWBUTTON_L) && (!w || !blocked(w)) &&
+           scrollbar_input(w,down?1:2,ev->button.rootx,ev->button.rooty))break;
         if (capture_hwnd && (!w || !w->ctl)) {  /* SetCapture: button events go to that window */
             struct wnd *cw = win_get(capture_hwnd);
             if (cw && !blocked(cw)) {
@@ -604,6 +607,7 @@ static void translate_event(GR_EVENT *ev)
         u16 mk;
         w = win_by_nx(ev->mouse.wid, &isclient);
         mouse_buttons = ev->mouse.buttons;
+        if((!w || !blocked(w)) && scrollbar_input(w,0,ev->mouse.rootx,ev->mouse.rooty))break;
         if (capture_hwnd && (t = win_get(capture_hwnd)) != 0) {
             int ox, oy;
             if (blocked(t)) break;
@@ -643,8 +647,7 @@ u32 u_PostQuitMessage(u16 ss, u16 ap)
     return 0;
 }
 
-/* Standard scrollbar state only: native scrollbar drawing and mouse/keyboard
- * interaction are not yet provided. SB_CTL must not alias a window axis. */
+/* Standard non-client scrollbars. SB_CTL must not alias a window axis. */
 static struct wnd *scroll_window(u16 hwnd,u16 bar)
 {
     struct wnd *w=win_get(hwnd);
@@ -657,8 +660,7 @@ static struct wnd *scroll_window(u16 hwnd,u16 bar)
 }
 static void scroll_redraw(struct wnd *w,u16 redraw)
 {
-    /* Do not fake a scrollbar by resizing or painting over the guest canvas. */
-    if(redraw) vlog("w16: scrollbar state updated for %04x; native scrollbar rendering not implemented\n",w->hwnd);
+    if(redraw && w->visible) scrollbar_draw(w);
 }
 u32 u_SetScrollRange(u16 ss,u16 ap)
 {
@@ -702,6 +704,33 @@ u32 u_GetScrollRange(u16 ss,u16 ap)
     if(!scroll_word(ls,lo)||!scroll_word(hs,hi))return 0;
     w=scroll_window(AW(10),bar);if(!w)return 0;
     wr16(ls,lo,(u16)w->scroll_min[bar]);wr16(hs,hi,(u16)w->scroll_max[bar]);
+    return 0; /* Win16 void Pascal */
+}
+
+/* ScrollWindow: redraw the invalidated client from the application's backing
+ * store instead of copying obscured screen pixels. This is a genuine Win16
+ * invalidation path; no pixel content is synthesized. */
+u32 u_ScrollWindow(u16 ss,u16 ap)
+{
+    u16 hwnd=AW(12),ro=AW(4),rs=AW(6),co=AW(0),cs=AW(2);
+    int dx=(i16)AW(10),dy=(i16)AW(8),i;
+    struct wnd*w=win_get(hwnd);
+    if(!w)return 0;
+    if((ro||rs) && (!scroll_word(rs,ro)||ro>0xfff8||((u32)rs<<4)+ro>0xffff8UL))return 0;
+    if((co||cs) && (!scroll_word(cs,co)||co>0xfff8||((u32)cs<<4)+co>0xffff8UL))return 0;
+    /* A null scroll rectangle moves child windows as well. Preflight every
+     * child before changing any geometry, preserving signed 16-bit positions. */
+    if(!ro&&!rs) {
+        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+            long x=(long)wins[i].x+dx,y=(long)wins[i].y+dy;
+            if(x< -32768L||x>32767L||y< -32768L||y>32767L)return 0;
+        }
+        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+            wins[i].x+=dx;wins[i].y+=dy;
+            GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
+        }
+    }
+    win_invalidate_all(w,1);
     return 0; /* Win16 void Pascal */
 }
 
@@ -910,6 +939,8 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if (tseg)
         fstrncpy_in(w->title, tseg, toff, sizeof(w->title));
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
+    if(style & WS_VSCROLL) w->cw-=SCROLLBAR_SIZE;
+    if(style & WS_HSCROLL) w->ch-=SCROLLBAR_SIZE;
     if (w->cw < 0) w->cw = 0;
     if (w->ch < 0) w->ch = 0;
     w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
@@ -921,7 +952,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw ? w->cw : 1, w->ch ? w->ch : 1, 0, bg, 0);
     if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
-                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP);
+                   GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_BUTTON_UP | GR_EVENT_MASK_MOUSE_POSITION);
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_MOUSE_POSITION);
     cursor_attach(w->frame, w->client);
@@ -974,6 +1005,8 @@ u32 u_MoveWindow(u16 ss, u16 ap)
     resized=w->w!=wd || w->h!=h;
     cw=wd-w->cx-(w->ctl?0:border_of(w->style));
     ch=h-w->cy-(w->ctl?0:border_of(w->style));
+    if(w->style & WS_VSCROLL)cw-=SCROLLBAR_SIZE;
+    if(w->style & WS_HSCROLL)ch-=SCROLLBAR_SIZE;
     if(cw<0) cw=0;
     if(ch<0) ch=0;
     w->x=x;w->y=y;w->w=wd;w->h=h;w->cw=cw;w->ch=ch;

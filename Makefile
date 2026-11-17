@@ -29,6 +29,7 @@ test: host samples
 	python3 tests/invertrecttest.py
 	python3 tests/globaltest.py
 	python3 tests/scrolltest.py
+	python3 tests/scrolluitest.py
 	python3 tests/childtest.py
 	python3 tests/textlayouttest.py
 	python3 tests/bitmaptest.py

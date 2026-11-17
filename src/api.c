@@ -65,6 +65,7 @@ u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
 u32 u_MoveWindow(u16,u16);
+u32 u_ScrollWindow(u16,u16);
 u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
 u32 u_SetFocus(u16, u16), u_IsIconic(u16, u16), u_SetWindowText(u16, u16), u_ClientToScreen(u16, u16);
 u32 u_GetKeyState(u16, u16), u_SetCursor(u16, u16), u_ShowCursor(u16, u16), u_SetCursorPos(u16, u16);
@@ -314,7 +315,7 @@ const struct api api_table[] = {
     { U,  49, "IsWindowVisible", 2, 0, H(u_IsWindowVisible) },
     { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
     { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
-    { U,  61, "SCROLLWINDOW", 0, API_MISSING, 0 },
+    { U,61,"ScrollWindow",14,0,H(u_ScrollWindow) },
     { U,  62, "SetScrollPos", 8, 0, H(u_SetScrollPos) },
     { U,  63, "GetScrollPos", 4, 0, H(u_GetScrollPos) },
     { U,  64, "SetScrollRange", 10, 0, H(u_SetScrollRange) },

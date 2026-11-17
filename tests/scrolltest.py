@@ -59,7 +59,8 @@ void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('win_get','scroll_window','scroll_redraw','u_SetScrollRange','u_SetScrollPos','u_GetScrollPos','scroll_word','u_GetScrollRange'))
+pre+='void scrollbar_draw(struct wnd*w){(void)w;}\n'
+code=pre+''.join(func(n) for n in ('win_get','scroll_window','scroll_redraw','u_SetScrollRange','u_SetScrollPos','u_GetScrollPos','scroll_word','u_GetScrollRange','u_ScrollWindow'))
 code+="""
 static void range(u16 h,u16 bar,i16 min,i16 max){
  wr16(0x1000,0,1);wr16(0x1000,2,max);wr16(0x1000,4,min);wr16(0x1000,6,bar);wr16(0x1000,8,h);u_SetScrollRange(0x1000,0);
@@ -86,6 +87,15 @@ int main(void){
  memset(&wins[0],0,sizeof(wins[0]));wins[0].used=1;wins[0].hwnd=h;
  assert(!pos(h,0,1));assert(wins[0].scroll_min[0]==0&&wins[0].scroll_max[0]==100);
  assert(!u_GetScrollPos(0x1000,0xfffd));assert(!u_SetScrollRange(0x1000,0xfff7));assert(!u_GetScrollRange(0x1000,0xfff5));
+ /* ScrollWindow invalidates the real client, and moves children only for null rectangle. */
+ wins[0].cw=100;wins[0].ch=80;
+ wins[1].used=1;wins[1].hwnd=h+4;wins[1].parent=h;wins[1].x=10;wins[1].y=20;wins[1].frame=8;
+ memset(host_ptr(0x1000,0,14),0,14);wr16(0x1000,8,(u16)-3);wr16(0x1000,10,4);wr16(0x1000,12,h);
+ u_ScrollWindow(0x1000,0);assert(wins[0].invalid&&wins[1].x==14&&wins[1].y==17);
+ wins[0].invalid=0;wr16(0x1000,4,100);wr16(0x1000,6,0x1000);
+ u_ScrollWindow(0x1000,0);assert(wins[0].invalid&&wins[1].x==14);
+ wins[0].invalid=0;wr16(0x1000,4,0xfffa);
+ u_ScrollWindow(0x1000,0);assert(!wins[0].invalid);
  puts("Scrollbar signed ranges, independent axes, bounds, reset and Pascal ABI passed");return 0;
 }
 """
