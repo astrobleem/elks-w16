@@ -87,13 +87,9 @@ void W16_CDECL w16_farset(u16 seg, u16 off, u16 val, u16 n);
 u16  W16_CDECL w16_get_ds(void);
 void W16_CDECL w16_outb(u16 port, u16 val);
 
-#include <errno.h>
-u32 k_GetFreeSpace(u16,u16);
 int seg_alloc(u16 paras, u16 *seg)
 {
-    int rc=_fmemalloc(paras,seg),err=errno;
-    if(rc&&opt_trace)wlog("w16: far allocation paras %u rc %d errno %d free %lu\n",paras,rc,err,k_GetFreeSpace(0,0));
-    return rc ? -1 : 0;
+    return _fmemalloc(paras, seg) ? -1 : 0;
 }
 
 void seg_free(u16 seg)

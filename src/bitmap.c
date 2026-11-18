@@ -10,8 +10,9 @@
 #define NB 16
 #define ND 8
 #define DEFAULT_BITMAP 0x0aff
+#define BITMAP_BANK_BYTES 16384UL
 #define BITMAP_BANKS 10
-struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp,bankshift;struct dib_rgb palette[16];};
+struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
 struct memory_dc {u16 bitmap,pen,brush,font,palette,bkmode,textalign;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
@@ -81,27 +82,22 @@ static void release_pixels(struct bitmap*b)
 static void release_bitmap(int i){release_pixels(&bitmaps[i]);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
 static int allocate_pixels(struct bitmap*b,u32 bytes)
 {
- int j;u16 n,seg;u32 bankbytes=1UL<<(b->bankshift?b->bankshift:14);
- if(!bytes||bytes>BITMAP_BANKS*bankbytes)return 0;
+ int j;u16 n,seg;
+ if(!bytes||bytes>BITMAP_BANKS*BITMAP_BANK_BYTES)return 0;
  for(j=0;bytes;j++){
-  n=bytes>bankbytes?bankbytes:(u16)bytes;
-  if(seg_alloc((n+15)/16,&seg)){if(opt_trace)wlog("w16: bitmap bank allocation failed bank %d bytes %u remaining %lu\n",j,n,bytes);release_pixels(b);return 0;}
+  n=bytes>BITMAP_BANK_BYTES?BITMAP_BANK_BYTES:(u16)bytes;
+  if(seg_alloc((n+15)/16,&seg)){release_pixels(b);return 0;}
   b->bank[j]=seg;
   fzero(b->bank[j],0,n);bytes-=n;
  }
  return 1;
 }
-static unsigned pixel_bank(struct bitmap*b,u32 at,u16*off)
-{
- unsigned shift=b->bankshift?b->bankshift:14;
- *off=(u16)(at&((1UL<<shift)-1));return (unsigned)(at>>shift);
-}
 static void bitmap_write(struct bitmap*b,u32 at,const u8*src,u16 n)
 {
  u16 off,part;unsigned bank;
  while(n){
-  bank=pixel_bank(b,at,&off);
-  part=(u16)((1UL<<(b->bankshift?b->bankshift:14))-off);if(part>n)part=n;
+  bank=(unsigned)(at/BITMAP_BANK_BYTES);off=(u16)(at%BITMAP_BANK_BYTES);
+  part=(u16)(BITMAP_BANK_BYTES-off);if(part>n)part=n;
   fcopy_out(b->bank[bank],off,src,part);src+=part;at+=part;n-=part;
  }
 }
@@ -123,13 +119,13 @@ static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 static u8 bitmap_index(struct bitmap*b,u16 x,u16 y)
 {
  u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
- u16 off;unsigned bank=pixel_bank(b,at,&off);u8 v=rd8(b->bank[bank],off);
+ u8 v=rd8(b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],(u16)(at%BITMAP_BANK_BYTES));
  return b->bpp==1?(v>>(7-(x&7)))&1:(v>>((x&1)?0:4))&15;
 }
 static void bitmap_put(struct bitmap*b,u16 x,u16 y,u8 index)
 {
  u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
- u16 off;unsigned bank=pixel_bank(b,at,&off);u16 seg=b->bank[bank];
+ u16 seg=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],off=(u16)(at%BITMAP_BANK_BYTES);
  u8 shift=b->bpp==1?7-(x&7):(x&1)?0:4;
  u8 mask=(b->bpp==1?1:15)<<shift;
  wr8(seg,off,(rd8(seg,off)&~mask)|(index<<shift));
@@ -298,7 +294,6 @@ static int clip_axis(long *dst,long *src,long *n,long limit,long slimit){long q;
 static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int sm,int sx,int sy,int w,int h,u16 rop)
 {
  u8 map[16],i,index;int row,col,yy,xx;u32 rgb;struct dc pattern;
- if(opt_trace)wlog("w16: memory op %x %dx%d\n",(unsigned)rop,w,h);
  if(rop==0xe2){
   memset(&pattern,0,sizeof pattern);pattern.brush=memory[dm].brush;
   pattern.brushx=memory[dm].brushx;pattern.brushy=memory[dm].brushy;
@@ -361,42 +356,40 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
  (void)src;(void)dm;(void)dx;(void)dy;(void)sx;(void)sy;(void)w;(void)h;return 0;
 #endif
 }
-/* Flood membership is prepared before drawing, so transport/allocation/queue
- * failures leave the destination untouched. One one-bit map avoids retaining a
- * full colour snapshot. Re-reading the unchanged source reconstructs visited
- * membership after traversal, before any destination output. A bounded scanline worklist refuses pathological fills. */
-struct flood_capture {struct bitmap *mask;u8 accept[16];u16 rows,base;int valid,rebuild;};
+/* Discover connected scanline spans before drawing. The bounded near worklist
+ * avoids any far mask allocation; capture or complexity failures are atomic. */
+#define FLOOD_SPANS 512
+struct flood_span {i16 l,r,y;};
+struct flood_row {u8 bits[80],accept[16];u16 w;int valid,rows;};
+static int flood_bit(struct flood_row*c,int x){return (c->bits[x>>3]>>(x&7))&1;}
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
-static void flood_capture_row(void *ctx,unsigned row,const unsigned char *data,unsigned len)
+static void flood_row_data(void*ctx,unsigned row,const unsigned char*data,unsigned len)
 {
- struct flood_capture*c=ctx;unsigned x;row+=c->base;
- if(!c->valid||row!=c->rows||row>=c->mask->h||len!=(c->mask->w+1)/2){c->valid=0;return;}
- for(x=0;x<c->mask->w;x++){
-  int accept=c->accept[(data[x/2]>>((x&1)?0:4))&15];
-  if(c->rebuild)accept=accept&&!bitmap_index(c->mask,x,row);
-  bitmap_put(c->mask,x,row,accept);
- }
- c->rows++;
-}
-static int flood_capture_all(struct dc*d,struct flood_capture*c)
-{
- int rows,limit=16384/((c->mask->w+1)/2);
- c->rows=0;c->valid=1;
- while(c->rows<c->mask->h){
-  c->base=c->rows;rows=c->mask->h-c->rows;if(rows>limit)rows=limit;
-  if(!GrCapturePixels(d->wid,d->gc,0,c->base,c->mask->w,rows,flood_capture_row,c)||
-     !c->valid||c->rows!=c->base+rows)return 0;
- }
- return 1;
+ struct flood_row*c=ctx;unsigned x;
+ if(!c->valid||row||c->rows||len!=(c->w+1)/2){c->valid=0;return;}
+ for(x=0;x<c->w;x++)if(c->accept[(data[x/2]>>((x&1)?0:4))&15])c->bits[x>>3]|=1<<(x&7);
+ c->rows=1;
 }
 #endif
+static int flood_read_row(struct flood_row*c,struct dc*d,struct bitmap*b,int y,u32 boundary,int mode)
+{
+ int x;memset(c->bits,0,sizeof c->bits);c->valid=1;c->rows=0;
+ if(d){
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+  return GrCapturePixels(d->wid,d->gc,0,y,c->w,1,flood_row_data,c)&&c->valid&&c->rows==1;
+#else
+  return 0;
+#endif
+ }
+ for(x=0;x<c->w;x++)if((bitmap_rgb(b,bitmap_index(b,x,y))==boundary)==mode)c->bits[x>>3]|=1<<(x&7);
+ return 1;
+}
 int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
                  void (*output)(void*,int,int,int,int),void *ctx)
 {
- struct bitmap eligible,*dest=0;struct flood_capture cap;
- struct poly_point *stack;int m=di(h),i,j,w,hgt,top=0,l,r,ny,xx,yy,start,ok=0,stage=0;u8 pi=0;
+ struct bitmap*dest=0;struct flood_row row;struct flood_span*spans;
+ int m=di(h),i,j,w,hgt,head,count=1,limit,l,r,ny,xx,known,ok=0;u8 pi=0;
  GR_SCREEN_INFO si;GR_PALETTE*palette=(GR_PALETTE*)w16_scratch;
- if(opt_trace)wlog("w16: flood dc %04x point %d,%d boundary %lx mode %d brush %lx\n",h,x,y,boundary,mode,brush);
  if(mode<0||mode>1||(boundary&0xff000000UL))return 0;
  if(d){
   if(d->w){w=d->w->cw;hgt=d->w->ch;}
@@ -406,65 +399,42 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
   dest=&bitmaps[i];w=dest->w;hgt=dest->h;pi=bitmap_nearest(dest,brush);
  }
  if(w<1||hgt<1||w>640||hgt>480||x<0||y<0||x>=w||y>=hgt)return 0;
- memset(&eligible,0,sizeof(eligible));eligible.w=w;eligible.h=hgt;eligible.bpp=1;eligible.stride=(w+7)/8;
- /* Small far blocks tolerate fragmentation without borrowing heap or guest RAM. */
- eligible.bankshift=12;
- if(!allocate_pixels(&eligible,(u32)eligible.stride*hgt)){wlog("w16: flood mask allocation failed %dx%d\n",w,hgt);return 0;}
- stage=1;
- stack=malloc(512*sizeof(*stack));if(!stack)goto done;
- stage=2;
+ memset(&row,0,sizeof row);row.w=w;
  if(d){
-#ifdef GR_MODE_HAVE_CAPTUREPIXELS
-  memset(&cap,0,sizeof(cap));cap.mask=&eligible;cap.valid=1;
-  memset(palette,0,sizeof(*palette));GrGetSystemPalette(palette);if(palette->count!=16)goto done;
-  for(j=0;j<16;j++){
-   u32 rgb=(u32)palette->palette[j].r|((u32)palette->palette[j].g<<8)|((u32)palette->palette[j].b<<16);
-   cap.accept[j]=(rgb==boundary)==mode;
-  }
-  stage=3;if(!flood_capture_all(d,&cap))goto done;
-#else
-  goto done;
-#endif
- }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
-  if((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)bitmap_put(&eligible,xx,yy,1);
- stage=4;if(!bitmap_index(&eligible,x,y))goto done;
- stage=5;stack[top].x=x;stack[top++].y=y;
- while(top){
-  x=stack[--top].x;y=stack[top].y;
-  if(!bitmap_index(&eligible,x,y))continue;
-  for(l=x;l>0&&bitmap_index(&eligible,l-1,y);l--);
-  for(r=x;r+1<w&&bitmap_index(&eligible,r+1,y);r++);
-  for(xx=l;xx<=r;xx++)bitmap_put(&eligible,xx,y,0);
-  for(j=-1;j<=1;j+=2){
-   ny=y+j;if(ny<0||ny>=hgt)continue;
-   for(xx=l;xx<=r;){
-    if(!bitmap_index(&eligible,xx,ny)){xx++;continue;}
-    if(top==512)goto done;
-    stack[top].x=xx;stack[top++].y=ny;
-    do{xx++;}while(xx<=r&&bitmap_index(&eligible,xx,ny));
-   }
+  memset(palette,0,sizeof(*palette));GrGetSystemPalette(palette);if(palette->count!=16)return 0;
+  for(i=0;i<16;i++){
+   u32 rgb=(u32)palette->palette[i].r|((u32)palette->palette[i].g<<8)|((u32)palette->palette[i].b<<16);
+   row.accept[i]=(rgb==boundary)==mode;
   }
  }
- /* The source has not been changed. Rebuild visited = original minus remaining.
-  * All transport/queue/allocation failures still precede the first output. */
- stage=2;
- if(d){
-#ifdef GR_MODE_HAVE_CAPTUREPIXELS
-  stage=6;cap.rebuild=1;if(!flood_capture_all(d,&cap))goto done;
-#else
-  goto done;
-#endif
- }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
-  bitmap_put(&eligible,xx,yy,((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)&&!bitmap_index(&eligible,xx,yy));
- stage=7;for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;){
-  if(!bitmap_index(&eligible,xx,yy)){xx++;continue;}
-  start=xx;do{xx++;}while(xx<w&&bitmap_index(&eligible,xx,yy));
-  if(d)output(ctx,start,yy,xx-start,1);
-  else for(i=start;i<xx;i++)memory_rop_pixel(dest,i,yy,pi,memory[m].rop2);
+ for(limit=FLOOD_SPANS;limit>=32;limit/=2){spans=malloc(limit*sizeof(*spans));if(spans)break;}
+ if(!spans){wlog("w16: flood near worklist unavailable\n");return 0;}
+ if(!flood_read_row(&row,d,dest,y,boundary,mode)||!flood_bit(&row,x))goto done;
+ l=r=x;while(l>0&&flood_bit(&row,l-1))l--;while(r+1<w&&flood_bit(&row,r+1))r++;
+ spans[0].l=l;spans[0].r=r;spans[0].y=y;
+ for(head=0;head<count;head++)for(j=-1;j<=1;j+=2){
+  ny=spans[head].y+j;if(ny<0||ny>=hgt)continue;
+  if(!flood_read_row(&row,d,dest,ny,boundary,mode))goto done;
+  for(xx=spans[head].l;xx<=spans[head].r;){
+   if(!flood_bit(&row,xx)){xx++;continue;}
+   l=r=xx;while(l>0&&flood_bit(&row,l-1))l--;while(r+1<w&&flood_bit(&row,r+1))r++;
+   known=0;for(i=0;i<count;i++)if(spans[i].y==ny&&spans[i].l==l&&spans[i].r==r){known=1;break;}
+   if(!known){
+    if(count==limit)goto done;
+    spans[count].l=l;spans[count].r=r;spans[count++].y=ny;
+   }
+   xx=r+1;
+  }
+ }
+ for(i=0;i<count;i++){
+  l=spans[i].l;r=spans[i].r;y=spans[i].y;
+  if(d)output(ctx,l,y,r-l+1,1);
+  else for(x=l;x<=r;x++)memory_rop_pixel(dest,x,y,pi,memory[m].rop2);
  }
  ok=1;
- done:if(opt_trace)wlog("w16: flood result %d stage %d size %dx%d\n",ok,stage,w,hgt);free(stack);release_pixels(&eligible);return ok;
+ done:if(opt_trace)wlog("w16: flood result %d discovered spans %d\n",ok,count);free(spans);return ok;
 }
+
 u32 g_BitBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(18));int m=di(AW(8)),dm=di(AW(18)),db=-1,b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
@@ -539,7 +509,7 @@ u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set)
  if(count>size)count=size;
  if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
  for(at=0;at<count;at++){
-  u16 bo;unsigned bn=pixel_bank(b,at,&bo);u16 bank=b->bank[bn];
+  u16 bank=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],bo=(u16)(at%BITMAP_BANK_BYTES);
   if(set)wr8(bank,bo,rd8(seg,(u16)(off+at)));
   else wr8(seg,(u16)(off+at),rd8(bank,bo));
  }

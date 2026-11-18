@@ -52,7 +52,7 @@ static int GrCapturePixels(int wid,int gc,int x,int y,int w,int h,
   if(capture_mode==2&&row==(unsigned)h-1)break;
   memset(packed,0,sizeof packed);
   for(col=0;col<(unsigned)w;col++)packed[col/2]|=(capture_mode==8?surface[(y+row)*100+x+col]:((x+col+3*(y+row))&15))<<((col&1)?0:4);
-  callback(ctx,capture_mode==3&&row==1?row+1:row,packed,capture_mode==4&&row==1?len-1:len);
+  callback(ctx,capture_mode==3&&(row==1||h==1)?row+1:row,packed,capture_mode==4&&(row==1||h==1)?len-1:len);
  }
  if(capture_mode==6)callback(ctx,h,packed,len);
  if(capture_mode==7)memset(native_palette.palette,0,sizeof native_palette.palette);
@@ -117,6 +117,7 @@ code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern p
 code+=r"""
 typedef int GR_SIZE;
 #define wlog(...) ((void)0)
+static int opt_trace;
 static u16 testfont_bits[224*13];static u8 testfont_width[224];
 static u8 rasterfont_width(u8 c){return testfont_width[c<32?0:c-32];}
 static u16 rasterfont_row(u8 c,int row){return testfont_bits[(c<32?0:c-32)*13+row];}
@@ -124,7 +125,9 @@ static void gdi_text_size(const char*s,int n,GR_SIZE*w,GR_SIZE*h,GR_SIZE*b){
  *w=0;while(n--){u8 c=*s++;*w+=testfont_width[c<32?0:c-32];}*h=13;*b=11;
 }
 """
+code+='#include <stdlib.h>\nstatic int flood_malloc_fail,flood_malloc_limit;\nstatic void*test_malloc(size_t n){return flood_malloc_fail||(flood_malloc_limit&&n>flood_malloc_limit)?0:malloc(n); }\n#define malloc test_malloc\n'
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
+code+='\n#undef malloc\n'
 gdi=(root/'src/gdi.c').read_text()
 code+=gdi[gdi.index('u32 g_GetBkColor('):gdi.index('u32 g_SetBkColor(')]
 code+=gdi[gdi.index('u32 g_GetBitmapBits('):gdi.index('/* CreatePatternBrush copies')]
@@ -444,17 +447,29 @@ static void masked_pattern_test(void){
  bitmap_shutdown();memset(bmps,0,sizeof bmps);dest.textcolor=0x123456;
  dest.brushx=dest.brushy=dest.brush=0;testbrush.style=0;
 }
-static void fragmented_flood_test(void){
+static void lowmemory_flood_test(void){
  u16 d,b;int x,y;bitmap_shutdown();
  native_palette.count=16;for(x=0;x<16;x++)native_palette.palette[x].r=native_palette.palette[x].g=native_palette.palette[x].b=x*17;
  d=dcnew();b=bitmap_create(256,256,1,4,0,0);assert(b&&bitmap_select(d,b));
- maxallocbytes=4096;failafter=1;
- assert(!bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));assert(seglive==2);
- assert(bitmap_index(&bitmaps[bi(b)],12,13)==0);failafter=-1;
- assert(bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));
+ segfail=1;flood_malloc_limit=1024;
+ assert(!bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==0);
+ /* The smaller worklist can still fill a small isolated rectangle. */
+ for(y=2;y<10;y++)for(x=2;x<10;x++)bitmap_put(&bitmaps[bi(b)],x,y,7);
+ assert(bitmap_flood(d,0,3,3,0x777777,1,0,0,0));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==0);
+ flood_malloc_limit=0;
+ assert(bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));segfail=0;
  for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==15);
+ /* Exactly512 connected runs fit; a wider comb exceeds the bound atomically. */
+ for(y=0;y<256;y++)for(x=0;x<256;x++)bitmap_put(&bitmaps[bi(b)],x,y,x<5&&(!(y&1)||!(x&1))?0:15);
+ assert(bitmap_flood(d,0,0,0,0,1,0x777777,0,0));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==(x<5&&(!(y&1)||!(x&1))?7:15));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)bitmap_put(&bitmaps[bi(b)],x,y,x<7&&(!(y&1)||!(x&1))?0:15);
+ assert(!bitmap_flood(d,0,0,0,0,1,0x777777,0,0));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==(x<7&&(!(y&1)||!(x&1))?0:15));
  maxallocbytes=16384;bitmap_shutdown();clean();
- printf("flood fragmentation: 8192-byte mask succeeds with only 4096-byte blocks available\n");
+ printf("flood: full256 canvas succeeds with all far allocations disabled\n");
 }
 static void memory_text_test(void){
  u16 d,b;int x,y,k;bitmap_shutdown();
@@ -526,7 +541,7 @@ static void memory_mask_test(void){
 int main(int argc,char**argv){
  memory_rop_truth_test();memory_mask_test();
  stock_gray_mask_test();
- fragmented_flood_test();
+ lowmemory_flood_test();
  memory_text_test();
  masked_pattern_test();
  small_ddb_bits_test();
@@ -955,7 +970,7 @@ int main(int argc,char**argv){
   assert(bitmap_index(&bitmaps[bi(b)],0,0)==7&&bitmap_index(&bitmaps[bi(b)],4,4)==15);
   assert(!bitmap_flood(d,0,-1,0,0x777777,1,0,0,0));
   assert(!bitmap_flood(d,0,0,0,0x777777,2,0,0,0));
-  segfail=1;assert(!bitmap_flood(d,0,0,0,0x777777,1,0,0,0));segfail=0;
+  flood_malloc_fail=1;assert(!bitmap_flood(d,0,0,0,0x777777,1,0,0,0));flood_malloc_fail=0;
   assert(bitmap_index(&bitmaps[bi(b)],0,0)==7);
   bitmap_origin(d,1,1,3,4);
   assert(bitmap_flood(d,0,-3,-4,0x777777,1,0,0,0));
@@ -976,7 +991,7 @@ int main(int argc,char**argv){
    for(yy=0;yy<16;yy++)for(xx=0;xx<16;xx++)assert(surface[yy*100+xx]==3);
   }
   /* Full 256 canvas crosses the real capture packet ceiling. A refusal on
-   * the reconstruction pass must still emit no output. */
+   * a later row must still emit no output. */
   win.cw=win.ch=256;
   for(xx=0;xx<640*480;xx++)surface[xx]=3;
   capture_mode=8;capture_calls=0;capture_fail_call=3;flood_wide_pixels=0;
@@ -984,7 +999,7 @@ int main(int argc,char**argv){
   assert(!flood_wide_pixels);
   capture_calls=0;capture_fail_call=0;
   assert(bitmap_flood(9,&dest,0,0,0x333333,1,0x777777,flood_wide_output,0));
-  assert(flood_wide_pixels==65536&&capture_calls==4);
+  assert(flood_wide_pixels==65536&&capture_calls==511);
   capture_mode=0;win.cw=win.ch=100;
  }
  /* Polygon shares the memory DC translation and full ROP2 truth table. */
