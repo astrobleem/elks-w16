@@ -861,6 +861,20 @@ int main(int argc,char**argv){
   assert(memblit(d,9,-2,-3,281,116,71,96,0x00cc0020));
   assert(capture_x==283&&capture_y==119&&capture_w==69&&capture_h==93);
   for(y=0;y<96;y++)for(x=0;x<71;x++)assert(bitmap_index(target,x,y)==(x<69&&y<93?15-((283+x+3*(119+y))&15):(x&1?5:6)));
+  /* Small selections retain atomic capture when conventional far allocation
+   * is exhausted, including palette conversion and malformed transports. */
+  segfail=1;
+  for(capture_mode=1;capture_mode<=6;capture_mode++){
+   memcpy(saved,rams[target->bank[0]-1],3456);
+   assert(!memblit(d,9,2,3,5,7,19,11,0x00cc0020));
+   assert(seglive==1&&!memcmp(saved,rams[target->bank[0]-1],3456));
+  }
+  capture_mode=0;flood_malloc_fail=1;capture_calls=0;
+  assert(!memblit(d,9,2,3,5,7,19,11,0x00cc0020)&&!capture_calls);
+  flood_malloc_fail=0;
+  assert(memblit(d,9,2,3,5,7,19,11,0x00cc0020));
+  for(y=0;y<11;y++)for(x=0;x<19;x++)assert(bitmap_index(target,x+2,y+3)==15-((5+x+3*(7+y))&15));
+  assert(seglive==1);segfail=0;
   capture_calls=0;assert(!memblit(d,9,0,0,0,0,3,3,0x008800c6)&&!capture_calls);
  }
  bitmap_shutdown();clean();win.cw=win.ch=100;

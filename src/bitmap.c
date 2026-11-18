@@ -323,12 +323,14 @@ static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int 
  return 1;
 }
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
-struct capture_stage {struct bitmap image;u16 rows,base;int valid;};
+struct capture_stage {struct bitmap image;u8 *near_pixels;u16 rows,base;int valid;};
 static void capture_row(void *ctx,unsigned row,const unsigned char *packed,unsigned len)
 {
  struct capture_stage*c=ctx;row+=c->base;
  if(!c->valid||row!=c->rows||row>=c->image.h||len!=c->image.stride){c->valid=0;return;}
- bitmap_write(&c->image,(u32)row*c->image.stride,packed,len);c->rows++;
+ if(c->near_pixels)memcpy(c->near_pixels+row*c->image.stride,packed,len);
+ else bitmap_write(&c->image,(u32)row*c->image.stride,packed,len);
+ c->rows++;
 }
 #endif
 static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,int h)
@@ -343,15 +345,27 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
 
  memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;
  for(j=0;j<16;j++){c.image.palette[j].r=p->palette[j].r;c.image.palette[j].g=p->palette[j].g;c.image.palette[j].b=p->palette[j].b;}
- if(!allocate_pixels(&c.image,(u32)c.image.stride*c.image.h))return 0;
+ /* Small selection captures can outlive the last free far block. Keep the
+  * same atomic staging contract using bounded near storage in that case. */
+ if(!allocate_pixels(&c.image,(u32)c.image.stride*c.image.h)){
+  u32 bytes=(u32)c.image.stride*c.image.h;
+  if(bytes>2048||!(c.near_pixels=malloc((u16)bytes)))return 0;
+ }
  ok=1;limit=16384/c.image.stride;
  while(c.rows<c.image.h){
   c.base=c.rows;rows=c.image.h-c.rows;if(rows>limit)rows=limit;
   if(!GrCapturePixels(src->wid,src->gc,ax,ay+c.base,ww,rows,capture_row,&c)||
      !c.valid||c.rows!=c.base+rows){ok=0;break;}
  }
- if(ok)ok=memory_copy(d,dm,xx,yy,&c.image,0,0,0,ww,hh,0xcc);
- release_pixels(&c.image);return ok;
+ if(ok&&c.near_pixels){
+  u8 map[16];int x,y;
+  for(j=0;j<16;j++)map[j]=bitmap_nearest(d,bitmap_rgb(&c.image,j));
+  for(y=0;y<hh;y++)for(x=0;x<ww;x++){
+   u8 packed=c.near_pixels[y*c.image.stride+x/2];
+   bitmap_put(d,xx+x,yy+y,map[(packed>>((x&1)?0:4))&15]);
+  }
+ }else if(ok)ok=memory_copy(d,dm,xx,yy,&c.image,0,0,0,ww,hh,0xcc);
+ free(c.near_pixels);release_pixels(&c.image);return ok;
 #else
  (void)src;(void)dm;(void)dx;(void)dy;(void)sx;(void)sy;(void)w;(void)h;return 0;
 #endif
