@@ -59,6 +59,7 @@ test: host samples
 	python3 tests/readpixelbackendtest.py
 	python3 tests/capturepixelstest.py
 	python3 tests/missingtraptest.py
+	python3 tests/startuptest.py
 
 clean:
 	$(MAKE) -C src clean

@@ -199,6 +199,7 @@ int main(int argc, char **argv)
 
 #else
 /* ---------------------------------------------------------------- ELKS */
+#include "nano-X.h"
 extern int opt_strict_dos, opt_metrics, opt_quit_s;
 extern u32 w16_t0;
 u32  now_ms(void);
@@ -219,7 +220,7 @@ int main(int argc, char **argv)
     const char *dllpath=0;
     char dllname[9];
     int dllindex=-1;
-    int i, e, checkonly = 0;
+    int i, e, checkonly = 0, graphics_open = 0;
     u32 old21;
     u16 regs[13], code;
     const char *path;
@@ -269,6 +270,17 @@ int main(int argc, char **argv)
     }
     dll.fd=-1;
     e = ne_open(&m, path);
+    /* GrOpen may fork/exec the server. Do that before resident DLL and EXE
+     * segments consume conventional memory. Keep this connection open so
+     * an automatically started, non-persistent server survives loading;
+     * user_init's GrOpen reuses it. Check-only must remain graphics-free. */
+    if (!e && !checkonly && GrOpen() < 0) {
+        wlog("w16: cannot connect to the Nano-X server before loading the program\n");
+        ne_free(&m);
+        w16_thunk_done();
+        return 1;
+    }
+    if (!e && !checkonly) graphics_open = 1;
     if(!e && dllpath) {
         int k;
         for(k=0;k<m.nmod;k++) if(!strcmp(m.modname[k],dllname)) { dllindex=k; break; }
@@ -290,6 +302,7 @@ int main(int argc, char **argv)
     if (e) {
         wlog("w16: %s rejected: %s\n", path, ne_errstr(e));
         ne_free(&m); ne_free(&dll);
+        if (graphics_open) GrClose();
         w16_thunk_done();
         return e;
     }
@@ -304,6 +317,7 @@ int main(int argc, char **argv)
     w16_mod = &m;
     if (user_init()) {
         ne_free(&m); ne_free(&dll);
+        GrClose();
         w16_thunk_done();
         return 1;
     }
