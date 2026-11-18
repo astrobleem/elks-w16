@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert events[-1] == 'thunk_done'
     events = run('connect')
     assert not set(events) & {'close', 'dll_metadata', 'exe_load', 'task'}
-    assert events[-2:] == ['free_exe', 'thunk_done']
+    assert events[-3:] == ['free_exe', 'thunk_done', 'libc_exit:1']
     for failure in ('dll_metadata', 'dll_heap', 'dll_imports', 'dll_load',
                     'bind', 'exe_imports', 'exe_load', 'task'):
         events = run(failure)

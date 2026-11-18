@@ -278,7 +278,8 @@ int main(int argc, char **argv)
         wlog("w16: cannot connect to the Nano-X server before loading the program\n");
         ne_free(&m);
         w16_thunk_done();
-        return 1;
+        /* Match check-only teardown: do not return through the ELKS CRT. */
+        exit(1);
     }
     if (!e && !checkonly) graphics_open = 1;
     if(!e && dllpath) {
