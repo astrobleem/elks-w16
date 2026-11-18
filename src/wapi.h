@@ -261,3 +261,6 @@ int bitmap_flood(u16,struct dc*,int,int,u32,int,u32,void (*)(void*,int,int,int,i
 int bitmap_pattern(u16,u8 *,u8 *,u16 *,u32 *);
 
 int gdi_pattern_color(struct dc*,int,int,u32*);
+
+u16 bitmap_textmode(u16,u16,int);
+int bitmap_text(u16,int,int,u16,u16,int);

@@ -14,7 +14,7 @@
 #define BITMAP_BANKS 10
 struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
-struct memory_dc {u16 bitmap,pen,brush,font,palette;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
+struct memory_dc {u16 bitmap,pen,brush,font,palette,bkmode,textalign;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
 #define MEMORY_SAVE_DEPTH 4
 static struct memory_dc memory_saved[ND][MEMORY_SAVE_DEPTH];
@@ -105,7 +105,7 @@ void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memor
 int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
-u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].wx=memory[i].wy=memory[i].vx=memory[i].vy=0;memory[i].used=1;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].palette=0x031e;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
+u32 g_CreateCompatibleDC(u16 ss,u16 ap){u16 src=AW(0);int i;if(src&&!dc_get(src)&&di(src)<0)return 0;for(i=0;i<ND&&memory[i].used;i++);if(i==ND)return 0;memory_saved_count[i]=0;memory[i].wx=memory[i].wy=memory[i].vx=memory[i].vy=0;memory[i].used=1;memory[i].bkmode=2;memory[i].textalign=0;memory[i].rop2=13;memory[i].stretchmode=1;memory[i].pen=0x030e;memory[i].brush=0x0300;memory[i].font=0x031a;memory[i].palette=0x031e;memory[i].bitmap=DEFAULT_BITMAP;memory[i].bkcolor=0xffffffUL;return DBASE+2*i;}
 /* All owned pixels use bounded far storage, never the server near heap. */
 static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 {
@@ -813,4 +813,54 @@ u32 g_SetDIBitsToDevice(u16 ss,u16 ap)
   GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);
  }
  release_bitmap(i);return hh;
+}
+
+/* The data object is compiled unchanged from the existing Nano-X source.
+ * This is the same proportional system raster font used by screen DCs. */
+extern MWCFONT font_winFreeSansSerif11x13;
+u16 bitmap_textmode(u16 h,u16 value,int align)
+{
+ int m=di(h);u16 old;if(m<0)return 0;
+ if(align){old=memory[m].textalign;memory[m].textalign=value;}
+ else{if(value!=1&&value!=2)return 0;old=memory[m].bkmode;memory[m].bkmode=value;}
+ return old;
+}
+int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
+{
+ MWCFONT *f=&font_winFreeSansSerif11x13;
+ struct bitmap *b;struct memory_dc *d;int m=di(h),bb,k,row,col,width=0,cw;
+ u16 a;u8 fg,bg,c;long px,py,drawx,tx,ty;static int checked,compatible;
+ if(m<0||(bb=bi(memory[m].bitmap))<0||n<0||n>128||(u32)off+n>65536UL)return 0;
+ if(!checked){
+  int i;GR_SIZE sw,sh,sb;char ch;
+  compatible=1;
+  for(i=0;i<256;i++){ch=(char)i;gdi_text_size(&ch,1,&sw,&sh,&sb);
+   if(sw!=f->width[i<32?0:i-32]||sh!=13||sb!=11){compatible=0;break;}}
+  checked=1;
+ }
+ if(!compatible)return 0;
+ d=&memory[m];b=&bitmaps[bb];a=d->textalign;
+ for(k=0;k<n;k++){c=rd8(seg,off+k);width+=f->width[c<32?0:c-32];}
+ if(a&1){x=d->curx;y=d->cury;}
+ tx=x;ty=y;
+ if((a&6)==6)tx-=width/2;else if(a&2)tx-=width;
+ if((a&24)==24)ty-=11;else if(a&8)ty-=13;
+ if(tx< -32768L||tx>32767L||ty< -32768L||ty>32767L)return 0;
+ x=tx;y=ty;
+ if(!memory_point(m,&x,&y))return 0;
+ fg=bitmap_nearest(b,d->textcolor);bg=bitmap_nearest(b,d->bkcolor);drawx=x;
+ for(k=0;k<n;k++){
+  c=rd8(seg,off+k);if(c<32)c=32;cw=f->width[c-32];
+  for(row=0;row<13;row++){
+   u16 bits=f->bits[(c-32)*13+row];py=(long)y+row;
+   if(py<0||py>=b->h)continue;
+   for(col=0;col<cw;col++){
+    int ink=(bits&(0x8000u>>col))!=0;px=drawx+col;
+    if(px>=0&&px<b->w&&(ink||d->bkmode==2))bitmap_put(b,(int)px,(int)py,ink?fg:bg);
+   }
+  }
+  drawx+=cw;
+ }
+ if(a&1)d->curx=(i16)((a&2)?(long)d->curx-width:(long)d->curx+width);
+ return 1;
 }

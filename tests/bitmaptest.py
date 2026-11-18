@@ -114,6 +114,15 @@ static struct {u8 used,w,h,mono;u16 rows[16];u32 colors[2];} bmps[MAXBMP];
 static struct gobj*obj_get(u16 h){return h==1?&testbrush:0;}
 """
 code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern phase')]
+code+=r"""
+typedef int GR_SIZE;
+typedef struct {u16 *bits;u8 *width;} MWCFONT;
+static u16 testfont_bits[224*13];static u8 testfont_width[224];
+MWCFONT font_winFreeSansSerif11x13={testfont_bits,testfont_width};
+static void gdi_text_size(const char*s,int n,GR_SIZE*w,GR_SIZE*h,GR_SIZE*b){
+ *w=0;while(n--){u8 c=*s++;*w+=testfont_width[c<32?0:c-32];}*h=13;*b=11;
+}
+"""
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
 code+=gdi[gdi.index('u32 g_GetBkColor('):gdi.index('u32 g_SetBkColor(')]
@@ -434,8 +443,27 @@ static void masked_pattern_test(void){
  bitmap_shutdown();memset(bmps,0,sizeof bmps);dest.textcolor=0x123456;
  dest.brushx=dest.brushy=dest.brush=0;testbrush.style=0;
 }
+static void memory_text_test(void){
+ u16 d,b;int x,y,k;bitmap_shutdown();
+ for(k=0;k<224;k++){testfont_width[k]=3;for(y=0;y<13;y++)testfont_bits[k*13+y]=0xa000;}
+ native_palette.count=16;for(k=0;k<16;k++)native_palette.palette[k].r=native_palette.palette[k].g=native_palette.palette[k].b=k*17;
+ d=dcnew();b=bitmap_create(32,32,1,4,0,0);assert(bitmap_select(d,b));
+ output[0]='A';memory[di(d)].textcolor=0xffffff;memory[di(d)].bkcolor=0;
+ assert(bitmap_text(d,2,3,99,0,1));
+ for(y=0;y<32;y++)for(x=0;x<32;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==((y>=3&&y<16&&(x==2||x==4))?15:0));
+ assert(bitmap_textmode(d,1,0)==2);assert(bitmap_textmode(d,0,0)==0);
+ assert(bitmap_text(d,3,3,99,0,1));assert(bitmap_index(&bitmaps[bi(b)],4,3)==15);
+ assert(bitmap_savedc(d));assert(bitmap_textmode(d,25,1)==0);bitmap_moveto(d,6,20);
+ assert(bitmap_text(d,123,123,99,0,1));assert(memory[di(d)].curx==9);assert(bitmap_index(&bitmaps[bi(b)],6,9)==15);
+ assert(bitmap_restoredc(d,-1));assert(memory[di(d)].textalign==0&&memory[di(d)].bkmode==1);
+ bitmap_origin(d,1,1,4,5);assert(bitmap_text(d,-4,-5,99,0,1));assert(bitmap_index(&bitmaps[bi(b)],0,0)==15);
+ assert(!bitmap_text(d,0,0,99,65535,2));assert(!bitmap_text(d,0,0,99,0,-1));
+ bitmap_origin(d,1,1,0,0);assert(bitmap_text(d,32767,0,99,0,2));bitmap_shutdown();clean();
+ printf("memory text: opaque/transparent, origin, alignment, current position, save/restore and bounds passed\n");
+}
 int main(int argc,char**argv){
  stock_gray_mask_test();
+ memory_text_test();
  masked_pattern_test();
  small_ddb_bits_test();
  ddb_bits_test();

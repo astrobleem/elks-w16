@@ -434,7 +434,7 @@ u32 g_SetBkMode(u16 ss, u16 ap)
 {
     struct dc *d = dc_get(AW(2));
     u16 prev;
-    if (!d) return 0;
+    if (!d) return bitmap_textmode(AW(2),AW(0),0);
     prev = d->bkmode; d->bkmode = AW(0);
     return prev;
 }
@@ -844,7 +844,7 @@ u32 g_GetTextExtent(u16 ss, u16 ap)
     int n = (i16)AW(0);
     GR_SIZE w, h, b;
     struct dc *d = dc_get(AW(6));
-    if (!d || n <= 0)
+    if ((!d && !bitmap_rop2(AW(6),0)) || n <= 0)
         return 0;
     if (n > (int)sizeof(buf))
         n = sizeof(buf);
@@ -906,8 +906,8 @@ static void text_out(struct dc *d, int x, int y, u16 seg, u16 off, int n, u16 op
 u32 g_TextOut(u16 ss, u16 ap)
 {
     struct dc *d = dc_get(AW(10));
-    if (!d || (i16)AW(0) < 0)
-        return 0;
+    if (!d) return bitmap_text(AW(10),(i16)AW(8),(i16)AW(6),AW(4),AW(2),(i16)AW(0));
+    if ((i16)AW(0) < 0) return 0;
     text_out(d, (i16)AW(8), (i16)AW(6), AW(4), AW(2), (i16)AW(0), 0, 0);
     return 1;
 }
@@ -939,7 +939,7 @@ u32 g_SetTextAlign(u16 ss, u16 ap)
     struct dc *d = dc_get(AW(2));
     u16 prev;
     if (!d)
-        return 0;
+        return bitmap_textmode(AW(2),AW(0),1);
     prev = d->textalign;
     d->textalign = AW(0);
     return prev;
@@ -957,7 +957,7 @@ u32 g_GetTextMetrics(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2);
     struct dc *d = dc_get(AW(4));
-    if (!d)
+    if (!d && !bitmap_rop2(AW(4),0))
         return 0;
     fzero(seg, off, 31);
     wr16(seg, off + 0, fm_h);                   /* tmHeight */
