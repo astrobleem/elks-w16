@@ -639,13 +639,13 @@ int main(int argc,char**argv){
 
  /* Memory copies use a pre-copy oracle for every overlap direction. */
  for(k=1;k<=4;k+=3){
-  int dx,dy,sx,sy;u8 before[17*11],expected[17*11];
+  int dx,dy,sx,sy,op;u32 ops[]={0x00cc0020,0x00220326,0x00660046};u8 before[17*11],expected[17*11];
   setup(17,11,k);b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
-  for(dx=0;dx<5;dx++)for(dy=0;dy<5;dy++)for(sx=0;sx<5;sx++)for(sy=0;sy<5;sy++){
+  for(op=0;op<3;op++)for(dx=0;dx<5;dx++)for(dy=0;dy<5;dy++)for(sx=0;sx<5;sx++)for(sy=0;sy<5;sy++){
    for(y=0;y<11;y++)for(x=0;x<17;x++){u8 v=(x+3*y)&(k==1?1:15);bitmap_put(&bitmaps[bi(b)],x,y,v);before[y*17+x]=v;}
    memcpy(expected,before,sizeof before);
-   for(y=0;y<6;y++)for(x=0;x<12;x++)expected[(dy+y)*17+dx+x]=before[(sy+y)*17+sx+x];
-   assert(memblit(d,d,dx,dy,sx,sy,12,6,0x00cc0020));
+   for(y=0;y<6;y++)for(x=0;x<12;x++){u8 sv=before[(sy+y)*17+sx+x],dv=before[(dy+y)*17+dx+x];expected[(dy+y)*17+dx+x]=op==0?sv:op==1?(sv&~dv):(sv^dv);}
+   assert(memblit(d,d,dx,dy,sx,sy,12,6,ops[op]));
    for(y=0;y<11;y++)for(x=0;x<17;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==expected[y*17+x]);
   }
  }
@@ -682,9 +682,32 @@ int main(int argc,char**argv){
  assert(bitmap_getpixel(e,xx,yy)==0xffffffffUL&&bitmap_setpixel(e,xx,yy,0)==0xffffffffUL);}
  assert(bitmap_setpixel(e,0,0,0x01000000)==0xffffffffUL&&bitmap_getpixel(e,0,0)==text);
  {u8 saved[32];memcpy(saved,rams[bitmaps[bi(target)].bank[0]-1],32);
- assert(!memblit(e,d,0,0,0,0,16,4,0x008800c6));assert(!memblit(e,d,0,0,0,0,16,4,0x00660046));
+ assert(!memblit(e,d,0,0,0,0,16,4,0x008800c6));assert(!memblit(e,d,0,0,0,0,16,4,0x001100a6));
  assert(!memcmp(saved,rams[bitmaps[bi(target)].bank[0]-1],32));}
  }
+ /* Selection ROPs convert source pixels before operating on destination
+  * bits. Exercise mono expansion, reverse background matching, and clipping. */
+ for(k=0;k<2;k++){
+  int op;u32 ops[]={0x00220326,0x00660046};
+  for(op=0;op<2;op++){
+   u16 target;struct bitmap *sb,*tb;
+   setup(16,4,k?4:1);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b));
+   target=bitmap_create(16,4,1,k?1:4,0,0);assert(target&&bitmap_select(e,target));
+   sb=&bitmaps[bi(b)];tb=&bitmaps[bi(target)];
+   if(k){for(x=0;x<16;x++){sb->palette[x].r=x*13;sb->palette[x].g=x*7;sb->palette[x].b=x*11;}memory[di(d)].bkcolor=bitmap_rgb(sb,3);}
+   else{memory[di(e)].textcolor=bitmap_rgb(tb,1);memory[di(e)].bkcolor=bitmap_rgb(tb,3);}
+   for(y=0;y<4;y++)for(x=0;x<16;x++){
+    bitmap_put(sb,x,y,k?(x&15):(x&1));bitmap_put(tb,x,y,k?((x+y)&1):((x+y)&15));
+   }
+   assert(memblit(e,d,-2,-1,0,0,16,4,ops[op]));
+   for(y=0;y<4;y++)for(x=0;x<16;x++){
+    int dv=(x+y)&(k?1:15),sv=k?((x+2)==3):((x&1)?3:1);
+    int expected=x<14&&y<3?(op?(sv^dv):(sv&~dv)):dv;
+    assert(bitmap_index(tb,x,y)==expected);
+   }
+  }
+ }
+ puts("Selection SRCERASE/SRCINVERT overlap, mono conversion and clipped phase passed");
  /* Color->color remaps through owned RGB palettes, nearest tie is first. */
  setup(16,1,4);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
  {u16 target=compatible(9,16,1);struct bitmap*s=&bitmaps[bi(b)],*t=&bitmaps[bi(target)];
