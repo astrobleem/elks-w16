@@ -85,7 +85,7 @@ static int allocate_pixels(struct bitmap*b,u32 bytes)
  if(!bytes||bytes>BITMAP_BANKS*bankbytes)return 0;
  for(j=0;bytes;j++){
   n=bytes>bankbytes?bankbytes:(u16)bytes;
-  if(seg_alloc((n+15)/16,&seg)){release_pixels(b);return 0;}
+  if(seg_alloc((n+15)/16,&seg)){if(opt_trace)wlog("w16: bitmap bank allocation failed bank %d bytes %u remaining %lu\n",j,n,bytes);release_pixels(b);return 0;}
   b->bank[j]=seg;
   fzero(b->bank[j],0,n);bytes-=n;
  }
@@ -293,7 +293,9 @@ u32 u_LoadBitmap(u16 ss,u16 ap)
 static int clip_axis(long *dst,long *src,long *n,long limit,long slimit){long q;if(*dst<0){q=-*dst;*dst=0;*src+=q;*n-=q;}if(*src<0){q=-*src;*src=0;*dst+=q;*n-=q;}if(*n>limit-*dst)*n=limit-*dst;if(*n>slimit-*src)*n=slimit-*src;return *n>0;}
 /* Prevalidated clipped memory copy. Direction handles same-bitmap overlap;
  * conversion tables are completed before the first destination mutation. */
-static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int sm,int sx,int sy,int w,int h,u8 rop)
+/* Keep the operation word-sized: ia16 -Os miscompiles the narrowed
+ * high-word argument (u8)(rop >> 16), passing the low ROP word instead. */
+static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int sm,int sx,int sy,int w,int h,u16 rop)
 {
  u8 map[16],i,index;int row,col,yy,xx;u32 rgb;struct dc pattern;
  if(opt_trace)wlog("w16: memory op %x %dx%d\n",(unsigned)rop,w,h);
@@ -302,14 +304,12 @@ static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int 
   pattern.brushx=memory[dm].brushx;pattern.brushy=memory[dm].brushy;
   pattern.textcolor=memory[dm].textcolor;pattern.bkcolor=memory[dm].bkcolor;
   if(!gdi_pattern_color(&pattern,dx,dy,&rgb))return 0;
-  if(opt_trace)wlog("w16: E2 depths %u/%u brush %04x pattern %lx dest text/bk %lx/%lx source text/bk %lx/%lx\n",d->bpp,s->bpp,memory[dm].brush,rgb,memory[dm].textcolor,memory[dm].bkcolor,memory[sm].textcolor,memory[sm].bkcolor);
  }
  for(i=0;i<(s->bpp==1?2:16);i++){
   if(d==s|| (s->bpp==1&&d->bpp==1))map[i]=i;
   else if(d->bpp==1)map[i]=bitmap_rgb(s,i)==memory[sm].bkcolor;
   else{rgb=s->bpp==1?(i?memory[dm].bkcolor:memory[dm].textcolor):bitmap_rgb(s,i);map[i]=bitmap_nearest(d,rgb);}
  }
- if(rop==0xe2&&opt_trace)wlog("w16: E2 map0/map1 %u/%u\n",map[0],map[1]);
  for(row=0;row<h;row++){
   yy=d==s&&dy>sy?h-1-row:row;
   for(col=0;col<w;col++){
@@ -481,7 +481,7 @@ u32 g_BitBlt(u16 ss,u16 ap)
  if(dm>=0){db=bi(memory[dm].bitmap);if(db<0||(rop!=0x00cc0020UL&&rop!=0x00220326UL&&rop!=0x00660046UL&&rop!=0x00e20746UL))return 0;dw=bitmaps[db].w;dh=bitmaps[db].h;}
  else if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
  if(!clip_axis(&dx,&sx,&w,dw,s->w)||!clip_axis(&dy,&sy,&h,dh,s->h))return 1;
- if(dm>=0)return memory_copy(&bitmaps[db],dm,dx,dy,s,m,sx,sy,w,h,(u8)(rop>>16));
+ if(dm>=0)return memory_copy(&bitmaps[db],dm,dx,dy,s,m,sx,sy,w,h,(u16)(rop>>16));
  if(rop==0x00220326UL||rop==0x00660046UL)return 0;
  /* E2 is S ? P : D. A monochrome source expands using the destination
   * text/background colours; admit only full-bit masks (also their inverse).

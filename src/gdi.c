@@ -469,7 +469,6 @@ static int brush_pat(struct dc *d)
 int gdi_pattern_color(struct dc*d,int x,int y,u32*color)
 {
  struct gobj*o=obj_get(d->brush);int i,bit;
- if(opt_trace&&(!o||o->type!=OBJ_BRUSH||o->null||(o->style&&(o->style!=BS_PATTERN||o->width>=MAXBMP||!bmps[o->width].used))))wlog("w16: pattern brush %04x object %u type %u null %u style %u slot %u live %u\n",d->brush,o!=0,o?o->type:0,o?o->null:0,o?o->style:0,o?o->width:0,o&&o->width<MAXBMP?bmps[o->width].used:0);
  if(!o||o->type!=OBJ_BRUSH||o->null)return 0;
  if(!o->style){*color=o->color;return 1;}
  if(o->style!=BS_PATTERN||(i=o->width)>=MAXBMP||!bmps[i].used)return 0;
