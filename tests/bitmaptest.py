@@ -116,6 +116,8 @@ static struct gobj*obj_get(u16 h){return h==1?&testbrush:0;}
 code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern phase')]
 code+=r"""
 typedef int GR_SIZE;
+static int opt_trace;
+#define wlog(...) ((void)0)
 static u16 testfont_bits[224*13];static u8 testfont_width[224];
 static u8 rasterfont_width(u8 c){return testfont_width[c<32?0:c-32];}
 static u16 rasterfont_row(u8 c,int row){return testfont_bits[(c<32?0:c-32)*13+row];}
@@ -436,7 +438,7 @@ static void masked_pattern_test(void){
  assert(!g_BitBlt(0,0));assert(!memcmp(before,surface,sizeof before));
  testbrush.style=BS_PATTERN;bmps[0].used=0;
  assert(!g_BitBlt(0,0));assert(!memcmp(before,surface,sizeof before));bmps[0].used=1;
- args[9]=d;assert(!g_BitBlt(0,0));args[9]=9;
+ testbrush.style=99;args[9]=d;assert(!g_BitBlt(0,0));args[9]=9;
  testbrush.style=0;testbrush.color=0xfedcba;assert(g_BitBlt(0,0));
  assert(surface[4*100]==(bitmap_index(&bitmaps[bi(b)],3,1)?0xfedcba:before[4*100]));
  puts("Masked pattern E2: clipped/inverted mono masks, device brush phase, preserved pixels and atomic refusals passed");
@@ -458,10 +460,60 @@ static void memory_text_test(void){
  assert(bitmap_restoredc(d,-1));assert(memory[di(d)].textalign==0&&memory[di(d)].bkmode==1);
  bitmap_origin(d,1,1,4,5);assert(bitmap_text(d,-4,-5,99,0,1));assert(bitmap_index(&bitmaps[bi(b)],0,0)==15);
  assert(!bitmap_text(d,0,0,99,65535,2));assert(!bitmap_text(d,0,0,99,0,-1));
- bitmap_origin(d,1,1,0,0);assert(bitmap_text(d,32767,0,99,0,2));bitmap_shutdown();clean();
+ bitmap_origin(d,1,1,0,0);assert(bitmap_text(d,32767,0,99,0,2));
+ bitmap_moveto(d,17,18);bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0);
+ assert(bitmap_text(d,-1,-12,99,0,1));
+ for(y=0;y<32;y++)for(x=0;x<32;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==((x==1&&y==0)?15:0));
+ assert(memory[di(d)].curx==17&&memory[di(d)].cury==18);
+ bitmap_patblt(d,0,0,32,32,0x00000042,0,0,0);assert(bitmap_text(d,31,31,99,0,1));
+ for(y=0;y<32;y++)for(x=0;x<32;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==((x==31&&y==31)?15:0));
+ bitmap_textmode(d,1,1);bitmap_moveto(d,10,20);bitmap_origin(d,1,1,4,5);
+ assert(bitmap_text(d,99,99,99,0,1));assert(memory[di(d)].curx==13&&memory[di(d)].cury==20);
+ bitmap_shutdown();clean();
  printf("memory text: opaque/transparent, origin, alignment, current position, save/restore and bounds passed\n");
 }
+static void memory_rop_truth_test(void){
+ u16 b,c,d,e;int si,di_,pi,op,bit;u32 ops[]={0x220326,0x660046,0xe20746,0xcc0020};
+ native_palette.count=16;for(pi=0;pi<16;pi++)native_palette.palette[pi].r=native_palette.palette[pi].g=native_palette.palette[pi].b=pi*17;
+ setup(1,1,4);d=dcnew();e=dcnew();b=bitmap_create(1,1,1,4,0,0);c=bitmap_create(1,1,1,4,0,0);
+ assert(bitmap_select(d,b)&&bitmap_select(e,c));memory[di(e)].brush=1;testbrush.style=0;
+ for(op=0;op<4;op++)for(pi=0;pi<16;pi++)for(si=0;si<16;si++)for(di_=0;di_<16;di_++){
+  int expected=0,table=ops[op]>>16;
+  testbrush.color=bitmap_rgb(&bitmaps[bi(c)],pi);bitmap_put(&bitmaps[bi(b)],0,0,si);bitmap_put(&bitmaps[bi(c)],0,0,di_);
+  for(bit=0;bit<4;bit++){int address=(((pi>>bit)&1)<<2)|(((si>>bit)&1)<<1)|((di_>>bit)&1);expected|=((table>>address)&1)<<bit;}
+  assert(memblit(e,d,0,0,0,0,1,1,ops[op]));assert(bitmap_index(&bitmaps[bi(c)],0,0)==expected);
+ }
+ bitmap_shutdown();puts("Memory ROP22/66/E2/CC: all16384 palette-index triples match independent ternary truth-table oracle");
+}
+static void memory_mask_test(void){
+ int x,y,invert,mono,depth;u16 b,d,e,c;u8 before[64];
+ native_palette.count=16;for(x=0;x<16;x++)native_palette.palette[x].r=native_palette.palette[x].g=native_palette.palette[x].b=x*17;
+ for(depth=1;depth<=4;depth+=3)for(invert=0;invert<2;invert++)for(mono=0;mono<2;mono++){
+  setup(8,8,1);b=load();d=dcnew();e=dcnew();c=bitmap_create(8,8,1,depth,0,0);assert(bitmap_select(d,b)&&bitmap_select(e,c));
+  memory[di(e)].textcolor=invert?0xffffff:0;memory[di(e)].bkcolor=invert?0:0xffffff;
+  memory[di(e)].brush=1;memory[di(e)].brushx=-2;memory[di(e)].brushy=3;
+  testbrush.style=BS_PATTERN;testbrush.width=0;bmps[0].used=1;bmps[0].w=3;bmps[0].h=2;
+  bmps[0].rows[0]=0xa000;bmps[0].rows[1]=0x4000;bmps[0].mono=mono;
+  bmps[0].colors[0]=0;bmps[0].colors[1]=0xffffff;
+  for(y=0;y<8;y++)for(x=0;x<8;x++){before[y*8+x]=(x+y)&(depth==1?1:15);bitmap_put(&bitmaps[bi(c)],x,y,before[y*8+x]);}
+  assert(memblit(e,d,-1,2,2,1,7,5,0xe20746));
+  for(y=0;y<8;y++)for(x=0;x<8;x++){
+   int expected=before[y*8+x];
+   if(x<5&&y>=2&&y<7){
+    int bit=bitmap_index(&bitmaps[bi(b)],x+3,y-1),py=((y-3)%2+2)%2,px=(x+2)%3,pbit=(bmps[0].rows[py]>>(15-px))&1;
+    u8 src=depth==1?bit:bitmap_nearest(&bitmaps[bi(c)],bit?memory[di(e)].bkcolor:memory[di(e)].textcolor);
+    u32 pc=mono?(pbit?memory[di(e)].bkcolor:memory[di(e)].textcolor):bmps[0].colors[pbit];
+    expected=(src&bitmap_nearest(&bitmaps[bi(c)],pc))|((~src)&expected);
+   }
+   assert(bitmap_index(&bitmaps[bi(c)],x,y)==expected);
+  }
+  testbrush.style=99;assert(!memblit(e,d,0,0,0,0,8,8,0xe20746));
+ }
+ bitmap_shutdown();memset(bmps,0,sizeof bmps);testbrush.style=0;
+ puts("Memory E2 mono expansion, pattern phase, clipping and unsupported-brush refusal passed");
+}
 int main(int argc,char**argv){
+ memory_rop_truth_test();memory_mask_test();
  stock_gray_mask_test();
  memory_text_test();
  masked_pattern_test();
@@ -667,12 +719,13 @@ int main(int argc,char**argv){
 
  /* Memory copies use a pre-copy oracle for every overlap direction. */
  for(k=1;k<=4;k+=3){
-  int dx,dy,sx,sy,op;u32 ops[]={0x00cc0020,0x00220326,0x00660046};u8 before[17*11],expected[17*11];
+  int dx,dy,sx,sy,op;u32 ops[]={0x00cc0020,0x00220326,0x00660046,0xe20746};u8 before[17*11],expected[17*11];
   setup(17,11,k);b=load();d=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
-  for(op=0;op<3;op++)for(dx=0;dx<5;dx++)for(dy=0;dy<5;dy++)for(sx=0;sx<5;sx++)for(sy=0;sy<5;sy++){
+  memory[di(d)].brush=1;testbrush.style=0;testbrush.color=bitmap_rgb(&bitmaps[bi(b)],1);
+  for(op=0;op<4;op++)for(dx=0;dx<5;dx++)for(dy=0;dy<5;dy++)for(sx=0;sx<5;sx++)for(sy=0;sy<5;sy++){
    for(y=0;y<11;y++)for(x=0;x<17;x++){u8 v=(x+3*y)&(k==1?1:15);bitmap_put(&bitmaps[bi(b)],x,y,v);before[y*17+x]=v;}
    memcpy(expected,before,sizeof before);
-   for(y=0;y<6;y++)for(x=0;x<12;x++){u8 sv=before[(sy+y)*17+sx+x],dv=before[(dy+y)*17+dx+x];expected[(dy+y)*17+dx+x]=op==0?sv:op==1?(sv&~dv):(sv^dv);}
+   for(y=0;y<6;y++)for(x=0;x<12;x++){u8 sv=before[(sy+y)*17+sx+x],dv=before[(dy+y)*17+dx+x];expected[(dy+y)*17+dx+x]=op==0?sv:op==1?(dv&~sv):op==2?(sv^dv):((sv&1)|((~sv)&dv));}
    assert(memblit(d,d,dx,dy,sx,sy,12,6,ops[op]));
    for(y=0;y<11;y++)for(x=0;x<17;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==expected[y*17+x]);
   }
@@ -730,12 +783,12 @@ int main(int argc,char**argv){
    assert(memblit(e,d,-2,-1,0,0,16,4,ops[op]));
    for(y=0;y<4;y++)for(x=0;x<16;x++){
     int dv=(x+y)&(k?1:15),sv=k?((x+2)==3):((x&1)?3:1);
-    int expected=x<14&&y<3?(op?(sv^dv):(sv&~dv)):dv;
+    int expected=x<14&&y<3?(op?(sv^dv):(dv&~sv)):dv;
     assert(bitmap_index(tb,x,y)==expected);
    }
   }
  }
- puts("Selection SRCERASE/SRCINVERT overlap, mono conversion and clipped phase passed");
+ puts("Selection DSna/SRCINVERT overlap, mono conversion and clipped phase passed");
  /* Color->color remaps through owned RGB palettes, nearest tie is first. */
  setup(16,1,4);b=load();d=dcnew();e=dcnew();assert(bitmap_select(d,b)==DEFAULT_BITMAP);
  {u16 target=compatible(9,16,1);struct bitmap*s=&bitmaps[bi(b)],*t=&bitmaps[bi(target)];

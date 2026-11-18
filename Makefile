@@ -43,6 +43,8 @@ test: host samples
 	python3 tests/editcontroltest.py
 	python3 tests/filelisttest.py
 	python3 tests/textlayouttest.py
+	python3 tests/rasterfonttest.py
+	python3 tests/nearbudgettest.py
 	python3 tests/bitmaptest.py
 	python3 tests/polygontest.py
 	python3 tests/ovaltest.py
