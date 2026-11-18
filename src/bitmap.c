@@ -10,9 +10,8 @@
 #define NB 16
 #define ND 8
 #define DEFAULT_BITMAP 0x0aff
-#define BITMAP_BANK_BYTES 16384UL
 #define BITMAP_BANKS 10
-struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
+struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp,bankshift;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
 struct memory_dc {u16 bitmap,pen,brush,font,palette,bkmode,textalign;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
@@ -82,22 +81,27 @@ static void release_pixels(struct bitmap*b)
 static void release_bitmap(int i){release_pixels(&bitmaps[i]);memset(&bitmaps[i],0,sizeof(bitmaps[i]));}
 static int allocate_pixels(struct bitmap*b,u32 bytes)
 {
- int j;u16 n,seg;
- if(!bytes||bytes>BITMAP_BANKS*BITMAP_BANK_BYTES)return 0;
+ int j;u16 n,seg;u32 bankbytes=1UL<<(b->bankshift?b->bankshift:14);
+ if(!bytes||bytes>BITMAP_BANKS*bankbytes)return 0;
  for(j=0;bytes;j++){
-  n=bytes>BITMAP_BANK_BYTES?BITMAP_BANK_BYTES:(u16)bytes;
+  n=bytes>bankbytes?bankbytes:(u16)bytes;
   if(seg_alloc((n+15)/16,&seg)){release_pixels(b);return 0;}
   b->bank[j]=seg;
   fzero(b->bank[j],0,n);bytes-=n;
  }
  return 1;
 }
+static unsigned pixel_bank(struct bitmap*b,u32 at,u16*off)
+{
+ unsigned shift=b->bankshift?b->bankshift:14;
+ *off=(u16)(at&((1UL<<shift)-1));return (unsigned)(at>>shift);
+}
 static void bitmap_write(struct bitmap*b,u32 at,const u8*src,u16 n)
 {
  u16 off,part;unsigned bank;
  while(n){
-  bank=(unsigned)(at/BITMAP_BANK_BYTES);off=(u16)(at%BITMAP_BANK_BYTES);
-  part=(u16)(BITMAP_BANK_BYTES-off);if(part>n)part=n;
+  bank=pixel_bank(b,at,&off);
+  part=(u16)((1UL<<(b->bankshift?b->bankshift:14))-off);if(part>n)part=n;
   fcopy_out(b->bank[bank],off,src,part);src+=part;at+=part;n-=part;
  }
 }
@@ -119,13 +123,13 @@ static int allocate_bitmap(u16 w,u16 h,u16 bpp)
 static u8 bitmap_index(struct bitmap*b,u16 x,u16 y)
 {
  u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
- u8 v=rd8(b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],(u16)(at%BITMAP_BANK_BYTES));
+ u16 off;unsigned bank=pixel_bank(b,at,&off);u8 v=rd8(b->bank[bank],off);
  return b->bpp==1?(v>>(7-(x&7)))&1:(v>>((x&1)?0:4))&15;
 }
 static void bitmap_put(struct bitmap*b,u16 x,u16 y,u8 index)
 {
  u32 at=(u32)y*b->stride+(b->bpp==1?x/8:x/2);
- u16 seg=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],off=(u16)(at%BITMAP_BANK_BYTES);
+ u16 off;unsigned bank=pixel_bank(b,at,&off);u16 seg=b->bank[bank];
  u8 shift=b->bpp==1?7-(x&7):(x&1)?0:4;
  u8 mask=(b->bpp==1?1:15)<<shift;
  wr8(seg,off,(rd8(seg,off)&~mask)|(index<<shift));
@@ -292,17 +296,20 @@ static int clip_axis(long *dst,long *src,long *n,long limit,long slimit){long q;
 static int memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int sm,int sx,int sy,int w,int h,u8 rop)
 {
  u8 map[16],i,index;int row,col,yy,xx;u32 rgb;struct dc pattern;
+ if(opt_trace)wlog("w16: memory op %x %dx%d\n",(unsigned)rop,w,h);
  if(rop==0xe2){
   memset(&pattern,0,sizeof pattern);pattern.brush=memory[dm].brush;
   pattern.brushx=memory[dm].brushx;pattern.brushy=memory[dm].brushy;
   pattern.textcolor=memory[dm].textcolor;pattern.bkcolor=memory[dm].bkcolor;
   if(!gdi_pattern_color(&pattern,dx,dy,&rgb))return 0;
+  if(opt_trace)wlog("w16: E2 depths %u/%u brush %04x pattern %lx dest text/bk %lx/%lx source text/bk %lx/%lx\n",d->bpp,s->bpp,memory[dm].brush,rgb,memory[dm].textcolor,memory[dm].bkcolor,memory[sm].textcolor,memory[sm].bkcolor);
  }
  for(i=0;i<(s->bpp==1?2:16);i++){
   if(d==s|| (s->bpp==1&&d->bpp==1))map[i]=i;
   else if(d->bpp==1)map[i]=bitmap_rgb(s,i)==memory[sm].bkcolor;
   else{rgb=s->bpp==1?(i?memory[dm].bkcolor:memory[dm].textcolor):bitmap_rgb(s,i);map[i]=bitmap_nearest(d,rgb);}
  }
+ if(rop==0xe2&&opt_trace)wlog("w16: E2 map0/map1 %u/%u\n",map[0],map[1]);
  for(row=0;row<h;row++){
   yy=d==s&&dy>sy?h-1-row:row;
   for(col=0;col<w;col++){
@@ -387,8 +394,9 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
                  void (*output)(void*,int,int,int,int),void *ctx)
 {
  struct bitmap eligible,*dest=0;struct flood_capture cap;
- struct poly_point *stack;int m=di(h),i,j,w,hgt,top=0,l,r,ny,xx,yy,start,ok=0;u8 pi=0;
+ struct poly_point *stack;int m=di(h),i,j,w,hgt,top=0,l,r,ny,xx,yy,start,ok=0,stage=0;u8 pi=0;
  GR_SCREEN_INFO si;GR_PALETTE*palette=(GR_PALETTE*)w16_scratch;
+ if(opt_trace)wlog("w16: flood dc %04x point %d,%d boundary %lx mode %d brush %lx\n",h,x,y,boundary,mode,brush);
  if(mode<0||mode>1||(boundary&0xff000000UL))return 0;
  if(d){
   if(d->w){w=d->w->cw;hgt=d->w->ch;}
@@ -399,8 +407,12 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
  }
  if(w<1||hgt<1||w>640||hgt>480||x<0||y<0||x>=w||y>=hgt)return 0;
  memset(&eligible,0,sizeof(eligible));eligible.w=w;eligible.h=hgt;eligible.bpp=1;eligible.stride=(w+7)/8;
- if(!allocate_pixels(&eligible,(u32)eligible.stride*hgt))return 0;
+ /* Small far blocks tolerate fragmentation without borrowing heap or guest RAM. */
+ eligible.bankshift=12;
+ if(!allocate_pixels(&eligible,(u32)eligible.stride*hgt)){wlog("w16: flood mask allocation failed %dx%d\n",w,hgt);return 0;}
+ stage=1;
  stack=malloc(512*sizeof(*stack));if(!stack)goto done;
+ stage=2;
  if(d){
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
   memset(&cap,0,sizeof(cap));cap.mask=&eligible;cap.valid=1;
@@ -409,14 +421,14 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
    u32 rgb=(u32)palette->palette[j].r|((u32)palette->palette[j].g<<8)|((u32)palette->palette[j].b<<16);
    cap.accept[j]=(rgb==boundary)==mode;
   }
-  if(!flood_capture_all(d,&cap))goto done;
+  stage=3;if(!flood_capture_all(d,&cap))goto done;
 #else
   goto done;
 #endif
  }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
   if((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)bitmap_put(&eligible,xx,yy,1);
- if(!bitmap_index(&eligible,x,y))goto done;
- stack[top].x=x;stack[top++].y=y;
+ stage=4;if(!bitmap_index(&eligible,x,y))goto done;
+ stage=5;stack[top].x=x;stack[top++].y=y;
  while(top){
   x=stack[--top].x;y=stack[top].y;
   if(!bitmap_index(&eligible,x,y))continue;
@@ -435,27 +447,27 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
  }
  /* The source has not been changed. Rebuild visited = original minus remaining.
   * All transport/queue/allocation failures still precede the first output. */
+ stage=2;
  if(d){
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
-  cap.rebuild=1;if(!flood_capture_all(d,&cap))goto done;
+  stage=6;cap.rebuild=1;if(!flood_capture_all(d,&cap))goto done;
 #else
   goto done;
 #endif
  }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
   bitmap_put(&eligible,xx,yy,((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)&&!bitmap_index(&eligible,xx,yy));
- for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;){
+ stage=7;for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;){
   if(!bitmap_index(&eligible,xx,yy)){xx++;continue;}
   start=xx;do{xx++;}while(xx<w&&bitmap_index(&eligible,xx,yy));
   if(d)output(ctx,start,yy,xx-start,1);
   else for(i=start;i<xx;i++)memory_rop_pixel(dest,i,yy,pi,memory[m].rop2);
  }
  ok=1;
- done:free(stack);release_pixels(&eligible);return ok;
+ done:if(opt_trace)wlog("w16: flood result %d stage %d size %dx%d\n",ok,stage,w,hgt);free(stack);release_pixels(&eligible);return ok;
 }
 u32 g_BitBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(18));int m=di(AW(8)),dm=di(AW(18)),db=-1,b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
- if(opt_trace)wlog("w16: blit dc %04x <- %04x rop %lx dst %d,%d src %d,%d size %d,%d\n",AW(18),AW(8),rop,(int)dx,(int)dy,(int)sx,(int)sy,(int)w,(int)h);
  if((!d&&dm<0)||(rop!=0x00cc0020UL&&rop!=0x008800c6UL&&rop!=0x00e20746UL&&rop!=0x00220326UL&&rop!=0x00660046UL)||w<=0||h<=0)return 0;
  {
   int ax=dx,ay=dy,bx=sx,by=sy;struct dc*src=dc_get(AW(8));
@@ -466,7 +478,6 @@ u32 g_BitBlt(u16 ss,u16 ap)
   if(m<0)return dm>=0&&rop==0x00cc0020UL?capture_copy(src,dm,dx,dy,sx,sy,w,h):0;
  }
  b=bi(memory[m].bitmap);if(b<0)return 0;s=&bitmaps[b];
- if(opt_trace)wlog("w16: blit mapped dst %d,%d src %d,%d depths %u/%u\n",(int)dx,(int)dy,(int)sx,(int)sy,dm>=0&&bi(memory[dm].bitmap)>=0?bitmaps[bi(memory[dm].bitmap)].bpp:0,s->bpp);
  if(dm>=0){db=bi(memory[dm].bitmap);if(db<0||(rop!=0x00cc0020UL&&rop!=0x00220326UL&&rop!=0x00660046UL&&rop!=0x00e20746UL))return 0;dw=bitmaps[db].w;dh=bitmaps[db].h;}
  else if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
  if(!clip_axis(&dx,&sx,&w,dw,s->w)||!clip_axis(&dy,&sy,&h,dh,s->h))return 1;
@@ -528,7 +539,7 @@ u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set)
  if(count>size)count=size;
  if((u32)off+count>65536UL || ((u32)seg<<4)+off+count>0x100000UL)return 0;
  for(at=0;at<count;at++){
-  u16 bank=b->bank[(unsigned)(at/BITMAP_BANK_BYTES)],bo=(u16)(at%BITMAP_BANK_BYTES);
+  u16 bo;unsigned bn=pixel_bank(b,at,&bo);u16 bank=b->bank[bn];
   if(set)wr8(bank,bo,rd8(seg,(u16)(off+at)));
   else wr8(seg,(u16)(off+at),rd8(bank,bo));
  }
@@ -842,8 +853,7 @@ int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
 {
  struct bitmap *b;struct memory_dc *d;int m=di(h),bb,k,row,col,width=0,cw;
  u16 a;u8 fg,bg,c;long px,py,drawx,tx,ty;static int checked,compatible;
- if(opt_trace)wlog("w16: memory text dc %04x x %d y %d count %d\n",h,x,y,n);
- if(m<0||(bb=bi(memory[m].bitmap))<0||n<0||n>128||(u32)off+n>65536UL){if(opt_trace)wlog("w16: memory text rejected DC/bitmap/count\n");return 0;}
+ if(m<0||(bb=bi(memory[m].bitmap))<0||n<0||n>128||(u32)off+n>65536UL)return 0;
  if(!checked){
   int i;GR_SIZE sw,sh,sb;char ch;
   compatible=1;
@@ -863,7 +873,6 @@ int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
  x=tx;y=ty;
  if(!memory_point(m,&x,&y))return 0;
  fg=bitmap_nearest(b,d->textcolor);bg=bitmap_nearest(b,d->bkcolor);drawx=x;
- if(opt_trace)wlog("w16: memory text bitmap %ux%u/%u mapped %d,%d width %d fg %u bg %u mode %u align %u\n",b->w,b->h,b->bpp,x,y,width,fg,bg,d->bkmode,a);
  for(k=0;k<n;k++){
   c=rd8(seg,off+k);if(c<32)c=32;cw=rasterfont_width(c);
   for(row=0;row<13;row++){

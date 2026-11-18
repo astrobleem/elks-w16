@@ -35,7 +35,7 @@ static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
  if(seg==99){assert((u32)off+n<=65536);memcpy(output+off,p,n);outputwrites++;}
  else{assert(seg>=1&&seg<=32&&segused[seg-1]&&(u32)off+n<=16384);memcpy(rams[seg-1]+off,p,n);}
 }
-static int failafter=-1;
+static int failafter=-1,maxallocbytes=16384;
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[640*480],pixdata[640*480],foreground=77;static int mode=3;
 
@@ -76,7 +76,7 @@ static int ne_read(struct module*m,u32 o,void*p,u16 n){
  if(++readcount==readfail)return -1;
  if(o+n>length)return -1;memcpy(p,resource+o,n);return 0;
 }
-static int seg_alloc(u16 n,u16*s){int i;if(segfail||failafter==0)return -1;if(failafter>0)failafter--;assert(n*16<=sizeof ram);for(i=0;i<32&&segused[i];i++);if(i==32)return -1;segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
+static int seg_alloc(u16 n,u16*s){int i;if(segfail||failafter==0||n*16>maxallocbytes)return -1;if(failafter>0)failafter--;assert(n*16<=sizeof ram);for(i=0;i<32&&segused[i];i++);if(i==32)return -1;segused[i]=1;seglive++;*s=i+1;memset(rams[i],0xa5,sizeof ram);return 0;}
 static void seg_free(u16 s){assert(s>=1&&s<=32&&segused[s-1]);segused[s-1]=0;seglive--;}
 static void fzero(u16 s,u16 o,u16 n){assert(s>=1&&s<=32&&segused[s-1]&&o+n<=sizeof ram);memset(rams[s-1]+o,0,n);}
 static u8 rd8(u16 s,u16 o){if(s==99)return output[o];assert(s>=1&&s<=32&&segused[s-1]&&o<sizeof ram);return rams[s-1][o];}
@@ -116,7 +116,6 @@ static struct gobj*obj_get(u16 h){return h==1?&testbrush:0;}
 code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern phase')]
 code+=r"""
 typedef int GR_SIZE;
-static int opt_trace;
 #define wlog(...) ((void)0)
 static u16 testfont_bits[224*13];static u8 testfont_width[224];
 static u8 rasterfont_width(u8 c){return testfont_width[c<32?0:c-32];}
@@ -445,6 +444,18 @@ static void masked_pattern_test(void){
  bitmap_shutdown();memset(bmps,0,sizeof bmps);dest.textcolor=0x123456;
  dest.brushx=dest.brushy=dest.brush=0;testbrush.style=0;
 }
+static void fragmented_flood_test(void){
+ u16 d,b;int x,y;bitmap_shutdown();
+ native_palette.count=16;for(x=0;x<16;x++)native_palette.palette[x].r=native_palette.palette[x].g=native_palette.palette[x].b=x*17;
+ d=dcnew();b=bitmap_create(256,256,1,4,0,0);assert(b&&bitmap_select(d,b));
+ maxallocbytes=4096;failafter=1;
+ assert(!bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));assert(seglive==2);
+ assert(bitmap_index(&bitmaps[bi(b)],12,13)==0);failafter=-1;
+ assert(bitmap_flood(d,0,12,13,0,1,0xffffff,0,0));
+ for(y=0;y<256;y++)for(x=0;x<256;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==15);
+ maxallocbytes=16384;bitmap_shutdown();clean();
+ printf("flood fragmentation: 8192-byte mask succeeds with only 4096-byte blocks available\n");
+}
 static void memory_text_test(void){
  u16 d,b;int x,y,k;bitmap_shutdown();
  for(k=0;k<224;k++){testfont_width[k]=3;for(y=0;y<13;y++)testfont_bits[k*13+y]=0xa000;}
@@ -515,6 +526,7 @@ static void memory_mask_test(void){
 int main(int argc,char**argv){
  memory_rop_truth_test();memory_mask_test();
  stock_gray_mask_test();
+ fragmented_flood_test();
  memory_text_test();
  masked_pattern_test();
  small_ddb_bits_test();
