@@ -17,3 +17,6 @@ __pycache__/
 
 /src/w16-medium.ld
 /src/w16-medium.ld.tmp
+
+/src/rasterfont-data.h
+/src/rasterfont-data.h.tmp

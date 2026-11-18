@@ -264,3 +264,6 @@ int gdi_pattern_color(struct dc*,int,int,u32*);
 
 u16 bitmap_textmode(u16,u16,int);
 int bitmap_text(u16,int,int,u16,u16,int);
+
+u8 rasterfont_width(u8);
+u16 rasterfont_row(u8,int);

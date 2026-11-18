@@ -815,9 +815,8 @@ u32 g_SetDIBitsToDevice(u16 ss,u16 ap)
  release_bitmap(i);return hh;
 }
 
-/* The data object is compiled unchanged from the existing Nano-X source.
- * This is the same proportional system raster font used by screen DCs. */
-extern MWCFONT font_winFreeSansSerif11x13;
+/* Losslessly packed from the same proportional font used by screen DCs. */
+
 u16 bitmap_textmode(u16 h,u16 value,int align)
 {
  int m=di(h);u16 old;if(m<0)return 0;
@@ -827,7 +826,6 @@ u16 bitmap_textmode(u16 h,u16 value,int align)
 }
 int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
 {
- MWCFONT *f=&font_winFreeSansSerif11x13;
  struct bitmap *b;struct memory_dc *d;int m=di(h),bb,k,row,col,width=0,cw;
  u16 a;u8 fg,bg,c;long px,py,drawx,tx,ty;static int checked,compatible;
  if(m<0||(bb=bi(memory[m].bitmap))<0||n<0||n>128||(u32)off+n>65536UL)return 0;
@@ -835,12 +833,12 @@ int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
   int i;GR_SIZE sw,sh,sb;char ch;
   compatible=1;
   for(i=0;i<256;i++){ch=(char)i;gdi_text_size(&ch,1,&sw,&sh,&sb);
-   if(sw!=f->width[i<32?0:i-32]||sh!=13||sb!=11){compatible=0;break;}}
+   if(sw!=rasterfont_width(i)||sh!=13||sb!=11){compatible=0;break;}}
   checked=1;
  }
  if(!compatible)return 0;
  d=&memory[m];b=&bitmaps[bb];a=d->textalign;
- for(k=0;k<n;k++){c=rd8(seg,off+k);width+=f->width[c<32?0:c-32];}
+ for(k=0;k<n;k++){c=rd8(seg,off+k);width+=rasterfont_width(c);}
  if(a&1){x=d->curx;y=d->cury;}
  tx=x;ty=y;
  if((a&6)==6)tx-=width/2;else if(a&2)tx-=width;
@@ -850,9 +848,9 @@ int bitmap_text(u16 h,int x,int y,u16 seg,u16 off,int n)
  if(!memory_point(m,&x,&y))return 0;
  fg=bitmap_nearest(b,d->textcolor);bg=bitmap_nearest(b,d->bkcolor);drawx=x;
  for(k=0;k<n;k++){
-  c=rd8(seg,off+k);if(c<32)c=32;cw=f->width[c-32];
+  c=rd8(seg,off+k);if(c<32)c=32;cw=rasterfont_width(c);
   for(row=0;row<13;row++){
-   u16 bits=f->bits[(c-32)*13+row];py=(long)y+row;
+   u16 bits=rasterfont_row(c,row);py=(long)y+row;
    if(py<0||py>=b->h)continue;
    for(col=0;col<cw;col++){
     int ink=(bits&(0x8000u>>col))!=0;px=drawx+col;

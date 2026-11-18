@@ -19,8 +19,9 @@ OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o p
 
 all: w16
 
-w16: $(OBJS) $(NANOX_LIB) w16-medium.ld
+w16: $(OBJS) $(NANOX_LIB) w16-medium.ld ../scripts/check-near-budget.py
 	$(CC) $(LDFLAGS) -T w16-medium.ld -Wl,--gc-sections -o $@ $(OBJS) $(NANOX_LIB)
+	python3 ../scripts/check-near-budget.py $@ || { rm -f $@; exit 1; }
 	ia16-elf-size $@ 2>/dev/null || true
 
 w16-medium.ld: ../scripts/w16-link-layout.sh
@@ -45,10 +46,12 @@ w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h wapi.h
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
-	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp
+	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp
 
 .PHONY: all host clean
 
-# Use Nano-X's original licensed font data, not a different approximation.
-rasterfont.o: $(MWDIR)/src/fonts/compiled/winFreeSansSerif11x13.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+# Preserve every original font pixel while avoiding wasteful near-data padding.
+rasterfont.o: rasterfont-data.h
+rasterfont-data.h: $(MWDIR)/src/fonts/compiled/winFreeSansSerif11x13.c ../scripts/pack-rasterfont.py
+	python3 ../scripts/pack-rasterfont.py $< > $@.tmp
+	mv $@.tmp $@

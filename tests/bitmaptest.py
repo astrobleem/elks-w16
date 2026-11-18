@@ -116,9 +116,9 @@ static struct gobj*obj_get(u16 h){return h==1?&testbrush:0;}
 code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern phase')]
 code+=r"""
 typedef int GR_SIZE;
-typedef struct {u16 *bits;u8 *width;} MWCFONT;
 static u16 testfont_bits[224*13];static u8 testfont_width[224];
-MWCFONT font_winFreeSansSerif11x13={testfont_bits,testfont_width};
+static u8 rasterfont_width(u8 c){return testfont_width[c<32?0:c-32];}
+static u16 rasterfont_row(u8 c,int row){return testfont_bits[(c<32?0:c-32)*13+row];}
 static void gdi_text_size(const char*s,int n,GR_SIZE*w,GR_SIZE*h,GR_SIZE*b){
  *w=0;while(n--){u8 c=*s++;*w+=testfont_width[c<32?0:c-32];}*h=13;*b=11;
 }
