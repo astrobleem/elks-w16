@@ -316,7 +316,8 @@ const struct api api_table[] = {
     { G, 106, "SetBitmapBits", 10, 0, H(g_SetBitmapBits) },
     { G, 149, "GETBRUSHORG", 0, API_MISSING, 0 },
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
-    { G, 156, "CREATEDISCARDABLEBITMAP", 0, API_MISSING, 0 },
+    /* Discardability permits reclamation; retain these owned pixels until DeleteObject. */
+    { G, 156, "CreateDiscardableBitmap", 6, 0, H(g_CreateCompatibleBitmap) },
     { G, 163, "SETBITMAPDIMENSION", 0, API_MISSING, 0 },
     { G, 360, "CREATEPALETTE", 4, 0, H(g_CreatePalette) },
     { G, 363, "GETPALETTEENTRIES", 10, 0, H(g_GetPaletteEntries) },

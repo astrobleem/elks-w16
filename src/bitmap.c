@@ -200,15 +200,15 @@ static void polygon_memory_span(void *ctx,int x,int y,int width,int kind)
  struct polygon_memory *s=ctx;int end=x+width;
  for(;x<end;x++)memory_rop_pixel(s->b,x,y,kind==2?s->pen:s->brush,s->rop);
 }
-int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int np,u32 brush,int nb)
+int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int stroke,u32 brush,int nb)
 {
  int m=di(h),b,i,count=n<0?-n:n;struct polygon_memory out;
  if(m<0||(b=bi(memory[m].bitmap))<0)return 0;
  for(i=0;i<(count?count:2);i++)if(!memory_point(m,&p[i].x,&p[i].y))return 0;
  out.b=&bitmaps[b];out.pen=bitmap_nearest(out.b,pen);
  out.brush=bitmap_nearest(out.b,brush);out.rop=memory[m].rop2;
- return n?polygon_raster(p,n,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out):
-          oval_raster(p,out.b->w,out.b->h,!np,!nb,polygon_memory_span,&out);
+ return n?polygon_raster(p,n,out.b->w,out.b->h,stroke!=0,!nb,polygon_memory_span,&out):
+          oval_raster(p,out.b->w,out.b->h,stroke,!nb,polygon_memory_span,&out);
 }
 int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)
 {
@@ -398,7 +398,7 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
 u32 g_BitBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(18));int m=di(AW(8)),dm=di(AW(18)),db=-1,b,row,col,end,bit;struct bitmap*s;long dx=(i16)AW(16),dy=(i16)AW(14),w=(i16)AW(12),h=(i16)AW(10),sx=(i16)AW(6),sy=(i16)AW(4);int dw,dh;GR_SCREEN_INFO screen;GR_GC_INFO old;u32 rop=AL(0);
- if((!d&&dm<0)||(rop!=0x00cc0020UL&&rop!=0x008800c6UL)||w<=0||h<=0)return 0;
+ if((!d&&dm<0)||(rop!=0x00cc0020UL&&rop!=0x008800c6UL&&rop!=0x00e20746UL)||w<=0||h<=0)return 0;
  {
   int ax=dx,ay=dy,bx=sx,by=sy;struct dc*src=dc_get(AW(8));
   if(!(dm>=0?memory_point(dm,&ax,&ay):gdi_map_point(d,&ax,&ay)))return 0;
@@ -412,6 +412,24 @@ u32 g_BitBlt(u16 ss,u16 ap)
  else if(d->w){dw=d->w->cw;dh=d->w->ch;}else{GrGetScreenInfo(&screen);dw=screen.cols;dh=screen.rows;}
  if(!clip_axis(&dx,&sx,&w,dw,s->w)||!clip_axis(&dy,&sy,&h,dh,s->h))return 1;
  if(dm>=0){memory_copy(&bitmaps[db],dm,dx,dy,s,m,sx,sy,w,h);return 1;}
+ /* E2 is S ? P : D. A monochrome source expands using the destination
+  * text/background colours; admit only full-bit masks (also their inverse).
+  * No readback or destination rewrite is needed for the zero-mask pixels. */
+ if(rop==0x00e20746UL){
+  u32 rgb;int invert;
+  if(s->bpp!=1||!((d->textcolor==0&&d->bkcolor==0xffffffUL)||
+     (d->textcolor==0xffffffUL&&d->bkcolor==0))||
+     !gdi_pattern_color(d,dx,dy,&rgb))return 0;
+  invert=d->textcolor!=0;
+  GrGetGCInfo(d->gc,&old);GrSetGCMode(d->gc,GR_MODE_COPY);
+  for(row=0;row<h;row++)for(col=0;col<w;col++){
+   if(bitmap_index(s,sx+col,sy+row)==invert)continue;
+   gdi_pattern_color(d,dx+col,dy+row,&rgb);
+   GrSetGCForeground(d->gc,rgb_to_gr(rgb));
+   GrFillRect(d->wid,d->gc,dx+col,dy+row,1,1);
+  }
+  GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);return 1;
+ }
  GrGetGCInfo(d->gc,&old);
  /* Query-only native screen-AND capability; old/Tandy backends refuse. */
  if(rop==0x008800c6UL&&!(old.mode&0x2000))return 0;

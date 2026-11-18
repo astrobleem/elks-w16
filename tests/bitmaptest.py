@@ -17,7 +17,7 @@ static GR_PALETTE native_palette,scratch;
 #define w16_scratch (&scratch)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
 typedef struct{int foreground,mode;}GR_GC_INFO;
-struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey;};
+struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey,brushx,brushy;u16 brush;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
 static u16 args[14];
@@ -102,6 +102,17 @@ code+='u32 bitmap_origin(u16,int,int,i16,i16);\n'
 code+=(root/'src/mapping.c').read_text().replace('#include "wapi.h"','')
 code+=(root/'src/polygon.c').read_text()
 code+=(root/'src/oval.c').read_text()
+gdi=(root/'src/gdi.c').read_text()
+code+=r"""
+#define OBJ_BRUSH 2
+#define BS_PATTERN 3
+#define MAXBMP 4
+struct gobj {int type,null,style,width;u32 color;};
+static struct gobj testbrush={OBJ_BRUSH,0,0,0,0};
+static struct {u8 used,w,h,mono;u16 rows[16];u32 colors[2];} bmps[MAXBMP];
+static struct gobj*obj_get(u16 h){return h==1?&testbrush:0;}
+"""
+code+=gdi[gdi.index('int gdi_pattern_color('):gdi.index('/* Monochrome pattern phase')]
 code+=(root/'src/bitmap.c').read_text().replace('#include "wapi.h"','').replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text()
 code+=gdi[gdi.index('u32 g_GetBkColor('):gdi.index('u32 g_SetBkColor(')]
@@ -355,7 +366,46 @@ static void flood_output(void*ctx,int x,int y,int w,int kind){
  int i;(void)ctx;assert(kind==1&&x>=0&&y>=0&&x+w<=100&&y<100);
  for(i=x;i<x+w;i++)surface[y*100+i]=7;
 }
+
+static void masked_pattern_test(void){
+ u16 b,d;int x,y,invert,mono;u32 before[10000];
+ setup(8,8,1);b=load();d=dcnew();assert(bitmap_select(d,b));
+ dest.brush=1;dest.brushx=-2;dest.brushy=3;
+ testbrush.style=BS_PATTERN;testbrush.width=0;
+ bmps[0].used=1;bmps[0].w=3;bmps[0].h=2;
+ bmps[0].rows[0]=0xa000;bmps[0].rows[1]=0x4000;
+ bmps[0].colors[0]=0x123456;bmps[0].colors[1]=0xabcdef;
+ for(invert=0;invert<2;invert++)for(mono=0;mono<2;mono++){
+  dest.textcolor=invert?0xffffff:0;dest.bkcolor=invert?0:0xffffff;
+  bmps[0].mono=mono;foreground=77;mode=3;
+  for(y=0;y<100;y++)for(x=0;x<100;x++)surface[y*100+x]=0x656565;
+  args[0]=0x746;args[1]=0xe2;args[2]=1;args[3]=2;args[4]=d;
+  args[5]=5;args[6]=7;args[7]=4;args[8]=-1;args[9]=9;
+  assert(g_BitBlt(0,0));assert(foreground==77&&mode==3);
+  for(y=0;y<100;y++)for(x=0;x<100;x++){
+   u32 expect=0x656565;
+   if(x<5&&y>=4&&y<9&&bitmap_index(&bitmaps[bi(b)],x+3,y-3)!=invert){
+    int py=((y-3)%2+2)%2,px=(x+2)%3,v=(bmps[0].rows[py]>>(15-px))&1;
+    expect=mono?(v?dest.bkcolor:dest.textcolor):bmps[0].colors[v];
+   }
+   assert(surface[y*100+x]==expect);
+  }
+ }
+ memcpy(before,surface,sizeof before);dest.textcolor=0x123456;
+ assert(!g_BitBlt(0,0));assert(!memcmp(before,surface,sizeof before));
+ dest.textcolor=0;dest.bkcolor=0xffffff;testbrush.style=99;
+ assert(!g_BitBlt(0,0));assert(!memcmp(before,surface,sizeof before));
+ testbrush.style=BS_PATTERN;bmps[0].used=0;
+ assert(!g_BitBlt(0,0));assert(!memcmp(before,surface,sizeof before));bmps[0].used=1;
+ args[9]=d;assert(!g_BitBlt(0,0));args[9]=9;
+ testbrush.style=0;testbrush.color=0xfedcba;assert(g_BitBlt(0,0));
+ assert(surface[4*100]==(bitmap_index(&bitmaps[bi(b)],3,1)?0xfedcba:before[4*100]));
+ puts("Masked pattern E2: clipped/inverted mono masks, device brush phase, preserved pixels and atomic refusals passed");
+ bitmap_shutdown();memset(bmps,0,sizeof bmps);dest.textcolor=0x123456;
+ dest.brushx=dest.brushy=dest.brush=0;testbrush.style=0;
+}
 int main(int argc,char**argv){
+ masked_pattern_test();
  small_ddb_bits_test();
  ddb_bits_test();
  origin_tests();
@@ -786,7 +836,7 @@ int main(int argc,char**argv){
   for(rop=1;rop<=16;rop++)for(src=0;src<16;src++)for(dst=0;dst<16;dst++){
    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,dst);
    bitmap_rop2(d,rop);bitmap_moveto(d,8,9);
-   assert(bitmap_polygon(d,square,4,src*0x111111UL,0,src*0x111111UL,0));
+   assert(bitmap_polygon(d,square,4,src*0x111111UL,1,src*0x111111UL,0));
    assert(memory[di(d)].curx==8&&memory[di(d)].cury==9);
    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
     int expected=dst,bit;
@@ -799,10 +849,25 @@ int main(int argc,char**argv){
   {struct poly_point oval[3]={{2,2},{7,7},{5,5}};
    for(rop=1;rop<=16;rop++){
     for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,10);
-    bitmap_rop2(d,rop);assert(bitmap_polygon(d,oval,0,0xffffff,0,0x555555,0));
+    bitmap_rop2(d,rop);assert(bitmap_polygon(d,oval,0,0xffffff,1,0x555555,0));
     for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
      int dx=xx-4,dy=yy-4,inside=dx*dx+dy*dy<=6,edge=inside&&
       ((dx-1)*(dx-1)+dy*dy>6||(dx+1)*(dx+1)+dy*dy>6||dx*dx+(dy-1)*(dy-1)>6||dx*dx+(dy+1)*(dy+1)>6);
+     int expected=10,bit,source=edge?15:5;
+     if(inside){expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((source>>bit)&1)<<1)|((10>>bit)&1)))&1)<<bit;}
+     assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
+    }
+   }
+  }
+  /* Inside-frame width two through the memory path, including XOR.
+   * Each ring/interior destination is updated exactly once. */
+  {struct poly_point frame[3]={{1,1},{9,9},{0,0}};
+   for(rop=1;rop<=16;rop++){
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,10);
+    bitmap_rop2(d,rop);assert(bitmap_polygon(d,frame,0,0xffffff,2,0x555555,0));
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
+     int inside=xx>=1&&xx<9&&yy>=1&&yy<9;
+     int edge=inside&&(xx<3||xx>=7||yy<3||yy>=7);
      int expected=10,bit,source=edge?15:5;
      if(inside){expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((source>>bit)&1)<<1)|((10>>bit)&1)))&1)<<bit;}
      assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);

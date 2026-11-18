@@ -464,6 +464,21 @@ static int brush_pat(struct dc *d)
     return o && o->type == OBJ_BRUSH && o->style == BS_PATTERN && bmps[o->width].used ? o->width : -1;
 }
 
+/* Sample a validated solid or snapshotted pattern brush in device coordinates.
+ * Monochrome pattern bits use the destination DC text/background colours. */
+int gdi_pattern_color(struct dc*d,int x,int y,u32*color)
+{
+ struct gobj*o=obj_get(d->brush);int i,bit;
+ if(!o||o->type!=OBJ_BRUSH||o->null)return 0;
+ if(!o->style){*color=o->color;return 1;}
+ if(o->style!=BS_PATTERN||(i=o->width)>=MAXBMP||!bmps[i].used)return 0;
+ x=((long)x-d->brushx)%bmps[i].w;if(x<0)x+=bmps[i].w;
+ y=((long)y-d->brushy)%bmps[i].h;if(y<0)y+=bmps[i].h;
+ bit=(bmps[i].rows[y]>>(15-x))&1;
+ *color=bmps[i].mono?(bit?d->bkcolor:d->textcolor):bmps[i].colors[bit];
+ return 1;
+}
+
 /* Monochrome pattern phase is relative to the DC brush origin. Scratch holds
  * bounded rows; each packet leaves room for the Nano-X request header. */
 static int pat_fill(struct dc *d, int x, int y, int w, int h, int bi)
@@ -574,12 +589,16 @@ u32 g_ExtFloodFill(u16 ss,u16 ap)
 static int draw_shape(u16 h,struct poly_point*p,int n)
 {
  struct dc*d=dc_get(h);struct gobj *pen,*brush;
- struct polygon_screen out;GR_SCREEN_INFO si;int i,width,height,count=n<0?-n:n;
+ struct polygon_screen out;GR_SCREEN_INFO si;int i,width,height,stroke,count=n<0?-n:n;
  pen=obj_get(d?d->pen:bitmap_object(h,OBJ_PEN,0));
  brush=obj_get(d?d->brush:bitmap_object(h,OBJ_BRUSH,0));
- if(!pen||!brush||(!pen->null&&(pen->style||pen->width>1))||
-    (n>=0&&!brush->null&&brush->style))return 0;
- if(!d)return bitmap_polygon(h,p,n,pen->color,pen->null,brush->color,brush->null);
+ if(!pen||!brush||(n>=0&&!brush->null&&brush->style))return 0;
+ stroke=pen->null?0:pen->width?pen->width:1;
+ if(stroke&&(n?(pen->style||stroke>1):
+     ((pen->style!=0&&pen->style!=6)||(stroke>1&&pen->style!=6)||stroke>640)))return 0;
+ /* Thick logical widths are supported in MM_TEXT only, never silently scaled. */
+ if(!n&&stroke>1&&d&&d->mapmode!=1)return 0;
+ if(!d)return bitmap_polygon(h,p,n,pen->color,stroke,brush->color,brush->null);
  if(n){for(i=0;i<count;i++)if(!gdi_map_point(d,&p[i].x,&p[i].y))return 0;}
  else{
   /* Corner diameters currently use MM_TEXT units. Ellipse uses the full box. */
@@ -590,7 +609,7 @@ static int draw_shape(u16 h,struct poly_point*p,int n)
  else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
  out.d=d;out.pen=rgb_to_gr(pen->color);out.brush=rgb_to_gr(brush->color);
  return n?polygon_raster(p,n,width,height,!pen->null,!brush->null,polygon_screen_span,&out):
-          oval_raster(p,width,height,!pen->null,!brush->null,polygon_screen_span,&out);
+          oval_raster(p,width,height,stroke,!brush->null,polygon_screen_span,&out);
 }
 /* Polygon(hdc, far POINT[], count). Does not change the current position. */
 static u32 polygon_api(u16 ss,u16 ap,int closed)

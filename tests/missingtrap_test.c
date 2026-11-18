@@ -40,6 +40,9 @@ int main(void) {
  assert(api_table[api_find_ord(MOD_KERNEL,6)].argbytes==6);
  assert(api_table[api_find_ord(MOD_KERNEL,154)].argbytes==4);
  /* CreateHatchBrush remains unsupported; RoundRect is now implemented. */
+ assert(api_table[api_find_ord(MOD_GDI,156)].argbytes==6);
+ assert(!api_table[api_find_ord(MOD_GDI,156)].flags);
+ assert(api_find_name(MOD_GDI,"CreateDiscardableBitmap")==api_find_ord(MOD_GDI,156));
  assert(api_find_ord(MOD_GDI,58)<0);
  assert(api_find_ord(MOD_USER,175)>=0);
  assert(api_table[api_find_ord(MOD_USER,175)].argbytes==6);

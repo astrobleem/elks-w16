@@ -246,7 +246,10 @@ void scrollbar_forget(u16 hwnd);
 u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set);
 
 struct poly_point;
+/* Pen argument is stroke width (0 = null); widths >1 are oval-only. */
 int bitmap_polygon(u16,struct poly_point *,int,u32,int,u32,int);
 
 int bitmap_flood(u16,struct dc*,int,int,u32,int,u32,void (*)(void*,int,int,int,int),void*);
 int bitmap_pattern(u16,u8 *,u8 *,u16 *,u32 *);
+
+int gdi_pattern_color(struct dc*,int,int,u32*);

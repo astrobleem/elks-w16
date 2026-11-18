@@ -44,6 +44,7 @@ static void GrFillRect(int wid,int gc,int x,int y,int w,int h)
 ''' +s[a:b]+r'''
 int main(void){
  u16 square[]={2,2,6,2,6,6,2,6};int x,y;
+ struct poly_point box[3]={{1,1},{13,13},{6,6}};
  args[0]=1;args[1]=1;assert(g_SetPolyFillMode(0,0)==1);
  args[1]=2;assert(g_SetPolyFillMode(0,0)==1);
  args[1]=99;assert(!g_SetPolyFillMode(0,0));args[1]=1;
@@ -60,7 +61,16 @@ int main(void){
  args[0]=129;assert(!g_Polygon(0,0));args[0]=1;assert(!g_Polygon(0,0));args[0]=4;
  args[1]=65530;assert(!g_Polygon(0,0));args[1]=0;args[2]=0;assert(!g_Polygon(0,0));
  args[2]=65535;args[1]=16;assert(!g_Polygon(0,0));assert(!g_Polygon(0,65530));
- assert(!writes);puts("Polygon API: Pascal decoding, mapped display output, memory dispatch and atomic refusals passed");return 0;
+ assert(!writes);
+ /* Inside-frame thick outlines are accepted for bounded shapes only. */
+ objects[0].style=6;objects[0].width=2;objects[1].null=1;
+ assert(draw_shape(1,box,0)&&writes>0);
+ memset(screen,0,sizeof screen);writes=0;
+ box[0].x=box[0].y=1;box[1].x=box[1].y=13;
+ dc.mapmode=2;assert(!draw_shape(1,box,0)&&!writes);dc.mapmode=1;
+ objects[0].style=1;assert(!draw_shape(1,box,0)&&!writes);
+ objects[0].style=0;assert(!draw_shape(1,box,0)&&!writes);
+ puts("Polygon API: Pascal decoding, mapped display output, memory dispatch and atomic refusals passed");return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as td:

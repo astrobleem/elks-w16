@@ -26,8 +26,26 @@ int main(void){
    }
   }
  }
+ /* Independent 64-bit outer-minus-inset oracle for inside-frame widths.
+  * Includes narrow/collapsed interiors, asymmetric corners and both brushes. */
+ for(w=2;w<=38;w+=4)for(h=2;h<=38;h+=4)for(k=0;k<3;k++){
+  a=k==0?w:k==1?w/2:0;b=k==0?h:k==1?h/3:0;
+  p[0].x=p[0].y=3;p[1].x=3+w;p[1].y=3+h;p[2].x=a;p[2].y=b;
+  for(pen=2;pen<=22;pen+=4)for(brush=0;brush<2;brush++){
+   int iw=w-2*pen,ih=h-2*pen,ia=a>2*pen?a-2*pen:0,ib=b>2*pen?b-2*pen:0;
+   memset(pixels,0,sizeof pixels);memset(seen,0,sizeof seen);
+   assert(oval_raster(p,80,80,pen,brush,span,0));
+   for(y=0;y<80;y++)for(x=0;x<80;x++){
+    int xx=x-3,yy=y-3,in=inside(xx,yy,w,h,a,b);
+    int hole=iw>0&&ih>0&&inside(xx-pen,yy-pen,iw,ih,ia,ib);
+    assert(pixels[y][x]==(in&&!hole?2:brush&&in?1:0));count++;
+   }
+  }
+ }
  p[0].x=-3;p[0].y=-5;p[1].x=12;p[1].y=10;p[2].x=p[2].y=10;
  memset(seen,0,sizeof seen);assert(oval_raster(p,80,80,1,1,span,0));
+ memset(seen,0,sizeof seen);assert(oval_raster(p,80,80,4,1,span,0));
+ assert(!oval_raster(p,80,80,641,1,span,0));
  p[1].x=700;assert(!oval_raster(p,80,80,1,1,span,0));
  printf("Ellipse/RoundRect: %lu independent fill/outline pixel checks passed\n",count);return 0;
 }
