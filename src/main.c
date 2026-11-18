@@ -312,7 +312,9 @@ int main(int argc, char **argv)
         ne_free(&m); ne_free(&dll);
         w16_thunk_done();
         wlog("w16: check only (-n): all segments freed\n");
-        return 0;
+        /* Use explicit libc teardown, as on the run path. Returning from
+         * this check-only path has crashed in ELKS medium-model guests. */
+        exit(0);
     }
     w16_mod = &m;
     if (user_init()) {

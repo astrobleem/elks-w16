@@ -89,6 +89,13 @@ void w16_setvect(u16 v, u16 o, u16 s) { (void)v; (void)o; (void)s; }
 void w16_int21(void) {}
 u16 w16_init16(const u16 *r) { (void)r; event("dll_init"); return fail("dll_init") ? 7 : 1; }
 u16 w16_start16(const u16 *r) { (void)r; event("run"); return 0; }
+/* A host main return also exits successfully, so record explicit libc exit
+ * separately. This checks the selected teardown path, not ELKS CRT execution. */
+static void test_exit(int status) __attribute__((noreturn));
+static void test_exit(int status) {
+    printf("libc_exit:%d\n", status); fflush(stdout); exit(status);
+}
+#define exit test_exit
 '''
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -121,10 +128,13 @@ with tempfile.TemporaryDirectory() as tmp:
             assert events.index('connect') < events.index('dll_metadata') < events.index('dll_load')
         assert events.count('connect') == events.count('reuse') == events.count('close') == 1
         assert events.index('reuse') < events.index('run') < events.index('close')
-        assert events[-1] == 'thunk_done'
+        assert events[-2:] == ['thunk_done', 'libc_exit:0']
         events = run(check=True, dll=dll)
         assert not set(events) & {'connect', 'reuse', 'close', 'user_init', 'run'}
-        assert events[-1] == 'thunk_done'
+        assert events[-2:] == ['thunk_done', 'libc_exit:0']
+        assert events.index('free_exe') < events.index('thunk_done')
+        if dll:
+            assert events.index('free_dll') < events.index('thunk_done')
 
     assert run('thunk_init') == ['thunk_init']
     events = run('metadata')
@@ -145,6 +155,7 @@ with tempfile.TemporaryDirectory() as tmp:
     events = run('user_init')
     assert events.count('close') == 1 and 'run' not in events and events[-1] == 'thunk_done'
     events = run('dll_init')
-    assert 'run' not in events and events.count('close') == 1 and events[-1] == 'thunk_done'
+    assert 'run' not in events and events.count('close') == 1
+    assert events[-2:] == ['thunk_done', 'libc_exit:7']
 
 print('ELKS startup connection ordering, check-only isolation and failure cleanup checks passed')
