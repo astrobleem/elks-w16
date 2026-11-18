@@ -266,7 +266,7 @@ int main(int argc, char **argv)
     }
     if (w16_thunk_init()) {
         wlog("w16: another w16 process shares this program's code segment; run one Win16 program at a time\n");
-        return 1;
+        exit(1);
     }
     dll.fd=-1;
     e = ne_open(&m, path);
@@ -305,7 +305,8 @@ int main(int argc, char **argv)
         ne_free(&m); ne_free(&dll);
         if (graphics_open) GrClose();
         w16_thunk_done();
-        return e;
+        /* Never unwind through the ELKS medium-model CRT on rejection. */
+        exit(e);
     }
     wlog("w16: %s loaded: %u segments, %lu bytes, %u fixups (%u import references), DGROUP %04x (%u bytes)\n",
          path, m.nseg, (unsigned long)m.total_bytes, m.nreloc, m.nimport, m.dgroup, m.dgroup_size);
@@ -322,7 +323,7 @@ int main(int argc, char **argv)
         ne_free(&m); ne_free(&dll);
         GrClose();
         w16_thunk_done();
-        return 1;
+        exit(1);
     }
     dos_init();
 

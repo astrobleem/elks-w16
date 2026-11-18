@@ -136,10 +136,10 @@ with tempfile.TemporaryDirectory() as tmp:
         if dll:
             assert events.index('free_dll') < events.index('thunk_done')
 
-    assert run('thunk_init') == ['thunk_init']
+    assert run('thunk_init') == ['thunk_init', 'libc_exit:1']
     events = run('metadata')
     assert not set(events) & {'connect', 'close', 'dll_metadata', 'exe_load'}
-    assert events[-1] == 'thunk_done'
+    assert events[-2:] == ['thunk_done', 'libc_exit:7']
     events = run('connect')
     assert not set(events) & {'close', 'dll_metadata', 'exe_load', 'task'}
     assert events[-3:] == ['free_exe', 'thunk_done', 'libc_exit:1']
@@ -147,13 +147,13 @@ with tempfile.TemporaryDirectory() as tmp:
                     'bind', 'exe_imports', 'exe_load', 'task'):
         events = run(failure)
         assert events.count('close') == 1 and 'user_init' not in events
-        assert events[-2:] == ['close', 'thunk_done']
+        assert events[-3:] == ['close', 'thunk_done', 'libc_exit:7']
         assert events.index('free_exe') < events.index('close')
         events = run(failure, check=True)
         assert not set(events) & {'connect', 'close', 'user_init'}
-        assert events[-1] == 'thunk_done'
+        assert events[-2:] == ['thunk_done', 'libc_exit:7']
     events = run('user_init')
-    assert events.count('close') == 1 and 'run' not in events and events[-1] == 'thunk_done'
+    assert events.count('close') == 1 and 'run' not in events and events[-2:] == ['thunk_done', 'libc_exit:1']
     events = run('dll_init')
     assert 'run' not in events and events.count('close') == 1
     assert events[-2:] == ['thunk_done', 'libc_exit:7']
