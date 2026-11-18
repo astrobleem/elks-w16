@@ -55,7 +55,7 @@ void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
 void GrMapWindow(unsigned w){(void)w;}
 void win_invalidate_all(struct wnd*w,int e){w->invalid=1;w->erase=e;}
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){(void)w;(void)m;(void)p;(void)l;return 0;}
-void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
+void caret_destroy(u16 w){(void)w;} void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''

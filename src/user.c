@@ -789,6 +789,7 @@ u32 u_BeginPaint(u16 ss, u16 ap)
     hdc = dc_create(w, 1);
     if (!hdc)
         return 0;
+    caret_paint(w->hwnd,1);
     if (!w->invalid)
         win_invalidate_all(w, 0);
     l = w->ul; t = w->ut; r = w->ur; b = w->ub;
@@ -810,8 +811,10 @@ u32 u_EndPaint(u16 ss, u16 ap)
     u16 hdc = rd16(AW(2), AW(0));
     struct wnd *w = win_get(AW(4));
     dc_release(hdc);
-    if (w)
+    if (w) {
+        caret_paint(w->hwnd,0);
         paint_done(w);
+    }
     return 1;
 }
 
@@ -1200,6 +1203,7 @@ static void destroy_window(struct wnd *w)
         if (wins[i].used && !wins[i].ctl && wins[i].parent == hwnd)
             destroy_window(&wins[i]);
     win_send(w, WM_NCDESTROY, 0, 0);
+    caret_destroy(hwnd);
     menu_close_for(hwnd);
     GrDestroyWindow(w->frame);          /* also destroys the Nano-X windows of its controls */
     kill_timers(hwnd);
@@ -1323,7 +1327,7 @@ static int next_msg(struct qmsg *m, int block)
             }
         {                               /* timers: one WM_TIMER per elapsed timer, after paints, like Windows */
             static int rr;
-            u32 now = now_ms(), wait = 0xFFFFFFFFul;
+            u32 now = now_ms(), wait = caret_wait(now);
             int k;
             for (k = 0; k < MAXTIMER; k++) {
                 int t = (rr + k) % MAXTIMER;

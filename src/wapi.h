@@ -150,6 +150,14 @@ struct dc {
 #define HMENU_BASE 0x2000       /* disjoint from object, resource and bitmap handle ranges */
 #define HMENU_STRIDE 0x0200    /* room for 128 item-indexed popup handles per menu */
 
+u32 u_CreateCaret(u16 ss,u16 ap);
+u32 u_DestroyCaret(u16 ss,u16 ap);
+u32 u_SetCaretPos(u16 ss,u16 ap);
+u32 u_HideCaret(u16 ss,u16 ap);
+u32 u_ShowCaret(u16 ss,u16 ap);
+void caret_destroy(u16 hwnd);
+void caret_paint(u16 hwnd,int begin);
+u32 caret_wait(u32 now);
 extern struct wnd wins[MAXWIN];
 struct wnd *win_get(u16 hwnd);
 void win_client_origin(struct wnd *w,int *x,int *y);

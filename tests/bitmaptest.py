@@ -37,16 +37,17 @@ static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
 }
 static int failafter=-1;
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
-static u32 surface[10000],pixdata[640*480],foreground=77;static int mode=3;
+static u32 surface[640*480],pixdata[640*480],foreground=77;static int mode=3;
 
 #define GR_MODE_HAVE_CAPTUREPIXELS 0x4000
+static int capture_fail_call;
 static int capture_mode,capture_calls,capture_x,capture_y,capture_w,capture_h;
 static int GrCapturePixels(int wid,int gc,int x,int y,int w,int h,
  void(*callback)(void*,unsigned,const unsigned char*,unsigned),void*ctx){
  unsigned row,col,len=(w+1)/2;u8 packed[320];
  assert(wid==1&&gc==2&&w>0&&w<=640&&h>0&&h<=480);
  capture_calls++;capture_x=x;capture_y=y;capture_w=w;capture_h=h;
- if(capture_mode==1)return 0;
+ if(capture_mode==1||capture_calls==capture_fail_call||len*h>16384)return 0;
  for(row=0;row<(unsigned)h;row++){
   if(capture_mode==2&&row==(unsigned)h-1)break;
   memset(packed,0,sizeof packed);
@@ -362,6 +363,8 @@ static void small_ddb_bits_test(void){
  bitmap_shutdown();clean();
 
 }
+static int flood_wide_pixels;
+static void flood_wide_output(void*ctx,int x,int y,int w,int kind){assert(x>=0&&y>=0&&x+w<=256&&y<256&&kind==1);flood_wide_pixels+=w;}
 static void flood_output(void*ctx,int x,int y,int w,int kind){
  int i;(void)ctx;assert(kind==1&&x>=0&&y>=0&&x+w<=100&&y<100);
  for(i=x;i<x+w;i++)surface[y*100+i]=7;
@@ -828,6 +831,16 @@ int main(int argc,char**argv){
    capture_mode=fail;assert(!bitmap_flood(9,&dest,0,0,0xffffff,0,0,flood_output,0));
    for(yy=0;yy<16;yy++)for(xx=0;xx<16;xx++)assert(surface[yy*100+xx]==3);
   }
+  /* Full 256 canvas crosses the real capture packet ceiling. A refusal on
+   * the reconstruction pass must still emit no output. */
+  win.cw=win.ch=256;
+  for(xx=0;xx<640*480;xx++)surface[xx]=3;
+  capture_mode=8;capture_calls=0;capture_fail_call=3;flood_wide_pixels=0;
+  assert(!bitmap_flood(9,&dest,0,0,0x333333,1,0x777777,flood_wide_output,0));
+  assert(!flood_wide_pixels);
+  capture_calls=0;capture_fail_call=0;
+  assert(bitmap_flood(9,&dest,0,0,0x333333,1,0x777777,flood_wide_output,0));
+  assert(flood_wide_pixels==65536&&capture_calls==4);
   capture_mode=0;win.cw=win.ch=100;
  }
  /* Polygon shares the memory DC translation and full ROP2 truth table. */

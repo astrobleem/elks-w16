@@ -17,6 +17,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SO
 #define H(f) 0
 #else
 #define H(f) f
+u32 u_CreateCaret(u16,u16),u_DestroyCaret(u16,u16),u_SetCaretPos(u16,u16),u_HideCaret(u16,u16),u_ShowCaret(u16,u16);
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
 u32 u_GetMenuString(u16,u16),u_ModifyMenu(u16,u16),u_GetMenuState(u16,u16);
@@ -377,11 +378,11 @@ const struct api api_table[] = {
     { U, 142, "GETCLIPBOARDDATA", 2, 0, H(u_GetClipboardData) },
     { U, 156, "GETSYSTEMMENU", 0, API_MISSING, 0 },
     { U, 161, "GetMenuString", 12, 0, H(u_GetMenuString) },
-    { U, 163, "CREATECARET", 0, API_MISSING, 0 },
-    { U, 164, "DESTROYCARET", 0, API_MISSING, 0 },
-    { U, 165, "SETCARETPOS", 0, API_MISSING, 0 },
-    { U, 166, "HIDECARET", 0, API_MISSING, 0 },
-    { U, 167, "SHOWCARET", 0, API_MISSING, 0 },
+    { U, 163, "CreateCaret", 8, 0, H(u_CreateCaret) },
+    { U, 164, "DestroyCaret", 0, 0, H(u_DestroyCaret) },
+    { U, 165, "SetCaretPos", 4, 0, H(u_SetCaretPos) },
+    { U, 166, "HideCaret", 2, 0, H(u_HideCaret) },
+    { U, 167, "ShowCaret", 2, 0, H(u_ShowCaret) },
     { U, 232, "SetWindowPos", 14, 0, H(u_SetWindowPos) },
     { U, 250, "GetMenuState", 6, 0, H(u_GetMenuState) },
     { U, 278, "GetDesktopHwnd", 0, 0, H(u_GetDesktopHwnd) },

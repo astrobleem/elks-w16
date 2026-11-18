@@ -293,10 +293,10 @@ static void memory_copy(struct bitmap*d,int dm,int dx,int dy,struct bitmap*s,int
  }
 }
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
-struct capture_stage {struct bitmap image;u16 rows;int valid;};
+struct capture_stage {struct bitmap image;u16 rows,base;int valid;};
 static void capture_row(void *ctx,unsigned row,const unsigned char *packed,unsigned len)
 {
- struct capture_stage*c=ctx;
+ struct capture_stage*c=ctx;row+=c->base;
  if(!c->valid||row!=c->rows||row>=c->image.h||len!=c->image.stride){c->valid=0;return;}
  bitmap_write(&c->image,(u32)row*c->image.stride,packed,len);c->rows++;
 }
@@ -305,7 +305,7 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
 {
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
  struct capture_stage c;struct bitmap*d;GR_PALETTE*p=(GR_PALETTE*)w16_scratch;
- GR_SCREEN_INFO si;long xx=dx,yy=dy,ax=sx,ay=sy,ww=w,hh=h;int db=bi(memory[dm].bitmap),sw,sh,j,ok;
+ GR_SCREEN_INFO si;long xx=dx,yy=dy,ax=sx,ay=sy,ww=w,hh=h;int db=bi(memory[dm].bitmap),sw,sh,j,ok,rows,limit;
  if(db<0||bitmaps[db].bpp!=4)return 0;d=&bitmaps[db];
  if(src->w){sw=src->w->cw;sh=src->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);sw=si.cols;sh=si.rows;}
  if(!clip_axis(&xx,&ax,&ww,d->w,sw)||!clip_axis(&yy,&ay,&hh,d->h,sh))return 1;
@@ -314,7 +314,12 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
  memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;
  for(j=0;j<16;j++){c.image.palette[j].r=p->palette[j].r;c.image.palette[j].g=p->palette[j].g;c.image.palette[j].b=p->palette[j].b;}
  if(!allocate_pixels(&c.image,(u32)c.image.stride*c.image.h))return 0;
- ok=GrCapturePixels(src->wid,src->gc,ax,ay,ww,hh,capture_row,&c)&&c.valid&&c.rows==c.image.h;
+ ok=1;limit=16384/c.image.stride;
+ while(c.rows<c.image.h){
+  c.base=c.rows;rows=c.image.h-c.rows;if(rows>limit)rows=limit;
+  if(!GrCapturePixels(src->wid,src->gc,ax,ay+c.base,ww,rows,capture_row,&c)||
+     !c.valid||c.rows!=c.base+rows){ok=0;break;}
+ }
  if(ok)memory_copy(d,dm,xx,yy,&c.image,0,0,0,ww,hh);
  release_pixels(&c.image);return ok;
 #else
@@ -322,22 +327,38 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
 #endif
 }
 /* Flood membership is prepared before drawing, so transport/allocation/queue
- * failures leave the destination untouched. Two one-bit maps avoid retaining a
- * full colour snapshot. A bounded scanline worklist refuses pathological fills. */
-struct flood_capture {struct bitmap *mask;u8 accept[16];u16 rows;int valid;};
+ * failures leave the destination untouched. One one-bit map avoids retaining a
+ * full colour snapshot. Re-reading the unchanged source reconstructs visited
+ * membership after traversal, before any destination output. A bounded scanline worklist refuses pathological fills. */
+struct flood_capture {struct bitmap *mask;u8 accept[16];u16 rows,base;int valid,rebuild;};
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
 static void flood_capture_row(void *ctx,unsigned row,const unsigned char *data,unsigned len)
 {
- struct flood_capture*c=ctx;unsigned x;
+ struct flood_capture*c=ctx;unsigned x;row+=c->base;
  if(!c->valid||row!=c->rows||row>=c->mask->h||len!=(c->mask->w+1)/2){c->valid=0;return;}
- for(x=0;x<c->mask->w;x++)if(c->accept[(data[x/2]>>((x&1)?0:4))&15])bitmap_put(c->mask,x,row,1);
+ for(x=0;x<c->mask->w;x++){
+  int accept=c->accept[(data[x/2]>>((x&1)?0:4))&15];
+  if(c->rebuild)accept=accept&&!bitmap_index(c->mask,x,row);
+  bitmap_put(c->mask,x,row,accept);
+ }
  c->rows++;
+}
+static int flood_capture_all(struct dc*d,struct flood_capture*c)
+{
+ int rows,limit=16384/((c->mask->w+1)/2);
+ c->rows=0;c->valid=1;
+ while(c->rows<c->mask->h){
+  c->base=c->rows;rows=c->mask->h-c->rows;if(rows>limit)rows=limit;
+  if(!GrCapturePixels(d->wid,d->gc,0,c->base,c->mask->w,rows,flood_capture_row,c)||
+     !c->valid||c->rows!=c->base+rows)return 0;
+ }
+ return 1;
 }
 #endif
 int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
                  void (*output)(void*,int,int,int,int),void *ctx)
 {
- struct bitmap eligible,visited,*dest=0;struct flood_capture cap;
+ struct bitmap eligible,*dest=0;struct flood_capture cap;
  struct poly_point *stack;int m=di(h),i,j,w,hgt,top=0,l,r,ny,xx,yy,start,ok=0;u8 pi=0;
  GR_SCREEN_INFO si;GR_PALETTE*palette=(GR_PALETTE*)w16_scratch;
  if(mode<0||mode>1||(boundary&0xff000000UL))return 0;
@@ -350,9 +371,7 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
  }
  if(w<1||hgt<1||w>640||hgt>480||x<0||y<0||x>=w||y>=hgt)return 0;
  memset(&eligible,0,sizeof(eligible));eligible.w=w;eligible.h=hgt;eligible.bpp=1;eligible.stride=(w+7)/8;
- visited=eligible;
  if(!allocate_pixels(&eligible,(u32)eligible.stride*hgt))return 0;
- if(!allocate_pixels(&visited,(u32)visited.stride*hgt)){release_pixels(&eligible);return 0;}
  stack=malloc(512*sizeof(*stack));if(!stack)goto done;
  if(d){
 #ifdef GR_MODE_HAVE_CAPTUREPIXELS
@@ -362,7 +381,7 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
    u32 rgb=(u32)palette->palette[j].r|((u32)palette->palette[j].g<<8)|((u32)palette->palette[j].b<<16);
    cap.accept[j]=(rgb==boundary)==mode;
   }
-  if(!GrCapturePixels(d->wid,d->gc,0,0,w,hgt,flood_capture_row,&cap)||!cap.valid||cap.rows!=hgt)goto done;
+  if(!flood_capture_all(d,&cap))goto done;
 #else
   goto done;
 #endif
@@ -375,7 +394,7 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
   if(!bitmap_index(&eligible,x,y))continue;
   for(l=x;l>0&&bitmap_index(&eligible,l-1,y);l--);
   for(r=x;r+1<w&&bitmap_index(&eligible,r+1,y);r++);
-  for(xx=l;xx<=r;xx++){bitmap_put(&eligible,xx,y,0);bitmap_put(&visited,xx,y,1);}
+  for(xx=l;xx<=r;xx++)bitmap_put(&eligible,xx,y,0);
   for(j=-1;j<=1;j+=2){
    ny=y+j;if(ny<0||ny>=hgt)continue;
    for(xx=l;xx<=r;){
@@ -386,14 +405,24 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
    }
   }
  }
+ /* The source has not been changed. Rebuild visited = original minus remaining.
+  * All transport/queue/allocation failures still precede the first output. */
+ if(d){
+#ifdef GR_MODE_HAVE_CAPTUREPIXELS
+  cap.rebuild=1;if(!flood_capture_all(d,&cap))goto done;
+#else
+  goto done;
+#endif
+ }else for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;xx++)
+  bitmap_put(&eligible,xx,yy,((bitmap_rgb(dest,bitmap_index(dest,xx,yy))==boundary)==mode)&&!bitmap_index(&eligible,xx,yy));
  for(yy=0;yy<hgt;yy++)for(xx=0;xx<w;){
-  if(!bitmap_index(&visited,xx,yy)){xx++;continue;}
-  start=xx;do{xx++;}while(xx<w&&bitmap_index(&visited,xx,yy));
+  if(!bitmap_index(&eligible,xx,yy)){xx++;continue;}
+  start=xx;do{xx++;}while(xx<w&&bitmap_index(&eligible,xx,yy));
   if(d)output(ctx,start,yy,xx-start,1);
   else for(i=start;i<xx;i++)memory_rop_pixel(dest,i,yy,pi,memory[m].rop2);
  }
  ok=1;
- done:free(stack);release_pixels(&eligible);release_pixels(&visited);return ok;
+ done:free(stack);release_pixels(&eligible);return ok;
 }
 u32 g_BitBlt(u16 ss,u16 ap)
 {
