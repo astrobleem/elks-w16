@@ -370,6 +370,33 @@ static void flood_output(void*ctx,int x,int y,int w,int kind){
  for(i=x;i<x+w;i++)surface[y*100+i]=7;
 }
 
+
+static void stock_gray_mask_test(void){
+ u16 b,d;int gray,rop,x,y;u32 old;
+ const u8 bits[3][2]={{1,3},{2,1},{1,0}};
+ struct poly_point box[4]={{0,0},{8,0},{8,8},{0,8}};
+ setup(8,8,1);b=load();d=dcnew();assert(bitmap_select(d,b));
+ assert(bitmap_brushorg(d,-1,3,&old));
+ for(gray=0;gray<3;gray++)for(rop=1;rop<=16;rop++){
+  bitmap_object(d,2,0x302+2*gray);bitmap_rop2(d,rop);
+  for(y=0;y<8;y++)for(x=0;x<8;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y)&1);
+  assert(bitmap_polygon(d,box,4,0,0,0x404040,0));
+  for(y=0;y<8;y++)for(x=0;x<8;x++){
+   int source=(bits[gray][(y+1)%2]>>((x+1)%2))&1,destbit=(x+y)&1;
+   assert(bitmap_index(&bitmaps[bi(b)],x,y)==(((rop-1)>>(2*source+destbit))&1));
+  }
+ }
+ /* An ordinary solid gray brush is not mistaken for a stock-gray handle. */
+ bitmap_object(d,2,0x400);bitmap_rop2(d,13);
+ assert(bitmap_polygon(d,box,4,0,0,0x404040,0));
+ for(y=0;y<8;y++)for(x=0;x<8;x++)assert(!bitmap_index(&bitmaps[bi(b)],x,y));
+ bitmap_shutdown();
+ setup(8,8,4);b=load();d=dcnew();assert(bitmap_select(d,b));bitmap_object(d,2,0x306);
+ assert(bitmap_polygon(d,box,4,0,0,0x404040,0));
+ for(y=0;y<8;y++)for(x=0;x<8;x++)assert(bitmap_index(&bitmaps[bi(b)],x,y)==bitmap_nearest(&bitmaps[bi(b)],0x404040));
+ bitmap_shutdown();
+ puts("Monochrome stock gray spray masks: three stipples, origin phase and all16 ROP2 tables passed");
+}
 static void masked_pattern_test(void){
  u16 b,d;int x,y,invert,mono;u32 before[10000];
  setup(8,8,1);b=load();d=dcnew();assert(bitmap_select(d,b));
@@ -408,6 +435,7 @@ static void masked_pattern_test(void){
  dest.brushx=dest.brushy=dest.brush=0;testbrush.style=0;
 }
 int main(int argc,char**argv){
+ stock_gray_mask_test();
  masked_pattern_test();
  small_ddb_bits_test();
  ddb_bits_test();
@@ -868,6 +896,19 @@ int main(int argc,char**argv){
       ((dx-1)*(dx-1)+dy*dy>6||(dx+1)*(dx+1)+dy*dy>6||dx*dx+(dy-1)*(dy-1)>6||dx*dx+(dy+1)*(dy+1)>6);
      int expected=10,bit,source=edge?15:5;
      if(inside){expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((((source>>bit)&1)<<1)|((10>>bit)&1)))&1)<<bit;}
+     assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
+    }
+   }
+  }
+  /* Wide Polyline repeats the same segment in reverse: its brush footprint
+   * is unioned before all sixteen ROP2s, so crossings never cancel in XOR. */
+  {struct poly_point wide[3]={{2,4},{7,4},{2,4}};
+   for(rop=1;rop<=16;rop++){
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++)bitmap_put(&bitmaps[bi(b)],xx,yy,10);
+    bitmap_rop2(d,rop);assert(bitmap_polygon(d,wide,-3,0xffffff,2,0x555555,0));
+    for(yy=0;yy<10;yy++)for(xx=0;xx<10;xx++){
+     int inside=xx>=1&&xx<=7&&yy>=3&&yy<=4,expected=10,bit;
+     if(inside){expected=0;for(bit=0;bit<4;bit++)expected|=(((rop-1)>>((1<<1)|((10>>bit)&1)))&1)<<bit;}
      assert(bitmap_index(&bitmaps[bi(b)],xx,yy)==expected);
     }
    }

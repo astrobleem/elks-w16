@@ -28,7 +28,9 @@ u32 u_CreateCaret(u16 ss,u16 ap)
     if(!win_get(hwnd)||bitmap>1||w<0||h<0) return 0;
     caret_destroy(0);
     caret.gc=GrNewGC();if(!caret.gc)return 0;
-    GrSetGCMode(caret.gc,GR_MODE_INVERT);
+    /* XOR white is inversion on every destination plane. Unlike INVERT,
+     * it is implemented by the planar VGA hardware driver. */
+    GrSetGCMode(caret.gc,GR_MODE_XOR);
     GrSetGCForeground(caret.gc,GR_RGB(255,255,255));
     caret.owner=hwnd;caret.x=caret.y=0;caret.w=w?w:1;caret.h=h?h:1;
     caret.gray=bitmap==1;caret.hide=1;caret.due=now_ms()+500;

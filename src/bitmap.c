@@ -194,11 +194,15 @@ int bitmap_lineto(u16 h,i16 x,i16 y,u32 color,u16 style,u16 width,int nullpen)
  }
  return 1;
 }
-struct polygon_memory {struct bitmap *b;u8 pen,brush,rop;};
+struct polygon_memory {struct bitmap *b;u8 pen,brush,rop,gray;i16 brushx,brushy;};
 static void polygon_memory_span(void *ctx,int x,int y,int width,int kind)
 {
  struct polygon_memory *s=ctx;int end=x+width;
- for(;x<end;x++)memory_rop_pixel(s->b,x,y,kind==2?s->pen:s->brush,s->rop);
+ for(;x<end;x++){
+  u8 color=kind==2?s->pen:s->brush;
+  if(kind==1&&s->gray)color=(s->gray>>((((unsigned)y-s->brushy)&1)*2+(((unsigned)x-s->brushx)&1)))&1;
+  memory_rop_pixel(s->b,x,y,color,s->rop);
+ }
 }
 int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int stroke,u32 brush,int nb)
 {
@@ -207,7 +211,16 @@ int bitmap_polygon(u16 h,struct poly_point*p,int n,u32 pen,int stroke,u32 brush,
  for(i=0;i<(count?count:2);i++)if(!memory_point(m,&p[i].x,&p[i].y))return 0;
  out.b=&bitmaps[b];out.pen=bitmap_nearest(out.b,pen);
  out.brush=bitmap_nearest(out.b,brush);out.rop=memory[m].rop2;
- return n?polygon_raster(p,n,out.b->w,out.b->h,stroke!=0,!nb,polygon_memory_span,&out):
+ /* Stock gray brushes realize as 2x2 stipples on monochrome targets, not
+  * nearest black/white. Paintbrush uses DKGRAY_BRUSH for its spray mask. */
+ out.gray=0;out.brushx=memory[m].brushx;out.brushy=memory[m].brushy;
+ if(out.b->bpp==1)switch(memory[m].brush){
+  case 0x0302:out.gray=13;break; /* LTGRAY: rows 01,11 (LSB first) */
+  case 0x0304:out.gray=6;break;  /* GRAY:   rows 10,01 */
+  case 0x0306:out.gray=1;break;  /* DKGRAY: rows 01,00 */
+ }
+ return n?polygon_raster(p,n,out.b->w,out.b->h,stroke,!nb,polygon_memory_span,&out):
+
           oval_raster(p,out.b->w,out.b->h,stroke,!nb,polygon_memory_span,&out);
 }
 int bitmap_rectangle(u16 h,i16 l,i16 t,i16 r,i16 bot,u32 pen,u16 ps,u16 pw,int np,u32 brush,u16 bs,int nb)

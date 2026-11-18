@@ -39,6 +39,31 @@ int main(void)
  clear();assert(draw(extreme,4,0,1));for(y=0;y<32;y++)for(x=0;x<32;x++)assert(actual[y][x]==1);
  clear();assert(draw(shallow,2,1,0));for(i=1;i<32;i++)assert(actual[1][i]==2&&!actual[0][i]);
  clear();assert(draw(steep,2,1,0));for(i=1;i<32;i++)assert(actual[i][1]==2&&!actual[i][0]);
+ /* Wide round footprints: independent per-pixel union oracle on horizontal,
+  * vertical and diagonal centerlines, including clipped caps and joins. */
+ {
+  int width,axis,cx,cy,step,hit,dx,dy,phase;
+  struct poly_point path[3];
+  for(width=2;width<=32;width++)for(axis=0;axis<3;axis++){
+   path[0].x=path[0].y=-2;
+   path[1].x=axis==1?-2:14;path[1].y=axis==0?-2:14;
+   clear();assert(draw(path,-2,width,0));phase=!(width&1);
+   for(y=0;y<32;y++)for(x=0;x<32;x++){
+    hit=0;
+    for(step=-2;step<=14;step++){
+     cx=axis==1?-2:step;cy=axis==0?-2:step;
+     dx=2*(x-cx)+phase;dy=2*(y-cy)+phase;
+     if(dx*dx+dy*dy<=width*width)hit=1;
+    }
+    assert(actual[y][x]==(hit?2:0));
+   }
+  }
+  path[0].x=4;path[0].y=10;path[1].x=20;path[1].y=10;path[2]=path[0];
+  clear();assert(draw(path,-3,4,0));
+  /* Traversing the same stroke twice must not apply XOR twice. */
+  assert(actual[10][10]==2&&visits[10][10]==1);
+  clear();assert(!draw(path,-3,33,0)&&!actual[10][10]);
+ }
  extreme[0].x=-8192;clear();assert(!draw(extreme,4,1,1));assert(!actual[0][0]);
  assert(!draw(box,1,1,1));assert(!draw(box,129,1,1));
  assert(!polygon_raster(box,4,2049,32,1,1,span,0));

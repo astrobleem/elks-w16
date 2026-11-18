@@ -1147,6 +1147,22 @@ u32 u_SetWindowPos(u16 ss,u16 ap)
     return 1;
 }
 
+/* Focus belongs to a Win16 window, not the last mapped native child.
+ * Notify synchronously so a top-level WM_SETFOCUS handler can choose its
+ * editing child. A reentrant SetFocus from WM_KILLFOCUS wins. */
+static u16 set_focus(struct wnd *w)
+{
+    u16 prev=focus_hwnd, target=w?w->hwnd:0;
+    struct wnd *old=win_get(prev);
+    if(prev==target)return prev;
+    focus_hwnd=target;
+    if(old)win_send(old,0x0008,target,0); /* WM_KILLFOCUS */
+    if(focus_hwnd!=target)return prev;
+    w=win_get(target);
+    if(w){GrSetFocus(w->ctl?w->frame:w->client);win_send(w,WM_SETFOCUS,prev,0);}
+    return prev;
+}
+
 /* ShowWindow(hwnd, nCmdShow) */
 u32 u_ShowWindow(u16 ss, u16 ap)
 {
@@ -1163,13 +1179,13 @@ u32 u_ShowWindow(u16 ss, u16 ap)
     }
     if (w->cw && w->ch) GrMapWindow(w->client);
     if (w->w && w->h) GrMapWindow(w->frame);
-    if (w->cw && w->ch) GrSetFocus(w->client);
     w->visible = 1; w->style |= WS_VISIBLE;
     if (!w->shown) {
         w->shown = 1;
         win_send(w, WM_SIZE, 0, ((u32)w->ch << 16) | (u16)w->cw);
     }
     win_invalidate_all(w, 1);
+    if(!w->parent && cmd!=4 && cmd!=8)set_focus(w);
     return prev;
 }
 
@@ -1484,13 +1500,9 @@ u32 u_GetActiveWindow(u16 ss,u16 ap)
 /* SetFocus(hWnd): returns the window that had the focus */
 u32 u_SetFocus(u16 ss, u16 ap)
 {
-    struct wnd *w = win_get(AW(0));
-    u16 prev = focus_hwnd;
-    if (!w)
-        return 0;
-    focus_hwnd = w->hwnd;
-    GrSetFocus(w->ctl ? w->frame : w->client);
-    return prev;
+    struct wnd *w=win_get(AW(0));
+    if(AW(0)&&(!w || (w->style&WS_DISABLED)))return 0;
+    return set_focus(w);
 }
 
 u32 u_IsIconic(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }   /* windows are never minimised here */

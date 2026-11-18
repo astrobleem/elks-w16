@@ -12,7 +12,7 @@ code=r'''
 #include <stdio.h>
 typedef uint16_t u16;typedef int16_t i16;typedef uint32_t u32;typedef uint8_t u8;
 typedef int GR_GC_ID;
-#define GR_MODE_INVERT 10
+#define GR_MODE_XOR 1
 #define GR_RGB(r,g,b) 0xffffff
 static u16 args[4];
 #define AW(n) args[(n)/2]
@@ -24,7 +24,7 @@ static int gc_live,points;
 static unsigned char pixels[32][32];
 static int GrNewGC(void){gc_live++;return 1;}
 static void GrDestroyGC(int gc){assert(gc==1);gc_live--;}
-static void GrSetGCMode(int gc,int mode){assert(gc==1&&mode==10);}
+static void GrSetGCMode(int gc,int mode){assert(gc==1&&mode==1);}
 static void GrSetGCForeground(int gc,int color){assert(gc==1&&color==0xffffff);}
 static void GrPoint(int wid,int gc,int x,int y){assert(wid==1&&gc==1);if(x>=0&&y>=0&&x<32&&y<32){pixels[y][x]^=1;points++;}}
 static void GrFillRect(int wid,int gc,int x,int y,int w,int h){int i,j;for(j=0;j<h;j++)for(i=0;i<w;i++)GrPoint(wid,gc,x+i,y+j);}

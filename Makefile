@@ -27,6 +27,7 @@ test: host samples
 	python3 tests/dibtest.py
 	python3 tests/registeredtest.py
 	python3 tests/carettest.py
+	python3 tests/focustest.py
 	python3 tests/lineddatest.py
 	python3 tests/enumobjtest.py
 	python3 tests/enumfonttest.py

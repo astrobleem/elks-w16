@@ -254,7 +254,7 @@ void scrollbar_forget(u16 hwnd);
 u32 bitmap_bits(u16 h,u32 count,u16 seg,u16 off,int set);
 
 struct poly_point;
-/* Pen argument is stroke width (0 = null); widths >1 are oval-only. */
+/* Pen argument is stroke width (0 = null); polygons accept widths up to32. */
 int bitmap_polygon(u16,struct poly_point *,int,u32,int,u32,int);
 
 int bitmap_flood(u16,struct dc*,int,int,u32,int,u32,void (*)(void*,int,int,int,int),void*);

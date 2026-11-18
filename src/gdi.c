@@ -594,10 +594,12 @@ static int draw_shape(u16 h,struct poly_point*p,int n)
  brush=obj_get(d?d->brush:bitmap_object(h,OBJ_BRUSH,0));
  if(!pen||!brush||(n>=0&&!brush->null&&brush->style))return 0;
  stroke=pen->null?0:pen->width?pen->width:1;
- if(stroke&&(n?(pen->style||stroke>1):
+ /* PS_INSIDEFRAME is identical to PS_SOLID at cosmetic widths.
+  * Polygons/polylines have no bounding-rectangle inset rule. */
+ if(stroke&&(n?((pen->style!=0&&pen->style!=6)||stroke>32):
      ((pen->style!=0&&pen->style!=6)||(stroke>1&&pen->style!=6)||stroke>640)))return 0;
  /* Thick logical widths are supported in MM_TEXT only, never silently scaled. */
- if(!n&&stroke>1&&d&&d->mapmode!=1)return 0;
+ if(stroke>1&&d&&d->mapmode!=1)return 0;
  if(!d)return bitmap_polygon(h,p,n,pen->color,stroke,brush->color,brush->null);
  if(n){for(i=0;i<count;i++)if(!gdi_map_point(d,&p[i].x,&p[i].y))return 0;}
  else{
@@ -608,7 +610,7 @@ static int draw_shape(u16 h,struct poly_point*p,int n)
  if(d->w){width=d->w->cw;height=d->w->ch;}
  else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
  out.d=d;out.pen=rgb_to_gr(pen->color);out.brush=rgb_to_gr(brush->color);
- return n?polygon_raster(p,n,width,height,!pen->null,!brush->null,polygon_screen_span,&out):
+ return n?polygon_raster(p,n,width,height,stroke,!brush->null,polygon_screen_span,&out):
           oval_raster(p,width,height,stroke,!brush->null,polygon_screen_span,&out);
 }
 /* Polygon(hdc, far POINT[], count). Does not change the current position. */

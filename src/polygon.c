@@ -8,8 +8,14 @@
 int polygon_raster(struct poly_point *p,int n,int width,int height,
                    int pen,int brush,poly_span output,void *ctx)
 {
- int i,j,x,y,l,r,t,b,start,kind,closed=n>0; unsigned char *row;
- if(n< -128||n>128)return 0;
+ int i,j,x,y,l,r,t,b,start,kind,nib[32],lo,hi,phase,closed=n>0; unsigned char *row;
+ if(n< -128||n>128||pen<0||pen>32)return 0;
+ lo=pen/2;hi=(pen-1)/2;phase=!(pen&1);
+ if(pen>1)for(i=-lo;i<=hi;i++){
+  int yy=2*i+phase;
+  for(j=-lo;(2*j+phase)*(2*j+phase)+yy*yy>pen*pen;j++);
+  nib[i+lo]=j;
+ }
  if(n<0)n=-n;
  if(!closed)brush=0;
  if(n<2||n>128||width<1||width>2048||height<1||height>2048)return 0;
@@ -21,6 +27,7 @@ int polygon_raster(struct poly_point *p,int n,int width,int height,
   if(p[i].y<t)t=p[i].y;
   if(p[i].y>b)b=p[i].y;
  }
+ if(pen>1){l-=lo;t-=lo;r+=hi;b+=hi;}
  if(l<0)l=0;
  if(t<0)t=0;
  if(r>=width)r=width-1;
@@ -49,9 +56,21 @@ int polygon_raster(struct poly_point *p,int n,int width,int height,
    if(dx<0)dx=-dx;
    if(dy>0)dy=-dy;
    err=dx+dy;
-   /* Endpoints excluded; the next edge owns the shared vertex. */
-   while(xx!=p[i].x||yy!=p[i].y){
-    if(yy==y&&xx>=l&&xx<=r)row[(int)xx-l]=2;
+   /* A circular pixel footprint gives genuine width and round joins/caps.
+    * Union it into the scanline mask before applying any destination ROP.
+    * Cosmetic edges preserve their established excluded final endpoint. */
+   for(;;){
+    if(pen>1){
+     int oy=y-yy;
+     if(oy>=-lo&&oy<=hi){
+      int first=xx+nib[oy+lo],last=xx-nib[oy+lo]-phase,q;
+      if(first<l)first=l;
+      if(last>r)last=r;
+      for(q=first;q<=last;q++)row[q-l]=2;
+     }
+    }else if(xx==p[i].x&&yy==p[i].y)break;
+    else if(yy==y&&xx>=l&&xx<=r)row[(int)xx-l]=2;
+    if(xx==p[i].x&&yy==p[i].y)break;
     e2=2L*err;
     if(e2>=dy){err+=dy;xx+=sx;}
     if(e2<=dx){err+=dx;yy+=sy;}

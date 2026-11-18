@@ -53,10 +53,29 @@ int main(void){
  memcpy(points,square,sizeof square);args[0]=4;args[1]=0;args[2]=123;args[3]=1;
  assert(g_Polygon(0,0)==1&&mapped==4&&reads==8&&writes==25);
  for(y=4;y<=8;y++)for(x=3;x<=7;x++)assert(screen[y][x]==(x==3||x==7||y==4||y==8?0x111111:0x222222));
+ /* PS_INSIDEFRAME width zero/one is a real cosmetic solid pen,
+  * including open polylines; out-of-bounds widths are refused, not downgraded. */
+ objects[0].style=6;
+ for(x=0;x<=1;x++){
+  int xx,yy;objects[0].width=x;memset(screen,0,sizeof screen);writes=0;
+  assert(g_Polygon(0,0)&&writes==25);
+  for(yy=4;yy<=8;yy++)for(xx=3;xx<=7;xx++)
+   assert(screen[yy][xx]==(xx==3||xx==7||yy==4||yy==8?0x111111:0x222222));
+  memset(screen,0,sizeof screen);writes=0;
+  assert(g_Polyline(0,0)&&writes==12);
+  assert(screen[4][3]==0x111111&&!screen[8][3]&&!screen[5][3]&&!screen[6][5]);
+ }
+ objects[0].width=2;memset(screen,0,sizeof screen);writes=0;
+ assert(g_Polyline(0,0)&&writes==28);
+ memset(screen,0,sizeof screen);writes=0;
+ assert(g_Polygon(0,0)&&writes==36);
+ objects[0].width=33;memset(screen,0,sizeof screen);writes=0;
+ assert(!g_Polygon(0,0)&&!g_Polyline(0,0)&&!writes);
+ objects[0].style=0;objects[0].width=1;
  memset(screen,0,sizeof screen);writes=0;rop=11;assert(g_Polygon(0,0)&&!writes);rop=13;
  args[3]=2;assert(g_Polygon(0,0)&&memorycalls==1);args[3]=99;assert(!g_Polygon(0,0));args[3]=1;
  badmap=1;assert(!g_Polygon(0,0)&&!writes);badmap=0;
- objects[0].width=2;assert(!g_Polygon(0,0));objects[0].width=1;
+ objects[0].width=33;assert(!g_Polygon(0,0));objects[0].width=1;
  objects[1].style=3;assert(!g_Polygon(0,0));objects[1].style=0;
  args[0]=129;assert(!g_Polygon(0,0));args[0]=1;assert(!g_Polygon(0,0));args[0]=4;
  args[1]=65530;assert(!g_Polygon(0,0));args[1]=0;args[2]=0;assert(!g_Polygon(0,0));
