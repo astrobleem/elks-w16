@@ -22,6 +22,12 @@ if ! patch --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >/dev/null
     patch --batch --forward -d "$MWDIR" -p1 < "$patchfile"
 fi
 
+# Optional autostart path and persistence apply only when no server is present.
+patchfile="$ROOT/patches/nanox-autostart-env.patch"
+if ! patch --fuzz=0 --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >/dev/null 2>&1; then
+    patch --fuzz=0 --batch --forward -d "$MWDIR" -p1 < "$patchfile"
+fi
+
 # Clean first, so a formerly medium-model client archive cannot be reused here.
 make -C "$MWDIR/src" -f Makefile.elks clean
 make -C "$MWDIR/src" -f Makefile.elks SCREEN_TANDY=y LOCALFLAGS=-DMEM_GETPCJR=15

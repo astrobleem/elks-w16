@@ -1,0 +1,42 @@
+diff --git a/src/nanox/client.c b/src/nanox/client.c
+index 0fdf9ba..ed1d5f3 100644
+--- a/src/nanox/client.c
++++ b/src/nanox/client.c
+@@ -340,17 +340,26 @@ GrOpen(void)
+         	return nxSocket;
+ 
+ #if UNIX && AUTO_START_SERVER
+-	/* check if Nano-X server running, and start if not */
+-	if (access(GR_NAMED_SOCKET, F_OK) < 0) {
+-		if (!access(BIN_NANOX, F_OK)) {
+-		    EPRINTF("Starting %s\n", BIN_NANOX);
+-			if (fork() == 0) {
+-				execl(BIN_NANOX, BIN_NANOX, NULL);
+-				exit(1);
+-			}
+-		} else
+-		    EPRINTF("Can't autostart %s\n", BIN_NANOX);
+-	}
++    /* Options affect cold autostart only; never replace an existing server. */
++    if (access(GR_NAMED_SOCKET, F_OK) < 0) {
++        const char *server = getenv("NXSERVER");
++        const char *persist = getenv("NXPERSIST");
++        int pid;
++        if (!server || !*server) server = BIN_NANOX;
++        if (access(server, X_OK) < 0) {
++            EPRINTF("Can't autostart %s\n", server);
++            return -1;
++        }
++        EPRINTF("Starting %s\n", server);
++        pid = fork();
++        if (pid < 0) return -1;
++        if (pid == 0) {
++            /* execl uses this exact path, with no PATH search or shell parsing. */
++            execl(server, server, persist && !strcmp(persist, "1") ? "-p" :
++                  (char *)0, (char *)0);
++            _exit(1);
++        }
++    }
+ #endif
+ 
+ 	/* try to get socket*/

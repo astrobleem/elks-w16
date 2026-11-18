@@ -61,6 +61,7 @@ test: host samples
 	python3 tests/capturepixelstest.py
 	python3 tests/missingtraptest.py
 	python3 tests/startuptest.py
+	python3 tests/nanoxenvtest.py
 	python3 tests/cursortest.py
 	python3 tests/childcliptest.py
 
