@@ -28,13 +28,13 @@ trap 'rm -rf "$WORK"' EXIT HUP INT TERM
 cp -R "$MWDIR/src" "$WORK/src"
 # Normalize already-applied extensions in reverse dependency order, then verify
 # and apply all forward. Partial/conflicting patch sets fail rather than guessing.
-for name in nanox-capturepixels.patch nanox-screenand.patch nanox-readpixel.patch; do
+for name in nanox-childclip.patch nanox-capturepixels.patch nanox-screenand.patch nanox-readpixel.patch; do
     patchfile="$ROOT/patches/$name"
     if patch --force --reverse --dry-run -d "$WORK" -p1 < "$patchfile" >/dev/null 2>&1; then
         patch --force --reverse -d "$WORK" -p1 < "$patchfile"
     fi
 done
-for name in nanox-readpixel.patch nanox-screenand.patch nanox-capturepixels.patch; do
+for name in nanox-readpixel.patch nanox-screenand.patch nanox-capturepixels.patch nanox-childclip.patch; do
     patchfile="$ROOT/patches/$name"
     if ! patch --batch --forward --dry-run -d "$WORK" -p1 < "$patchfile" >/dev/null 2>&1; then
         printf 'Cannot apply or verify %s; refusing an incompatible checkout\n' "$name" >&2

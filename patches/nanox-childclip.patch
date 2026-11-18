@@ -1,0 +1,36 @@
+--- a/src/nanox/srvclip1.c
++++ b/src/nanox/srvclip1.c
+@@ -103,6 +103,33 @@
+ 	 * our parents.
+  	 */
+ 	toomany = GR_FALSE;
++	/* Match the dynamic-region backend: drawing a parent must not overwrite
++	 * its visible child windows. Root children are handled by the walk below.
++	 * GR_MODE_EXCLUDECHILDREN explicitly requests drawing over children. */
++	if (wp != rootwp && !(flags & GR_MODE_EXCLUDECHILDREN)) {
++		for (sibwp = wp->children; sibwp; sibwp = sibwp->siblings) {
++			if (!sibwp->realized || !sibwp->output)
++				continue;
++
++			bs = sibwp->bordersize;
++			minx = sibwp->x - bs;
++			miny = sibwp->y - bs;
++			maxx = sibwp->x + sibwp->width + bs - 1;
++			maxy = sibwp->y + sibwp->height + bs - 1;
++
++			newcount = count;
++			for (i = 0; i < count; i++) {
++				if (newcount > MAX_CLIPRECTS - 3) {
++					toomany = GR_TRUE;
++					break;
++				}
++				newcount += GsSplitClipRect(&cliprects[i],
++					&cliprects[newcount],
++					minx, miny, maxx, maxy);
++			}
++			count = newcount;
++		}
++	}
+ 	pwp = wp;
+ /*while (pwp != rootwp) {*/
+ 	while (pwp != NULL) {

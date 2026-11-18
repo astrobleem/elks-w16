@@ -4,6 +4,7 @@
 u32 k_GlobalAlloc(u16,u16),k_GlobalFree(u16,u16),k_GlobalReAlloc(u16,u16);
 u32 u_OpenClipboard(u16,u16),u_CloseClipboard(u16,u16),u_EmptyClipboard(u16,u16);
 u32 u_SetClipboardData(u16,u16),u_GetClipboardData(u16,u16),u_GetPriorityClipboardFormat(u16,u16);
+int gdi_clipboard(u16 h,u16 f,int release){(void)h;(void)f;(void)release;return 0;}
 extern int host_live;
 struct wnd {int used;};static struct wnd window;
 struct wnd *win_get(u16 h){return h==0x100?&window:0;}

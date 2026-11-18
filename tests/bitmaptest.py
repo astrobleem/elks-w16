@@ -63,6 +63,7 @@ static int nearest(u32 c){int i,best=0;long closest=0x7fffffff;
  for(i=0;i<16;i++){long r=(long)(c&255)-native_palette.palette[i].r,g=(long)((c>>8)&255)-native_palette.palette[i].g,b=(long)((c>>16)&255)-native_palette.palette[i].b,d=r*r+g*g+b*b;if(d<closest){closest=d;best=i;}}return best;
 }
 static struct dc*dc_get(u16 h){return h==9?&dest:0;}
+static int palette_object(u16 h,i16 n,u16 seg,u16 off){return h==0x031e&&n==2&&seg==9&&off==7?2:0;}
 static int palette_entry(u16 h,u16 index,u8*out){
  if(h!=0xe00||index>=16)return 0;
  if(index==15){out[0]=3;out[1]=out[2]=0;out[3]=2;}
@@ -1137,6 +1138,12 @@ int main(int argc,char**argv){
   }
  }
  if(argc>1)printf("LoadBitmap: %d real resource payloads passed\n",argc-1);
+ bitmap_shutdown();b=bitmap_create(20,30,1,4,0,0);assert(b);
+ args[2]=b;args[1]=209;args[0]=254;assert(g_SetBitmapDimension(0,0)==0);
+ args[1]=17;args[0]=19;assert(g_SetBitmapDimension(0,0)==((u32)254<<16|209));
+ assert(bitmaps[bi(b)].w==20&&bitmaps[bi(b)].h==30);
+ args[2]=0xffff;assert(!g_SetBitmapDimension(0,0));
+ args[3]=0x031e;args[2]=2;args[1]=9;args[0]=7;assert(g_GetObject(0,0)==2);
  bitmap_shutdown();clean();printf("bitmap glue: %d mono bits/padding plus color, cleanup, selection, clipping and GetObject far-write checks passed\n",checks);
  return 0;
 }

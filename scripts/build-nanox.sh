@@ -16,6 +16,12 @@ test -f "$TOPDIR/.config"
 test -f "$MWDIR/src/drivers/tandy4.c"
 grep -q GR_MODE_EXCLUDEENDPOINT "$MWDIR/src/include/nano-X.h"
 
+# The compact server must preserve visible child windows during parent draws.
+patchfile="$ROOT/patches/nanox-childclip.patch"
+if ! patch --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >/dev/null 2>&1; then
+    patch --batch --forward -d "$MWDIR" -p1 < "$patchfile"
+fi
+
 # Clean first, so a formerly medium-model client archive cannot be reused here.
 make -C "$MWDIR/src" -f Makefile.elks clean
 make -C "$MWDIR/src" -f Makefile.elks SCREEN_TANDY=y LOCALFLAGS=-DMEM_GETPCJR=15

@@ -14,6 +14,11 @@ int main(void)
  assert(palette_entry(p,1,entry)&&entry[0]==255&&entry[1]==0&&entry[2]==0&&entry[3]==0);
  assert(palette_entry(p,2,entry)&&entry[0]==1&&entry[3]==2);
  assert(!palette_entry(p,3,entry)&&!palette_entry(0xffff,0,entry));
+ wr16(ds,100,0xffff);assert(palette_object(p,2,ds,100)==2&&rd16(ds,100)==3);
+ assert(palette_object(0x031e,2,ds,100)==2&&rd16(ds,100)==20);
+ assert(!palette_object(p,1,ds,100)&&!palette_object(p,-1,ds,100));
+ assert(!palette_object(p,2,0,100)&&!palette_object(p,2,ds,65535));
+ assert(!palette_object(0xffff,2,ds,100)&&!palette_object(p,2,0xffff,16));
  wr32(ds,8,0xff00); /* caller buffer ownership must not leak into palette */
  assert(palette_nearest(p,0xfd,fixed,2)==1);assert(palette_nearest(p,0,fixed,2)==0);
  wr16(ss,0,32);wr16(ss,2,ds);wr16(ss,4,8);wr16(ss,6,1);wr16(ss,8,p);

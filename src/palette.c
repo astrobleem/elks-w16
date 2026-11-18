@@ -24,6 +24,15 @@ static const u8 *palette_data(u16 h,u16 *count)
  int i;if(h==DEFAULT_PALETTE){*count=20;return default_entries;}
  i=palette_index(h);if(i<0){*count=0;return 0;}*count=palettes[i].count;return palettes[i].entries;
 }
+/* GetObject on an HPALETTE returns its entry count as one WORD. */
+int palette_object(u16 h,i16 n,u16 seg,u16 off)
+{
+ u16 count;
+ if(!palette_data(h,&count)||n<2||!seg||(u32)off+2>65536UL||
+    ((u32)seg<<4)+off+2>0x100000UL)return 0;
+ wr16(seg,off,count);return 2;
+}
+
 int palette_delete(u16 h)
 {
  int i=palette_index(h);if(h==DEFAULT_PALETTE)return 1;if(i<0)return -1;

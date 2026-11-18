@@ -12,8 +12,8 @@
 #include "wapi.h"
 
 /* ---------------------------------------------------------------- cursors */
-#define MAXCUR 6
-static struct { u8 used; GR_CURSOR_ID id; } cursors[MAXCUR];   /* HCURSOR_BASE + 2 * i; id 0 = the arrow */
+#define MAXCUR 8   /* four Paintbrush resources plus arrow, wait and cross */
+static struct { u8 used; GR_CURSOR_ID id; u16 resource; } cursors[MAXCUR];   /* HCURSOR_BASE + 2 * i; id 0 = the arrow */
 static u16 cur_hcur;                /* the program's current cursor, 0 = the arrow */
 static int cur_show;                /* ShowCursor count: hidden while negative */
 static GR_CURSOR_ID cur_blank, cur_shown = (GR_CURSOR_ID)-1;
@@ -95,23 +95,36 @@ void cursor_attach(GR_WINDOW_ID frame, GR_WINDOW_ID client)
 
 /* a program CURSOR resource: WORD hot x, WORD hot y, BITMAPINFOHEADER (height doubled), two colours,
  * XOR rows, AND rows; rows bottom-up. AND 1 is transparent, else XOR 1 is white and 0 black. */
-static GR_CURSOR_ID res_cursor(const char *name, u16 id)
+static u16 res_cursor(const char *name, u16 id)
 {
     u16 glen, len, cid = 0, w, h, bpp, stride, x, y, hx, hy, scale;
     u8 *g = res_load(RT_GROUP_CURSOR, name, id, &glen), *d;
     GR_BITMAP fg[16], bg[16];
     GR_CURSOR_ID r;
+    u16 handle;
+    int i;
     if (!g)
         return 0;
     if (glen >= 20)                                     /* first entry: WORD w, h, planes, bits, DWORD size, WORD id */
         cid = (u16)(g[18] | (g[19] << 8));
     free(g);
-    if (!cid || !(d = res_load(RT_CURSOR, 0, cid, &len)))
+    if (!cid)
         return 0;
+    /* Resource aliases resolve to the same task-owned cursor. Repeated tool
+     * changes must not consume handles or allocate another server cursor. */
+    for (i = 0; i < MAXCUR; i++)
+        if (cursors[i].used && cursors[i].resource == cid)
+            return (u16)(HCURSOR_BASE + 2 * i);
+    if (!(d = res_load(RT_CURSOR, 0, cid, &len)))
+        return 0;
+    if (len < 52) {
+        free(d);
+        return 0;
+    }
     hx = (u16)(d[0] | (d[1] << 8)); hy = (u16)(d[2] | (d[3] << 8));
     w = (u16)(d[8] | (d[9] << 8)); h = (u16)((d[12] | (d[13] << 8)) / 2); bpp = (u16)(d[18] | (d[19] << 8));
     stride = (u16)(((w + 31) / 32) * 4);
-    if (bpp != 1 || (w != 32 && w != 16) || h != w || len < 52 || (u32)len - 52 < 2ul * stride * h) {
+    if (bpp != 1 || (w != 32 && w != 16) || h != w || (u32)len - 52 < 2ul * stride * h) {
         wlog("w16: cursor %u: %ux%u at %u bits is not supported (32x32 or 16x16 monochrome)\n", cid, w, h, bpp);
         free(d);
         return 0;
@@ -130,9 +143,19 @@ static GR_CURSOR_ID res_cursor(const char *name, u16 id)
                 bg[y] |= (GR_BITMAP)(0x8000u >> x);     /* black, and the inverting pixels */
         }
     free(d);
+    handle = cur_handle(0);       /* refuse before allocating on the server */
+    if (!handle)
+        return 0;
+    i = (handle - HCURSOR_BASE) / 2;
     r = GrNewCursor(16, 16, hx / scale, hy / scale, GR_RGB(255, 255, 255), GR_RGB(0, 0, 0), fg, bg);
     vlog("w16: cursor %u: %ux%u resource, hot spot %u,%u -> Nano-X cursor %d at 16x16\n", cid, w, h, hx, hy, (int)r);
-    return r;
+    if (!r) {
+        cursors[i].used = 0;
+        return 0;
+    }
+    cursors[i].id = r;
+    cursors[i].resource = cid;
+    return handle;
 }
 
 /* LoadCursor(hInstance, lpCursorName): IDC_WAIT and IDC_CROSS are drawn here, every other standard
@@ -141,25 +164,37 @@ u32 u_LoadCursor(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2), hinst = AW(4), id;
     char name[34];
-    GR_CURSOR_ID cid;
+    u16 handle;
     int which = 0;
     if (!hinst) {
         which = off == 0x7F02 ? 1 : off == 0x7F03 ? 2 : 0;
-        if (!cur_std[which])
-            cur_std[which] = cur_handle(!which ? 0 : GrNewCursor(16, 16, 7, 7, GR_RGB(0, 0, 0), GR_RGB(255, 255, 255),
-                                                                (GR_BITMAP *)(which == 1 ? wait_fg : cross_fg),
-                                                                (GR_BITMAP *)(which == 1 ? wait_bg : cross_bg)));
+        if (!cur_std[which]) {
+            handle = cur_handle(0);
+            if (!handle)
+                return 0;
+            if (which) {
+                int i = (handle - HCURSOR_BASE) / 2;
+                cursors[i].id = GrNewCursor(16, 16, 7, 7, GR_RGB(0, 0, 0), GR_RGB(255, 255, 255),
+                    (GR_BITMAP *)(which == 1 ? wait_fg : cross_fg),
+                    (GR_BITMAP *)(which == 1 ? wait_bg : cross_bg));
+                if (!cursors[i].id) {
+                    cursors[i].used = 0;
+                    return 0;
+                }
+            }
+            cur_std[which] = handle;
+        }
         return cur_std[which];
     }
     res_name(off, seg, name, &id);
-    cid = res_cursor(name[0] ? name : 0, id);
-    if (!cid) {
+    handle = res_cursor(name[0] ? name : 0, id);
+    if (!handle) {
         wlog("w16: LoadCursor: cursor %s%s is not usable; the arrow stands in\n", name[0] ? name : "#", name[0] ? "" : "(ordinal)");
         if (!cur_std[0])
             cur_std[0] = cur_handle(0);
         return cur_std[0];
     }
-    return cur_handle(cid);
+    return handle;
 }
 
 /* SetCursor(hCursor): returns the previous cursor */

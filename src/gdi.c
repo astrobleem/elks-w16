@@ -362,11 +362,24 @@ u32 g_CreatePen(u16 ss, u16 ap)
     return obj_new(OBJ_PEN, AL(0), style, width);
 }
 
+/* Validate ownership transfer, or release an unselected clipboard object. */
+int gdi_clipboard(u16 h,u16 format,int release)
+{
+    int i;
+    if(format==2)return bitmap_clipboard(h,release);
+    if(format!=9||h==HSTOCK+2*15||!palette_valid(h)||
+       saved_object(h)||bitmap_object_used(h))return 0;
+    for(i=0;i<MAXDC;i++)if(dcs[i].used&&dcs[i].palette==h)return 0;
+    if(release)palette_delete(h);
+    return 1;
+}
+
 /* DeleteObject(hObject) */
 u32 g_DeleteObject(u16 ss, u16 ap)
 {
     u16 h = AW(0), i;
     struct gobj *o = obj_get(h);
+    if(clipboard_owns_gdi(h))return 0;
     {int r=bitmap_delete(h);if(r>=0)return r;}
     if(palette_valid(h)){
         if(h==HSTOCK+2*15)return 1;

@@ -12,7 +12,7 @@
 #define DEFAULT_BITMAP 0x0aff
 #define BITMAP_BANK_BYTES 16384UL
 #define BITMAP_BANKS 10
-struct bitmap {u16 w,h,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
+struct bitmap {u16 w,h,dimx,dimy,bank[BITMAP_BANKS],stride;u8 used,bpp;struct dib_rgb palette[16];};
 static struct bitmap bitmaps[NB];
 struct memory_dc {u16 bitmap,pen,brush,font,palette,bkmode,textalign;u8 used,stretchmode,rop2;i16 brushx,brushy,curx,cury,wx,wy,vx,vy;u32 textcolor,bkcolor;};
 static struct memory_dc memory[ND];
@@ -102,6 +102,9 @@ static void bitmap_write(struct bitmap*b,u32 at,const u8*src,u16 n)
  }
 }
 void bitmap_shutdown(void){int i;for(i=0;i<NB;i++)release_bitmap(i);memset(memory,0,sizeof(memory));memset(memory_saved_count,0,sizeof(memory_saved_count));}
+/* Clipboard transfer/release is refused while a live or saved DC selects it. */
+int bitmap_clipboard(u16 h,int release)
+{int i=bi(h);if(i<0||bitmap_referenced(h,-1))return 0;if(release)release_bitmap(i);return 1;}
 int bitmap_delete(u16 h){int i=bi(h);if(i<0)return -1;if(bitmap_referenced(h,-1))return 0;release_bitmap(i);return 1;}
 int bitmap_deletedc(u16 h){int i=di(h);if(i<0)return -1;memset(&memory[i],0,sizeof(memory[i]));memory_saved_count[i]=0;return 1;}
 u16 bitmap_select(u16 dc,u16 h){int i=di(dc),j=bi(h);u16 old;if(i<0||(j<0&&h!=DEFAULT_BITMAP))return 0;if(bitmap_referenced(h,i))return 0;old=memory[i].bitmap;memory[i].bitmap=h;return old;}
@@ -504,12 +507,21 @@ u32 g_BitBlt(u16 ss,u16 ap)
 u32 g_GetObject(u16 ss,u16 ap)
 {
  int i=bi(AW(6));u16 off=AW(0),seg=AW(2),bpp;u8 out[14];
- if(i<0||(i16)AW(4)<14||!seg||(u32)off+14>65536UL)return 0;
+ if(i<0)return palette_object(AW(6),(i16)AW(4),seg,off);
+ if((i16)AW(4)<14||!seg||(u32)off+14>65536UL)return 0;
  memset(out,0,sizeof(out));bpp=bitmaps[i].bpp;
  out[2]=bitmaps[i].w;out[3]=bitmaps[i].w>>8;
  out[4]=bitmaps[i].h;out[5]=bitmaps[i].h>>8;
  {u16 stride=((bitmaps[i].w*bpp+15)/16)*2;out[6]=stride;out[7]=stride>>8;}
  out[8]=1;out[9]=bpp;fcopy_out(seg,off,out,14);return 14;
+}
+
+/* Physical size metadata in 0.1 mm; pixels and raster operations are unchanged. */
+u32 g_SetBitmapDimension(u16 ss,u16 ap)
+{
+ int i=bi(AW(4));u32 old;if(i<0)return 0;
+ old=(u32)bitmaps[i].dimx|((u32)bitmaps[i].dimy<<16);
+ bitmaps[i].dimx=AW(2);bitmaps[i].dimy=AW(0);return old;
 }
 
 /* DDB byte order is top-down, WORD-aligned packed rows, matching GetObject.

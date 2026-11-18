@@ -49,6 +49,7 @@ u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
 u32 u_CopyRect(u16,u16),u_PtInRect(u16,u16),u_IntersectRect(u16,u16);
 u32 g_GetBitmapBits(u16,u16),g_SetBitmapBits(u16,u16);
+u32 g_SetBitmapDimension(u16,u16);
 u32 g_GetObject(u16,u16),g_CreateCompatibleBitmap(u16,u16),g_SetBrushOrg(u16,u16),g_SetPixel(u16,u16),g_GetPixel(u16,u16),g_GetDCOrg(u16,u16),g_PtVisible(u16,u16),g_LineDDA(u16,u16);
 u32 u_RegisterWindowMessage(u16,u16),u_DrawText(u16,u16);
 u32 g_GetBkColor(u16,u16);
@@ -319,7 +320,7 @@ const struct api api_table[] = {
     { G, 153, "CreateIC", 16, 0, H(g_CreateIC) },
     /* Discardability permits reclamation; retain these owned pixels until DeleteObject. */
     { G, 156, "CreateDiscardableBitmap", 6, 0, H(g_CreateCompatibleBitmap) },
-    { G, 163, "SETBITMAPDIMENSION", 0, API_MISSING, 0 },
+    { G, 163, "SetBitmapDimension", 6, 0, H(g_SetBitmapDimension) },
     { G, 360, "CREATEPALETTE", 4, 0, H(g_CreatePalette) },
     { G, 363, "GETPALETTEENTRIES", 10, 0, H(g_GetPaletteEntries) },
     { G, 366, "UPDATECOLORS", 0, API_MISSING, 0 },

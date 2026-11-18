@@ -37,6 +37,7 @@ test: host samples
 	python3 tests/invertrecttest.py
 	python3 tests/globaltest.py
 	python3 tests/clipboardtest.py
+	python3 tests/clipboardgditest.py
 	python3 tests/scrolltest.py
 	python3 tests/scrolluitest.py
 	python3 tests/childtest.py
@@ -60,6 +61,8 @@ test: host samples
 	python3 tests/capturepixelstest.py
 	python3 tests/missingtraptest.py
 	python3 tests/startuptest.py
+	python3 tests/cursortest.py
+	python3 tests/childcliptest.py
 
 clean:
 	$(MAKE) -C src clean

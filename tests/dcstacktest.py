@@ -37,6 +37,7 @@ u8 *host_ptr(u16 s,u16 o,u16 n){assert((u32)o+n<=65536);return host_mem+LIN(s,o)
 #define BS_PATTERN 3
 struct gobj {int used,type,style,width;} object={1,0,0,0},objs[1];static struct{int used;}bmps[1];
 struct gobj*obj_get(u16 h){return h==0x400?&object:0;}
+int clipboard_owns_gdi(u16 h){(void)h;return 0;}
 int bitmap_delete(u16 h){(void)h;return -1;}
 int bitmap_object_used(u16 h){(void)h;return 0;}
 int palette_valid(u16 h){return h==0xe00||h==0x31e;}

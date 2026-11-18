@@ -81,6 +81,7 @@ void files_directory_label(char *out);
 u16 files_getcwd(u16 drive,u16 seg,u16 off);
 
 int palette_valid(u16 h);
+int palette_object(u16 h,i16 n,u16 seg,u16 off);
 int palette_delete(u16 h);
 void palette_shutdown(void);
 int palette_entry(u16 h,u16 index,u8 *out);
@@ -307,6 +308,9 @@ void global_shutdown(void);
 int global_clipboard_take(u16 h);
 void global_clipboard_release(u16 h);
 void clipboard_shutdown(void);
+int clipboard_owns_gdi(u16 h);
+int gdi_clipboard(u16 h,u16 format,int release);
+int bitmap_clipboard(u16 h,int release);
 void files_shutdown(void);
 u16 files_unlink(u16 seg,u16 off);
 
