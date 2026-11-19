@@ -4,7 +4,7 @@ import pathlib,re,subprocess,tempfile,os
 root=pathlib.Path(__file__).resolve().parents[1]
 u=(root/'src/user.c').read_text();h=(root/'src/wapi.h').read_text()
 def func(name):
-    m=re.search(r'^(?:static )?(?:struct wnd \*|u32 |void |int )'+name+r'\([^;]*?\)\n\{',u,re.M)
+    m=re.search(r'^(?:static )?(?:struct wnd \*|u32 |u16 |void |int )'+name+r'\([^;]*?\)\n\{',u,re.M)
     assert m,name
     start=u.index('{',m.start());level=1;p=start+1
     while level:
@@ -16,6 +16,8 @@ pre='''#include "w16.h"
 #include <stdio.h>
 typedef unsigned GR_WINDOW_ID;
 #define MWKMOD_SHIFT 1
+#define CLASS_MDICLIENT (-2)
+#define WS_MINIMIZE 0x20000000UL
 '''
 pre+='\n'.join(l for l in h.splitlines() if l.startswith(('#define WM_','#define MAXCLASS','#define MAXWIN','#define HWND_BASE','#define CTL_')))+'\n'
 pre+=re.search(r'struct wnd \{.*?\n\};',h,re.S)[0]+'\n'
@@ -26,7 +28,7 @@ void fcopy_out(u16 s,u16 o,const void *p,u16 n){memcpy(host_ptr(s,o,n),p,n);}
 u16 fstrncpy_in(char*d,u16 s,u16 o,u16 n){strncpy(d,(char*)host_ptr(s,o,n),n);d[n-1]=0;return strlen(d);}
 static u32 list_message(struct wnd*w,u16 m,u16 p,u32 l){(void)w;(void)m;(void)p;(void)l;return 0;}
 static void paint_control(struct wnd*w){(void)w;paints++;}
-static u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){assert(w==wins);assert(m==WM_COMMAND&&p==106&&l==0x3000104UL);notifications++;return 0;}
+static u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){if(m==WM_SETFOCUS||m==0x0008){assert(w==wins);return 0;}assert(w==wins);assert(m==WM_COMMAND&&p==106&&l==0x3000104UL);notifications++;return 0;}
 '''
 pre+=re.search(r'struct wclass \{.*?\n\};',h,re.S)[0]+'\n'
 pre+='''static struct wclass classes[MAXCLASS];static u16 focus_hwnd;static int raised,focused,modal;
@@ -34,8 +36,9 @@ pre+='''static struct wclass classes[MAXCLASS];static u16 focus_hwnd;static int 
 static void GrRaiseWindow(int w){raised=w;}
 static void GrSetFocus(int w){focused=w;}
 static int blocked(struct wnd*w){(void)w;return modal;}
+static int mdi_activate(struct wnd*w,u16 h){(void)w;(void)h;assert(0);return 0;}
 '''
-code=pre+''.join(func(n) for n in ('win_get','find_class','window_name_matches','u_FindWindow','u_BringWindowToTop'))
+code=pre+''.join(func(n) for n in ('win_get','find_class','window_name_matches','u_FindWindow','mdi_child','set_focus','u_BringWindowToTop'))
 code+='''int main(void){
  u16 st=0x1000,str=0x2000;struct wnd*w=&wins[0];
  classes[0].used=1;strcpy(classes[0].name,"Mine");
