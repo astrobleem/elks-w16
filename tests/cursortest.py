@@ -7,7 +7,10 @@ import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 source = (root / 'src/cursor.c').read_text().split('/* ---------------------------------------------------------------- accelerators */')[0]
-source = source.replace('#include "wapi.h"', '')
+source = source.replace('#include "wapi.h"', '').replace('#include "dib.h"', '')
+dib_header=(root/'src/dib.h').read_text().split('#include "w16.h"',1)[1].rsplit('#endif',1)[0]
+dib_source=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
+gdi=(root/'src/gdi.c').read_text();icon_source=gdi[gdi.index('int gdi_draw_icon('):gdi.index('/* ---------------------------------------------------------------- text extents')]
 setup = r'''
 #include <assert.h>
 #include <stdarg.h>
@@ -27,7 +30,7 @@ typedef unsigned GR_CURSOR_ID, GR_WINDOW_ID;
 static u16 args[3];
 #define AW(n) args[(n)/2]
 static struct { int used, ctl; unsigned frame, client; } wins[MAXWIN];
-static int new_calls, fail_new, short_data, missing, resource_reads, group_reads;
+static int new_calls, fail_new, short_data, missing, resource_reads, group_reads,bad_hot,bad_header,odd_height;
 static unsigned last_cursor;
 static const char *guest_name;
 static void wlog(const char *s, ...) { (void)s; }
@@ -46,7 +49,7 @@ static u8 *res_load(u16 type,const char *name,u16 id,u16 *len) {
     } else {
         assert(type==RT_CURSOR); resource_reads++;
         *len=short_data ? 2 : 180; p=calloc(1,*len);
-        if(!short_data) { p[8]=16; p[12]=32; p[18]=1; }
+        if(!short_data) {p[4]=bad_header?108:40;p[8]=16;p[12]=odd_height?31:32;p[16]=1;p[18]=1;p[0]=bad_hot?16:0;p[48]=p[49]=p[50]=255;}
     }
     return p;
 }
@@ -58,6 +61,16 @@ static unsigned GrNewCursor(int w,int h,int hx,int hy,unsigned fg,unsigned bg,
 }
 static void GrSetWindowCursor(unsigned window,unsigned cursor) { (void)window;last_cursor=cursor; }
 '''
+render = r'''
+typedef unsigned GR_SIZE;
+static unsigned gdi_gc,paint_color,draw_calls,screen[32*32];
+static void gdi_usebg(int use){assert(!use);}
+static void gdi_fg(unsigned c){paint_color=c;}
+static void GrBitmap(unsigned wid,unsigned gc,int x,int y,unsigned w,unsigned h,const GR_BITMAP *bits){
+ unsigned i,j;(void)wid;(void)gc;draw_calls++;
+ for(j=0;j<h;j++)for(i=0;i<w;i++)if(bits[j*((w+15)/16)+(i>>4)]&(0x8000u>>(i&15)))screen[(y+j)*32+x+i]=paint_color;
+}
+'''
 checks = r'''
 static u16 load(u16 instance,u16 id,const char *name) {
     args[0]=id; args[1]=name ? 1 : 0; args[2]=instance; guest_name=name;
@@ -65,7 +78,7 @@ static u16 load(u16 instance,u16 id,const char *name) {
 }
 static void reset(void) {
     memset(cursors,0,sizeof(cursors)); memset(cur_std,0,sizeof(cur_std));
-    new_calls=fail_new=short_data=missing=resource_reads=group_reads=0;
+    new_calls=fail_new=short_data=missing=resource_reads=group_reads=bad_hot=bad_header=odd_height=0;
 }
 int main(void) {
     u16 arrow, wait, cross, handles[4], count, h;
@@ -102,13 +115,49 @@ int main(void) {
     cursor_census(&count); assert(count==1);
     reset(); fail_new=1; assert(!load(0,0x7f02,0)); fail_new=0;
     assert(load(0,0x7f02,0)&&new_calls==2); cursor_census(&count); assert(count==1);
-    puts("Cursor resource reuse, aliases, tool cycling, capacity and failure rollback passed");
+    reset(); arrow=load(0,0x7f00,0);bad_hot=1;assert(load(1,6,0)==arrow&&!new_calls);
+    bad_hot=0;bad_header=1;assert(load(1,6,0)==arrow&&!new_calls);
+    bad_header=0;odd_height=1;assert(load(1,6,0)==arrow&&!new_calls);
+    /* Both resource DIB headers and supported depths use the same real draw
+     * path. Transparent AND pixels have zero XOR, retaining their backdrop. */
+    {u8 icon[160];unsigned header,depth,pal,entry,pixels,length,j;struct dib_info info;struct dib_memory memory;u32 mask;
+     for(header=12;header<=40;header+=28)for(depth=1;depth<=4;depth+=3){
+      memset(icon,0,sizeof(icon));entry=header==12?3:4;pal=1u<<depth;pixels=header+pal*entry;length=pixels+16;
+      icon[0]=header;icon[4]=2;
+      if(header==12){icon[6]=4;icon[8]=1;icon[10]=depth;}
+      else {icon[8]=4;icon[12]=1;icon[14]=depth;}
+      if(depth==1)icon[header+entry]=icon[header+entry+1]=icon[header+entry+2]=255;
+      else icon[header+entry+1]=255;
+      icon[pixels+4]=depth==1?0x80:0x10;icon[pixels+12]=0x40;
+      memory.data=icon;memory.length=length;
+      assert(dib_icon_open(&info,dib_read_memory,&memory,length,&mask)&&info.width==2&&info.height==2&&mask==pixels+8);
+      for(j=0;j<32*32;j++)screen[j]=0xff0000;
+      draw_calls=0;assert(!gdi_draw_icon(1,0,0,icon,length)&&draw_calls==2);
+      assert(screen[0]==(depth==1?0xffffff:0xff00)&&screen[1]==0xff0000&&screen[32]==0&&screen[33]==0);
+      draw_calls=0;assert(gdi_draw_icon(1,0,0,icon,length-1)==-1&&!draw_calls);
+      if(header==40){
+       icon[14]=32;assert(gdi_draw_icon(1,0,0,icon,length)==-1&&!draw_calls);icon[14]=depth;
+       icon[6]=1;assert(gdi_draw_icon(1,0,0,icon,length)==-1&&!draw_calls);icon[6]=0;
+       icon[8]=5;assert(gdi_draw_icon(1,0,0,icon,length)==-1&&!draw_calls);icon[8]=4;
+      }
+     }
+     /* A wide 4-bpp XOR plane has a different stride from its 1-bpp mask. */
+     memset(icon,0,sizeof(icon));icon[0]=40;icon[4]=32;icon[8]=4;icon[12]=1;icon[14]=4;
+     memory.data=icon;memory.length=144;
+     assert(dib_icon_open(&info,dib_read_memory,&memory,144,&mask)&&info.stride==16&&mask==136);
+     assert(!dib_open(&info,dib_read_memory,&memory,144)); /* not four full XOR rows */
+     draw_calls=0;assert(!gdi_draw_icon(1,0,0,icon,144)&&draw_calls==1);
+     /* Reject an undeclared palette index atomically, before any request. */
+     memset(icon,0,sizeof(icon));icon[0]=40;icon[4]=2;icon[8]=4;icon[12]=1;icon[14]=4;icon[32]=1;icon[44]=0xf0;
+     draw_calls=0;assert(gdi_draw_icon(1,0,0,icon,60)==-1&&!draw_calls);
+    }
+    puts("Shared icon/cursor DIB decoding, masked drawing, cursor reuse and failure checks passed");
     return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
     c=pathlib.Path(tmp)/'cursor.c'; exe=pathlib.Path(tmp)/'cursor'
-    c.write_text(setup+source+checks)
+    c.write_text(setup+dib_header+dib_source+source+render+icon_source+checks)
     subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Wno-unused-parameter',
                     '-fsanitize=address,undefined','-fno-pie','-no-pie',str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=0'})

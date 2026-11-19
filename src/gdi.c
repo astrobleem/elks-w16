@@ -14,6 +14,7 @@
 #endif
 #include "wapi.h"
 #include "polygon.h"
+#include "dib.h"
 
 #define OBJ_PEN   1
 #define OBJ_BRUSH 2
@@ -1102,39 +1103,28 @@ u32 g_GetDeviceCaps(u16 ss, u16 ap)
 int gdi_draw_icon(GR_WINDOW_ID wid, int x0, int y0, const u8 *d, u16 len)
 {
     static GR_BITMAP bits[32 * 2];
-    u32 hdr, w, h2, h, ncol, xs, ms, xor_off, and_off;
-    u16 bpp, c, x, y;
+    struct dib_info info;
+    struct dib_memory memory={d,len};
+    u32 w,h,ncol,xs,ms,xor_off,and_off;
+    u16 bpp,c,x,y;
     u8 used[16];
 
-    if (len < 40)
-        return -1;
-    hdr = d[0] | ((u32)d[1] << 8);
-    w = d[4] | ((u32)d[5] << 8);
-    h2 = d[8] | ((u32)d[9] << 8);
-    bpp = d[14] | (d[15] << 8);
-    h = h2 / 2;
-    ncol = d[32] | ((u32)d[33] << 8);
-    if (!ncol)
-        ncol = 1u << bpp;
-    if (hdr < 40 || w == 0 || w > 32 || h == 0 || h > 32 || (bpp != 1 && bpp != 4) || ncol > 16)
-        return -1;
-    xs = ((w * bpp + 31) / 32) * 4;
-    ms = ((w + 31) / 32) * 4;
-    xor_off = hdr + 4 * ncol;
-    and_off = xor_off + xs * h;
-    if (and_off + ms * h > len)
-        return -1;
+    if(!dib_icon_open(&info,dib_read_memory,&memory,len,&and_off))return -1;
+    w=info.width;h=info.height;bpp=info.bpp;ncol=info.colors;
+    xs=info.stride;ms=((w+31)/32)*4;xor_off=info.pixels;
     memset(used, 0, sizeof(used));
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++) {
             const u8 *xr = d + xor_off + xs * (h - 1 - y), *mr = d + and_off + ms * (h - 1 - y);
             if (mr[x >> 3] & (0x80 >> (x & 7)))
                 continue;
-            used[bpp == 4 ? (xr[x >> 1] >> ((x & 1) ? 0 : 4)) & 15 : (xr[x >> 3] >> (7 - (x & 7))) & 1] = 1;
+            {u16 index=bpp==4?(xr[x>>1]>>((x&1)?0:4))&15:(xr[x>>3]>>(7-(x&7)))&1;
+             if(index>=ncol)return -1;
+             used[index]=1;}
         }
     gdi_usebg(0);
     for (c = 0; c < ncol; c++) {
-        const u8 *pal = d + hdr + 4 * c;
+        const struct dib_rgb *pal=&info.palette[c];
         if (!used[c])
             continue;
         memset(bits, 0, sizeof(bits));
@@ -1148,7 +1138,7 @@ int gdi_draw_icon(GR_WINDOW_ID wid, int x0, int y0, const u8 *d, u16 len)
                 if (v == c)             /* GR_BITMAP rows: (w + 15) / 16 words, MSB first */
                     bits[y * ((w + 15) / 16) + (x >> 4)] |= (GR_BITMAP)(0x8000u >> (x & 15));
             }
-        gdi_fg(GR_RGB(pal[2], pal[1], pal[0]));
+        gdi_fg(GR_RGB(pal->r,pal->g,pal->b));
         GrBitmap(wid, gdi_gc, x0, y0, (GR_SIZE)w, (GR_SIZE)h, bits);
     }
     return 0;

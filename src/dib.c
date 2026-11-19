@@ -1,4 +1,5 @@
 #include "dib.h"
+#include <string.h>
 
 static u16 word(const u8 *p) { return (u16)(p[0] | ((u16)p[1] << 8)); }
 static u32 dword(const u8 *p) { return word(p) | ((u32)word(p+2) << 16); }
@@ -6,11 +7,11 @@ static u32 dword(const u8 *p) { return word(p) | ((u32)word(p+2) << 16); }
 static u16 row_stride(u16 width, u16 bpp)
 { return (u16)((((width-1) >> (bpp==1 ? 5 : 3))+1) << 2); }
 
-int dib_open(struct dib_info *out, dib_reader read, void *ctx, u32 length)
+static int dib_parse(struct dib_info *out,dib_reader read,void *ctx,u32 length,u32 *and_pixels)
 {
     struct dib_info d;
     u8 h[40], rgb[4];
-    u32 w, height, used=0;
+    u32 w, height, used=0,mask=0;
     u16 header, entry, bpp, i;
     if (!out || !read || length<12 || !read(ctx,0,h,12)) return 0;
     if (dword(h)==12) {
@@ -23,6 +24,11 @@ int dib_open(struct dib_info *out, dib_reader read, void *ctx, u32 length)
         if (word(h+12)!=1 || dword(h+16)!=0) return 0;
         bpp=word(h+14); used=dword(h+32);
     }
+    if(and_pixels) {
+        if(height&1)return 0;
+        height/=2;
+        if(w>32 || height>32)return 0;
+    }
     if (!w || w>32767 || !height || height>32767 ||
         (bpp!=1 && bpp!=4) || used>(1u<<bpp)) return 0;
     d.width=(u16)w; d.height=(u16)height; d.bpp=bpp;
@@ -31,6 +37,10 @@ int dib_open(struct dib_info *out, dib_reader read, void *ctx, u32 length)
     d.stride=row_stride(d.width,bpp);
     d.pixels=header+d.colors*entry; d.length=length;
     if (d.pixels>length || d.height>(length-d.pixels)/d.stride) return 0;
+    if(and_pixels) {
+        mask=d.pixels+d.stride*d.height;
+        if(d.height>(length-mask)/row_stride(d.width,1))return 0;
+    }
     /* Some Windows resources have stale biSizeImage; the payload bounds govern. */
     for (i=0;i<d.colors;i++) {
         if (!read(ctx,(u16)(header+i*entry),rgb,entry)) return 0;
@@ -38,7 +48,19 @@ int dib_open(struct dib_info *out, dib_reader read, void *ctx, u32 length)
     }
     for (;i<16;i++) d.palette[i].r=d.palette[i].g=d.palette[i].b=0;
     *out=d;
+    if(and_pixels)*and_pixels=mask;
     return 1;
+}
+
+int dib_open(struct dib_info *out,dib_reader read,void *ctx,u32 length)
+{ return dib_parse(out,read,ctx,length,0); }
+int dib_icon_open(struct dib_info *out,dib_reader read,void *ctx,u32 length,u32 *and_pixels)
+{ return and_pixels && dib_parse(out,read,ctx,length,and_pixels); }
+int dib_read_memory(void *ctx,u32 off,void *dst,u16 count)
+{
+ const struct dib_memory *m=ctx;
+ if(!m || !m->data || off>m->length || count>m->length-off)return 0;
+ memcpy(dst,m->data+(u16)off,count);return 1;
 }
 
 int dib_read_indices(const struct dib_info *d, dib_reader read, void *ctx,

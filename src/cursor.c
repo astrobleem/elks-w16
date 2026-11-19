@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "wapi.h"
+#include "dib.h"
 
 /* ---------------------------------------------------------------- cursors */
 #define MAXCUR 8   /* four Paintbrush resources plus arrow, wait and cross */
@@ -99,6 +100,7 @@ static u16 res_cursor(const char *name, u16 id)
 {
     u16 glen, len, cid = 0, w, h, bpp, stride, x, y, hx, hy, scale;
     u8 *g = res_load(RT_GROUP_CURSOR, name, id, &glen), *d;
+    struct dib_info info;struct dib_memory memory;u32 and_pixels;
     GR_BITMAP fg[16], bg[16];
     GR_CURSOR_ID r;
     u16 handle;
@@ -117,25 +119,19 @@ static u16 res_cursor(const char *name, u16 id)
             return (u16)(HCURSOR_BASE + 2 * i);
     if (!(d = res_load(RT_CURSOR, 0, cid, &len)))
         return 0;
-    if (len < 52) {
-        free(d);
-        return 0;
-    }
-    hx = (u16)(d[0] | (d[1] << 8)); hy = (u16)(d[2] | (d[3] << 8));
-    w = (u16)(d[8] | (d[9] << 8)); h = (u16)((d[12] | (d[13] << 8)) / 2); bpp = (u16)(d[18] | (d[19] << 8));
-    stride = (u16)(((w + 31) / 32) * 4);
-    if (bpp != 1 || (w != 32 && w != 16) || h != w || (u32)len - 52 < 2ul * stride * h) {
-        wlog("w16: cursor %u: %ux%u at %u bits is not supported (32x32 or 16x16 monochrome)\n", cid, w, h, bpp);
-        free(d);
-        return 0;
-    }
+    if(len<4){free(d);return 0;}
+    hx=(u16)(d[0]|(d[1]<<8));hy=(u16)(d[2]|(d[3]<<8));
+    memory.data=d+4;memory.length=len-4;
+    if(!dib_icon_open(&info,dib_read_memory,&memory,len-4,&and_pixels)){free(d);return 0;}
+    w=info.width;h=info.height;bpp=info.bpp;stride=(u16)info.stride;
+    if(bpp!=1 || (w!=32&&w!=16) || h!=w || hx>=w || hy>=h){free(d);return 0;}
     scale = w / 16;
     memset(fg, 0, sizeof(fg));
     memset(bg, 0, sizeof(bg));
     for (y = 0; y < 16; y++)
         for (x = 0; x < 16; x++) {
             u16 sx = x * scale, sy = y * scale;
-            const u8 *xr = d + 52 + stride * (h - 1 - sy), *ar = xr + stride * h;
+            const u8 *xr=d+4+info.pixels+stride*(h-1-sy), *ar=d+4+and_pixels+stride*(h-1-sy);
             int a = (ar[sx >> 3] >> (7 - (sx & 7))) & 1, v = (xr[sx >> 3] >> (7 - (sx & 7))) & 1;
             if (!a && v)
                 fg[y] |= (GR_BITMAP)(0x8000u >> x);     /* white */
