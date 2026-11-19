@@ -88,6 +88,51 @@ u32 k_WaitEvent(u16 ss, u16 ap)
     return 0;
 }
 
+/* HMODULEs use the same loaded DGROUP identity as hInstance in this
+ * single-task runtime. Built-in API providers have no NE image/heap handle. */
+static int module_name_equal(const char *a,const char *b)
+{
+ for(;*a&&*b;a++,b++) {
+  u8 x=(u8)*a,y=(u8)*b;
+  if(x>='a'&&x<='z')x-=32;
+  if(y>='a'&&y<='z')y-=32;
+  if(x!=y)return 0;
+ }
+ return !*a&&!*b;
+}
+u32 k_GetModuleHandle(u16 ss,u16 ap)
+{
+ struct ne_module *m=w16_mod,*dll;char name[13],*dot;u16 seg,off,i;u8 c;
+ if(ap>0xfffcu || !m || !m->loaded)return 0;
+ off=AW(0);seg=AW(2);if(!off&&!seg)return m->dgroup;
+ for(i=0;i<sizeof(name);i++) {
+  if((u32)off+i>0xffffUL || ((u32)seg<<4)+off+i>0xfffffUL)return 0;
+  c=rd8(seg,off+i);if(c>='a'&&c<='z')c-=32;
+  name[i]=(char)c;if(!c)break;
+  if(c==':'||c=='/'||c=='\\')return 0; /* resident module names, never a filename search */
+ }
+ if(i==sizeof(name) || !i)return 0;
+ dot=strchr(name,'.');
+ if(dot) {
+  if(strlen(dot)!=4 || !((dot[1]=='E'&&dot[2]=='X'&&dot[3]=='E') ||
+                         (dot[1]=='D'&&dot[2]=='L'&&dot[3]=='L')))return 0;
+  *dot=0;
+ }
+ if(!name[0] || strlen(name)>8)return 0;
+ if(module_name_equal(name,m->name))return m->dgroup;
+ for(i=0;i<m->nmod;i++) {
+  dll=m->dependencies[i];
+  if(dll && dll->loaded && (module_name_equal(name,m->modname[i]) || module_name_equal(name,dll->name)))return dll->dgroup;
+ }
+ return 0;
+}
+u32 k_GetNumTasks(u16 ss,u16 ap)
+{
+ (void)ss;(void)ap;
+ /* Bound libraries are modules of this one task, not additional tasks. */
+ return w16_mod && w16_mod->loaded && !w16_mod->library;
+}
+
 /* GetModuleFileName(hModule, lpFilename, nSize) */
 u32 k_GetModuleFileName(u16 ss, u16 ap)
 {

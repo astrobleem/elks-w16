@@ -300,6 +300,11 @@ result:
     return h<0?0xffff:(u16)h;
 }
 
+/* Win16 numbers drives from A:=0. The confined virtual C: volume is
+ * local/fixed; no other DOS drive is mapped (Win16 unknown-drive result 0). */
+u32 k_GetDriveType(u16 ss,u16 ap)
+{ return ap<=0xfffeu && AW(0)==2 ? 3 : 0; }
+
 /* Win16 returns AL=drive letter, AH=':', DX=1. The only mapped drive is C. */
 u32 k_GetTempDrive(u16 ss,u16 ap)
 {

@@ -40,9 +40,9 @@ with tempfile.TemporaryDirectory() as td:
     bad=fixture(True);struct.pack_into('<H',bad,64+32,4);(d/'bad.dll').write_bytes(bad)
     exe=d/'test'
     subprocess.run(['cc','-DW16_HOST','-O1','-g','-Wall','-Wextra','-Wno-unused-parameter',
-                    '-Wno-missing-field-initializers','-fsanitize=address,undefined','-fno-pie','-no-pie',
+                    '-Wno-missing-field-initializers','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-fsanitize=address,undefined','-fno-pie','-no-pie',
                     '-I'+str(root/'src'),str(root/'tests/library_test.c'),
-                    *[str(root/'src'/f) for f in ('ne.c','mem.c','api.c','dlgtmpl.c')],
+                    *[str(root/'src'/f) for f in ('ne.c','mem.c','api.c','dlgtmpl.c','kernel.c','files.c')],
                     '-o',str(exe)],check=True)
     subprocess.run([str(exe),str(d/'test.dll'),str(d/'test.exe'),str(d/'bad.dll')],check=True,
                    env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

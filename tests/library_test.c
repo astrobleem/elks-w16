@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "w16.h"
 extern int host_live,host_fail_after;
+u32 k_GetModuleHandle(u16,u16),k_GetNumTasks(u16,u16),k_GetDriveType(u16,u16);
 int main(int argc,char **argv)
 {
     struct ne_module app,dll;
@@ -39,6 +40,23 @@ int main(int argc,char **argv)
     assert(rd16(app.seg[0].sel,6)==dll.seg[0].sel);
     assert(rd16(app.seg[0].sel,10)==0);
     assert(rd16(app.seg[0].sel,12)==dll.seg[0].sel);
+    {u16 args;assert(!seg_alloc(16,&args));w16_mod=&app;
+     wr32(args,0,0);assert(k_GetModuleHandle(args,0)==app.dgroup&&k_GetNumTasks(0,0)==1);
+     app.loaded=0;assert(!k_GetModuleHandle(args,0)&&!k_GetNumTasks(0,0));app.loaded=1;
+     fcopy_out(args,32,"dllname.exe",12);wr16(args,0,32);wr16(args,2,args);
+     assert(k_GetModuleHandle(args,0)==app.dgroup);
+     fcopy_out(args,32,"test.DLL",9);assert(k_GetModuleHandle(args,0)==dll.dgroup);
+     dll.loaded=0;assert(!k_GetModuleHandle(args,0));dll.loaded=1;
+     fcopy_out(args,32,"USER",5);assert(!k_GetModuleHandle(args,0)); /* no fabricated provider heap */
+     fcopy_out(args,32,"missing",8);assert(!k_GetModuleHandle(args,0));
+     fcopy_out(args,32,"C:\\test.dll",12);assert(!k_GetModuleHandle(args,0));
+     fcopy_out(args,32,"test.bad",9);assert(!k_GetModuleHandle(args,0));
+     assert(!k_GetModuleHandle(args,0xffff));
+     wr16(args,0,2);assert(k_GetDriveType(args,0)==3);
+     wr16(args,0,0);assert(!k_GetDriveType(args,0));wr16(args,0,3);assert(!k_GetDriveType(args,0));
+     wr16(args,0,0xffff);assert(!k_GetDriveType(args,0)&&!k_GetDriveType(args,0xffff));
+     w16_mod=0;assert(!k_GetModuleHandle(args,0)&&!k_GetNumTasks(0,0));seg_free(args);
+    }
     assert(ne_bind_library(&app,0,&dll)==W16_EIMPORT);
     ne_free(&app); ne_free(&dll); assert(host_live==0);
 

@@ -84,6 +84,7 @@ u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
 u32 k_GetModuleUsage(u16, u16);
+u32 k_GetModuleHandle(u16,u16),k_GetNumTasks(u16,u16),k_GetDriveType(u16,u16);
 u32 k_GetCurPID(u16,u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
@@ -437,6 +438,9 @@ const struct api api_table[] = {
     { U, 46, "GetParent", 2, 0, H(u_GetParent) },
     { U, 262, "GetWindow", 4, 0, H(u_GetWindow) },
     { U, 451, "TranslateMDISysAccel", 6, 0, H(u_TranslateMDISysAccel) },
+    { K, 47, "GetModuleHandle", 4, 0, H(k_GetModuleHandle) },
+    { K, 136, "GetDriveType", 2, 0, H(k_GetDriveType) },
+    { K, 152, "GetNumTasks", 0, 0, H(k_GetNumTasks) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
