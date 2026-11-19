@@ -65,7 +65,8 @@ int main(void){
  refuse(10,640,0,0);refuse(10,0,480,0);refuse(10,32767,32767,0);
  refuse(0,0,0,0);refuse(0xc00,0,0,0);refuse(999,0,0,0);
  refuse(9,0,0,0x01000002);refuse(9,0,0,0x02000000);refuse(9,0,0,0xff000000);
- for(i=0;i<256;i+=15){if(i==16)continue;palette.count=i;refuse(9,0,0,0);}
+ for(i=0;i<256;i+=15){if(i<=16&&i>0)continue;palette.count=i;refuse(9,0,0,0);}
+ palette.count=2;assert(call(9,0,0,87)==87);
  palette.count=16;
  /* Equidistant but distinct entries must choose the first, not last. */
  for(i=0;i<16;i++)palette.palette[i].r=palette.palette[i].g=palette.palette[i].b=255;

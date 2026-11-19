@@ -35,6 +35,7 @@ void GrGetSystemPalette(GR_PALETTE*p){int i;palcalls++;p->count=palcount;for(i=0
 test='''int main(void){int before;
 wr16(0x1000,0,5);wr16(0x1000,2,17);wr16(0x1000,4,0x200);
 assert(g_GetPixel(0x1000,0)==0x24180c);assert(readcalls==1&&palcalls==1);assert(g_PtVisible(0x1000,0)==1);
+palcount=2;pixel=1;assert(g_GetPixel(0x1000,0)==0x030201);pixel=2;assert(g_GetPixel(0x1000,0)==0xffffffffUL);palcount=16;pixel=12;
 before=readcalls;cap=0;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);assert(!g_PtVisible(0x1000,0));assert(readcalls==before);cap=0x1000;
 region=1;assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);assert(!g_PtVisible(0x1000,0));assert(readcalls==before);region=0;
 wr16(0x1000,2,100);assert(g_GetPixel(0x1000,0)==0xffffffffUL);assert(readcalls==before);

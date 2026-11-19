@@ -270,6 +270,9 @@ int main(int argc, char **argv)
     }
     dll.fd=-1;
     e = ne_open(&m, path);
+#ifdef W16_STARTUP_TRACE
+    wlog("w16: NE header %d; GrOpen next\n", e);
+#endif
     /* GrOpen may fork/exec the server. Do that before resident DLL and EXE
      * segments consume conventional memory. Keep this connection open so
      * an automatically started, non-persistent server survives loading;
@@ -282,6 +285,9 @@ int main(int argc, char **argv)
         exit(1);
     }
     if (!e && !checkonly) graphics_open = 1;
+#ifdef W16_STARTUP_TRACE
+    wlog("w16: GrOpen completed\n");
+#endif
     if(!e && dllpath) {
         int k;
         for(k=0;k<m.nmod;k++) if(!strcmp(m.modname[k],dllname)) { dllindex=k; break; }

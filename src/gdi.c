@@ -1018,25 +1018,23 @@ u32 g_AddFontResource(u16 ss, u16 ap)
 
 u32 g_RemoveFontResource(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }
 
-/* the display's 16 colours (Tandy/EGA palette) */
-static const u32 egacolors[16] = {
-    0x000000ul, 0xAA0000ul, 0x00AA00ul, 0xAAAA00ul, 0x0000AAul, 0xAA00AAul, 0x0055AAul, 0xAAAAAAul,
-    0x555555ul, 0xFF5555ul, 0x55FF55ul, 0xFFFF55ul, 0x5555FFul, 0xFF55FFul, 0x55FFFFul, 0xFFFFFFul
-};
-
 /* GetNearestColor(hdc, crColor) */
 u32 g_GetNearestColor(u16 ss, u16 ap)
 {
     u32 c = AL(0) & 0xFFFFFFul, best = 0, bd = 0xFFFFFFFFul;
     int i;
-    for (i = 0; i < 16; i++) {
-        long dr = (long)(c & 0xFF) - (long)(egacolors[i] & 0xFF);
-        long dg = (long)((c >> 8) & 0xFF) - (long)((egacolors[i] >> 8) & 0xFF);
-        long db = (long)((c >> 16) & 0xFF) - (long)((egacolors[i] >> 16) & 0xFF);
+    GR_PALETTE *p=(GR_PALETTE *)w16_scratch;
+    memset(p,0,sizeof(*p));GrGetSystemPalette(p);
+    if(p->count<1||p->count>16)return 0;
+    for (i = 0; i < p->count; i++) {
+        u32 actual=(u32)p->palette[i].r|((u32)p->palette[i].g<<8)|((u32)p->palette[i].b<<16);
+        long dr = (long)(c & 0xFF) - (long)(actual & 0xFF);
+        long dg = (long)((c >> 8) & 0xFF) - (long)((actual >> 8) & 0xFF);
+        long db = (long)((c >> 16) & 0xFF) - (long)((actual >> 16) & 0xFF);
         u32 dd = (u32)(dr * dr + dg * dg + db * db);
         if (dd < bd) {
             bd = dd;
-            best = egacolors[i];
+            best = actual;
         }
     }
     return best;
@@ -1079,12 +1077,14 @@ u32 g_GetDeviceCaps(u16 ss, u16 ap)
         memset(&si,0,sizeof(si));GrGetScreenInfo(&si);
         return AW(0)==8?si.cols:si.rows;
     }
-    case 12: return 4;          /* BITSPIXEL */
+    case 12: case 24: {
+        GR_SCREEN_INFO si;memset(&si,0,sizeof(si));GrGetScreenInfo(&si);
+        return AW(0)==12?si.bpp:si.ncolors;
+    }
     case 14: return 1;          /* PLANES */
     case 16: return 16;         /* NUMBRUSHES */
     case 18: return 16;         /* NUMPENS */
     case 22: return 1;          /* NUMFONTS */
-    case 24: return 16;         /* NUMCOLORS */
     case 36: return 1;          /* CLIPCAPS: rectangles */
     case 40: return 10;         /* ASPECTX: a pixel is 0.75 mm wide... */
     case 42: return 12;         /* ASPECTY: ...and 0.9 mm high */
@@ -1250,7 +1250,7 @@ u32 g_SetBrushOrg(u16 ss,u16 ap)
  d->brushx=x;d->brushy=y;return old;
 }
 
-/* Display SetPixel uses the actual native 16-color palette; memory pixels
+/* Display SetPixel uses the actual native palette; memory pixels
  * use their owned storage and palette, never the screen. */
 typedef char pixel_palette_fits_scratch[(sizeof(GR_PALETTE)<=W16_SCRATCH)?1:-1];
 u32 g_SetPixel(u16 ss,u16 ap)
@@ -1262,8 +1262,8 @@ u32 g_SetPixel(u16 ss,u16 ap)
  if(x<0||y<0||(c&0xff000000UL))return 0xffffffffUL;
  if(d->w){w=d->w->cw;h=d->w->ch;}else{memset(&si,0,sizeof(si));GrGetScreenInfo(&si);w=si.cols;h=si.rows;}
  if(x>=w||y>=h)return 0xffffffffUL;
- memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0xffffffffUL;
- for(i=0;i<16;i++){
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count<1||p->count>16)return 0xffffffffUL;
+ for(i=0;i<p->count;i++){
   dr=(long)(c&255)-p->palette[i].r;dg=(long)((c>>8)&255)-p->palette[i].g;db=(long)((c>>16)&255)-p->palette[i].b;
   dist=dr*dr+dg*dg+db*db;if(dist<closest){closest=dist;best=(u32)p->palette[i].r|((u32)p->palette[i].g<<8)|((u32)p->palette[i].b<<16);}
  }
@@ -1305,7 +1305,7 @@ u32 g_GetPixel(u16 ss, u16 ap)
     if (pixel>=16) goto failed;
     memset(p,0,sizeof(*p));GrGetSystemPalette(p);
     why=5;
-    if (p->count!=16) goto failed;
+    if (pixel>=p->count || p->count<1 || p->count>16) goto failed;
     return (u32)p->palette[pixel].r | ((u32)p->palette[pixel].g<<8) |
            ((u32)p->palette[pixel].b<<16);
 failed:
@@ -1334,7 +1334,7 @@ u32 g_PtVisible(u16 ss, u16 ap)
 }
 
 /* EnumObjects(hDC, OBJ_PEN/OBJ_BRUSH, callback, callerData). Enumerate the
- * actual sixteen physical colors advertised by our indexed display driver. */
+ * actual physical colors advertised by our indexed display driver. */
 u32 g_EnumObjects(u16 ss,u16 ap)
 {
     GR_PALETTE *p=(GR_PALETTE *)w16_scratch;
@@ -1343,10 +1343,10 @@ u32 g_EnumObjects(u16 ss,u16 ap)
     kind=AW(8); hdc=AW(10);
     if((kind!=OBJ_PEN && kind!=OBJ_BRUSH) || !dc_get(hdc)) return 0;
     memset(p,0,sizeof(*p)); GrGetSystemPalette(p);
-    if(p->count!=16) return 0;
-    for(i=0;i<16;i++) colors[i]=(u32)p->palette[i].r |
+    if(p->count<1||p->count>16) return 0;
+    for(i=0;i<p->count;i++) colors[i]=(u32)p->palette[i].r |
         ((u32)p->palette[i].g<<8) | ((u32)p->palette[i].b<<16);
-    return enum_palette_objects(kind,AW(4),AW(6),AL(0),colors,16);
+    return enum_palette_objects(kind,AW(4),AW(6),AL(0),colors,p->count);
 }
 
 /* SelectPalette is USER in Win16, although the object belongs to GDI. */

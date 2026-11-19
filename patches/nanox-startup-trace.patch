@@ -1,0 +1,50 @@
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -117,6 +117,7 @@
+ {
+ 	int t;
+ 
++	EPRINTF("CGA-MARK main\n");
+ 	progname = argv[0];
+ 
+ 	t = 1;
+@@ -903,6 +904,7 @@
+ 	GR_CURSOR_ID	cid;
+ 
+ 	/* If needed, initialize the server mutex. */
++	EPRINTF("CGA-MARK init\n");
+ 	SERVER_LOCK_INIT();
+ 
+ 	wp = (GR_WINDOW *) malloc(sizeof(GR_WINDOW));
+@@ -947,6 +949,7 @@
+ 	}
+ #endif
+ 
++	EPRINTF("CGA-MARK socket-ready\n");
+ 	if ((keyb_fd = GdOpenKeyboard()) == -1) {
+ 		EPRINTF("Cannot initialise keyboard\n");
+ 		/*GsCloseSocket();*/
+@@ -954,6 +957,7 @@
+ 		return -1;
+ 	}
+ 
++	EPRINTF("CGA-MARK keyboard-ready\n");
+ 	if ((psd = GdOpenScreen()) == NULL) {
+ 		EPRINTF("Cannot initialise screen\n");
+ 		/*GsCloseSocket();*/
+@@ -961,6 +965,7 @@
+ 		free(wp);
+ 		return -1;
+ 	}
++	EPRINTF("CGA-MARK screen-ready\n");
+ 	GdSetPortraitMode(psd, portraitmode);
+ 
+ 	if ((mouse_fd = GdOpenMouse()) == -1) {
+@@ -979,6 +984,7 @@
+ 	/* system fixed font looks better when mixed with builtin fixed fonts*/
+ 	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_FIXED, 0, 0, NULL);
+ #else
++	EPRINTF("CGA-MARK mouse-ready\n");
+ 	stdfont = GdCreateFont(psd, MWFONT_SYSTEM_VAR, 0, 0, NULL);
+ #endif
+ 

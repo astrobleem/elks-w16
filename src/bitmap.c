@@ -346,7 +346,7 @@ static int capture_copy(struct dc*src,int dm,int dx,int dy,int sx,int sy,int w,i
  if(!clip_axis(&xx,&ax,&ww,d->w,sw)||!clip_axis(&yy,&ay,&hh,d->h,sh))return 1;
  memset(&c,0,sizeof(c));c.image.w=ww;c.image.h=hh;c.image.stride=(ww+1)/2;c.image.bpp=4;c.valid=1;
 
- memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count<1||p->count>16)return 0;
  for(j=0;j<16;j++){c.image.palette[j].r=p->palette[j].r;c.image.palette[j].g=p->palette[j].g;c.image.palette[j].b=p->palette[j].b;}
  /* Small selection captures can outlive the last free far block. Keep the
   * same atomic staging contract using bounded near storage in that case. */
@@ -418,7 +418,7 @@ int bitmap_flood(u16 h,struct dc*d,int x,int y,u32 boundary,int mode,u32 brush,
  if(w<1||hgt<1||w>640||hgt>480||x<0||y<0||x>=w||y>=hgt)return 0;
  memset(&row,0,sizeof row);row.w=w;
  if(d){
-  memset(palette,0,sizeof(*palette));GrGetSystemPalette(palette);if(palette->count!=16)return 0;
+  memset(palette,0,sizeof(*palette));GrGetSystemPalette(palette);if(palette->count<1||palette->count>16)return 0;
   for(i=0;i<16;i++){
    u32 rgb=(u32)palette->palette[i].r|((u32)palette->palette[i].g<<8)|((u32)palette->palette[i].b<<16);
    row.accept[i]=(rgb==boundary)==mode;
@@ -576,7 +576,7 @@ u32 g_CreateCompatibleBitmap(u16 ss,u16 ap)
  if(m>=0){b=bi(memory[m].bitmap);mono=b<0||bitmaps[b].bpp==1;}
  else if(!dc_get(hdc))return 0;
  if(!w||!h){w=h=1;mono=1;}
- if(!mono){memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;}
+ if(!mono){memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count<1||p->count>16)return 0;}
  i=allocate_bitmap(w,h,mono?1:4);if(i<0)return 0;
  if(!mono)for(j=0;j<16;j++){
   bitmaps[i].palette[j].r=p->palette[j].r;bitmaps[i].palette[j].g=p->palette[j].g;bitmaps[i].palette[j].b=p->palette[j].b;
@@ -592,7 +592,7 @@ u16 bitmap_create(u16 w,u16 h,u16 planes,u16 bpp,u16 seg,u16 off)
  if(planes!=1||(bpp!=1&&bpp!=4)||!w||!h||w>640||h>480)return 0;
  stride=((w*bpp+15)/16)*2;bytes=(u32)stride*h;
  if((seg||off)&&((u32)off+bytes>65536UL||((u32)seg<<4)+off+bytes>0x100000UL))return 0;
- if(bpp==4){memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return 0;}
+ if(bpp==4){memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count<1||p->count>16)return 0;}
  i=allocate_bitmap(w,h,bpp);if(i<0)return 0;
  if(bpp==4)for(j=0;j<16;j++){
   bitmaps[i].palette[j].r=p->palette[j].r;bitmaps[i].palette[j].g=p->palette[j].g;bitmaps[i].palette[j].b=p->palette[j].b;
@@ -774,7 +774,7 @@ static int dib_device_bitmap(u16 hdc,u16 width,u16 height)
 {
  GR_PALETTE*p=(GR_PALETTE*)w16_scratch;int i,j;
  if(!dc_get(hdc)&&di(hdc)<0)return -1;
- memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count!=16)return -1;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);if(p->count<1||p->count>16)return -1;
  i=allocate_bitmap(width,height,4);if(i<0)return -1;
  for(j=0;j<16;j++){
   bitmaps[i].palette[j].r=p->palette[j].r;
