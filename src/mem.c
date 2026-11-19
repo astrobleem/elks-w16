@@ -160,6 +160,9 @@ static void emit(void)
     }
 #endif
     write(2, logbuf, strlen(logbuf));
+#ifdef W16_TRACE_SYNC
+    sync(); /* diagnostic build: retain the last API line on an owned guest disk */
+#endif
     if (opt_debugport)
         e9puts(logbuf);
 }
