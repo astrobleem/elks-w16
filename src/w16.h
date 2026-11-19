@@ -83,6 +83,8 @@ void session_shutdown(void);
 int session_end_begin(void);
 void session_end_cancel(void);
 u16 files_getcwd(u16 drive,u16 seg,u16 off);
+u16 files_chdir(u16 seg,u16 off);
+u16 files_attributes(u16 seg,u16 off,u16 set,u16 *attr);
 
 int palette_valid(u16 h);
 int palette_object(u16 h,i16 n,u16 seg,u16 off);

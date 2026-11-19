@@ -91,7 +91,7 @@ static int local_path(const char *input,char *out,int allow_new)
         closedir(dir);
         if(!exact && matches>1) { errno=EEXIST; return -1; }
         if(!exact && !matches) {
-            if(!last || allow_new!=1) { errno=ENOENT; return -1; }
+            if(!last || allow_new!=1) { errno=last?ENOENT:ENOTDIR; return -1; }
             strcpy(match,component);
         }
         n=strlen(match);
@@ -99,12 +99,14 @@ static int local_path(const char *input,char *out,int allow_new)
         if(used) out[used++]='/';
         memcpy(out+used,match,n+1);used+=n;
         if(lstat(out,&st)==0) {
-            if(S_ISLNK(st.st_mode) || (last&&allow_new!=2?!S_ISREG(st.st_mode):!S_ISDIR(st.st_mode))) {
+            if(S_ISLNK(st.st_mode) || (last&&allow_new==3?
+                !(S_ISREG(st.st_mode)||S_ISDIR(st.st_mode)):
+                (last&&allow_new!=2?!S_ISREG(st.st_mode):!S_ISDIR(st.st_mode)))) {
                 errno=EACCES; return -1;
             }
         } else if(errno!=ENOENT || !last || allow_new!=1) return -1;
     }
-    if(!used) { if(allow_new==2){strcpy(out,".");return 0;} errno=EINVAL; return -1; }
+    if(!used) { if(allow_new==2||allow_new==3){strcpy(out,".");return 0;} errno=EINVAL; return -1; }
     return 0;
 }
 /* Shared dialog directory state. Never change the host process directory.
@@ -165,6 +167,11 @@ static int new_handle(const char *path,int flags)
     int i,fd; struct stat st;
     for(i=0;i<FILES && files[i].used;i++);
     if(i==FILES) { errno=EMFILE; return -1; }
+    /* DOS read-only remains effective even when ELKS runs us as root.
+     * Check before O_TRUNC, not after it has destroyed existing contents. */
+    if((flags&(O_WRONLY|O_RDWR|O_TRUNC)) && !lstat(path,&st) && !(st.st_mode&0222)) {
+        errno=EACCES;return -1;
+    }
     fd=open(path,flags,0600);
     if(fd<0) return -1;
     if(fstat(fd,&st)<0 || !S_ISREG(st.st_mode)) {
@@ -249,6 +256,7 @@ static u16 dos_error(void)
 {
     switch(errno) {
     case ENOENT:return 2;
+    case ENOTDIR:return 3;
     case EMFILE:return 4;
     case EACCES:case EPERM:return 5;
     case EBADF:return 6;
@@ -258,11 +266,44 @@ static u16 dos_error(void)
     default:return 87;
     }
 }
+/* A Win16 task's only mapped drive is C:. DOS AH=3B changes its logical
+ * cwd, never the ELKS process cwd; failed changes leave the old value intact. */
+u16 files_chdir(u16 seg,u16 off)
+{
+ char name[PATHLEN],native[PATHLEN];
+ if(read_name(seg,off,name)||!name[0]||files_directory(name,native,0)||strlen(native)>=64)return 3;
+ strcpy(dos_cwd,!strcmp(native,".")?"":native);return 0;
+}
+/* AH=43 supports real native read-only and directory attributes. Minix has
+ * no hidden/system/archive metadata; requests to set those fail explicitly.
+ * Directory/volume bits are immutable, never synthesized by chmod. */
+u16 files_attributes(u16 seg,u16 off,u16 set,u16 *attr)
+{
+ char name[PATHLEN],native[PATHLEN];struct stat st;mode_t mode;
+ if(set>1)return 1;
+ if(read_name(seg,off,name)||!name[0])return 3;
+ if(local_path(name,native,3)||lstat(native,&st)) {
+  if(errno==ENOENT)return 2;
+  return errno==EACCES||errno==EPERM?5:3;
+ }
+ if(!set){*attr=(S_ISDIR(st.st_mode)?0x10:0)|((st.st_mode&0222)?0:1);return 0;}
+ if(*attr&~1u)return 5;
+ mode=st.st_mode&07777;
+ mode=(*attr&1)?mode&~0222:mode|0200;
+ return chmod(native,mode)?5:0;
+}
+static int remove_file(const char *path)
+{
+ struct stat st;
+ if(lstat(path,&st))return -1;
+ if(!(st.st_mode&0222)){errno=EACCES;return -1;}
+ return unlink(path);
+}
 /* Shared by OpenFile(OF_DELETE) and the DLL's DOS3Call AH=41 helper. */
 u16 files_unlink(u16 seg,u16 off)
 {
     char name[PATHLEN],path[PATHLEN];
-    if(read_name(seg,off,name) || local_path(name,path,0) || unlink(path)<0)
+    if(read_name(seg,off,name) || local_path(name,path,0) || remove_file(path)<0)
         return dos_error();
     return 0;
 }
@@ -282,7 +323,7 @@ u32 k_OpenFile(u16 ss,u16 ap)
        ((style&0x1000)&&(style&(0x200|0x4000)))) { errno=EINVAL;goto failed; }
     if(local_path(name,path,(style&(0x1000|0x100))!=0)) goto failed;
     if(style&0x100) { h=0;goto result; } /* OF_PARSE */
-    if(style&0x200) { h=unlink(path)<0?-1:0; if(h<0)goto failed;goto result; }
+    if(style&0x200) { h=remove_file(path)<0?-1:0; if(h<0)goto failed;goto result; }
     mode=access_mode(style&0x73);
     if(mode<0)goto failed;
     h=new_handle(path,style&0x1000?O_RDWR|O_CREAT|O_TRUNC:mode);

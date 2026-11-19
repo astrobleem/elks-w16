@@ -816,6 +816,12 @@ void W16_CDECL w16_int21_dispatch(void)
         wr16(ss, f + R_BX, 0);
         wr16(ss, f + R_CX, 0);
         break;
+    case 0x0E:                  /* only mapped C:; unavailable drives do not change it */
+        /* AL is the drive-index limit (C + 1), not an error/drive selector.
+         * DOS gives no carry result for this call; preserve incoming flags. */
+        fl=rd16(ss,f+R_FL);
+        wr16(ss,f+R_AX,(ax&0xff00)|3);
+        break;
     case 0x19:                  /* current drive: C: */
         wr16(ss, f + R_AX, (ax & 0xFF00) | 2);
         break;
@@ -847,6 +853,17 @@ void W16_CDECL w16_int21_dispatch(void)
             wr16(ss, f + R_CX, (tm->tm_hour << 8) | tm->tm_min);
             wr16(ss, f + R_DX, tm->tm_sec << 8);
         }
+        break;
+    }
+    case 0x3B: {               /* task-local logical directory; no native chdir */
+        u16 error=files_chdir(rd16(ss,f+R_DS),rd16(ss,f+R_DX));
+        if(error){wr16(ss,f+R_AX,error);fl|=1;}
+        break;
+    }
+    case 0x43: {               /* real representable file/directory attributes */
+        u16 attr=rd16(ss,f+R_CX),error=files_attributes(rd16(ss,f+R_DS),rd16(ss,f+R_DX),al,&attr);
+        if(error){wr16(ss,f+R_AX,error);fl|=1;}
+        else if(!al)wr16(ss,f+R_CX,attr);
         break;
     }
     case 0x47: {               /* current directory on our confined C: drive */
