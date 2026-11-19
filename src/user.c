@@ -1257,6 +1257,8 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
     if (!w)
         return 0;
     switch (msg) {
+    case 0x000d: case 0x000e: /* WM_GETTEXT / WM_GETTEXTLENGTH */
+        return control_message(w,msg,wp,AL(0));
     case WM_CLOSE:
         destroy_window(w);
         return 0;
@@ -1441,11 +1443,33 @@ u32 u_PeekMessage(u16 ss, u16 ap)
     return 1;
 }
 
+/* Shared synchronous dispatch preserves custom window procedures. Dialog
+ * procedures returning FALSE leave text messages to their default handler. */
+static u32 window_message(u16 hwnd,u16 msg,u16 wp,u32 lp)
+{
+    struct wnd *w=win_get(hwnd);u32 r;
+    if(!w)return 0;
+    r=w->ctl?control_message(w,msg,wp,lp):win_send(w,msg,wp,lp);
+    if(!r && w->isdialog && (msg==0x000d || msg==0x000e))
+        r=control_message(w,msg,wp,lp);
+    return r;
+}
+
+u32 u_GetWindowText(u16 ss,u16 ap)
+{
+    if(ap>0xfff8u || (i16)AW(0)<=0)return 0;
+    return (u16)window_message(AW(6),0x000d,AW(0),AL(2));
+}
+u32 u_GetWindowTextLength(u16 ss,u16 ap)
+{
+    if(ap>0xfffeu)return 0;
+    return (u16)window_message(AW(0),0x000e,0,0);
+}
+
 /* SendMessage is synchronous. Unlike DispatchMessage it must not interpret
  * a WM_TIMER lParam as a callback address: the window procedure receives it. */
 u32 u_SendMessage(u16 ss,u16 ap)
 {
-    struct wnd *w;
     u16 hwnd,msg,wp,i; u32 lp;
     if(ap>0xfff6u) return 0;
     hwnd=AW(8); msg=AW(6); wp=AW(4); lp=AL(0);
@@ -1455,8 +1479,7 @@ u32 u_SendMessage(u16 ss,u16 ap)
             (void)win_send(&wins[i],msg,wp,lp);
         return 0;
     }
-    w=win_get(hwnd);
-    return w?(w->ctl?control_message(w,msg,wp,lp):win_send(w,msg,wp,lp)):0;
+    return window_message(hwnd,msg,wp,lp);
 }
 
 /* PostMessage(hWnd, wMsg, wParam, lParam) */

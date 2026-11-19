@@ -41,6 +41,7 @@ test: host samples
 	python3 tests/scrolltest.py
 	python3 tests/scrolluitest.py
 	python3 tests/childtest.py
+	python3 tests/windowtexttest.py
 	python3 tests/editcontroltest.py
 	python3 tests/filelisttest.py
 	python3 tests/textlayouttest.py

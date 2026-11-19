@@ -17,6 +17,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SO
 #define H(f) 0
 #else
 #define H(f) f
+u32 u_GetWindowText(u16,u16),u_GetWindowTextLength(u16,u16);
 u32 u_CreateCaret(u16,u16),u_DestroyCaret(u16,u16),u_SetCaretPos(u16,u16),u_HideCaret(u16,u16),u_ShowCaret(u16,u16);
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
@@ -106,6 +107,8 @@ u32 g_UnrealizeObject(u16, u16);
 #define S MOD_SOUND
 #define L MOD_SHELL
 const struct api api_table[] = {
+    { U,36,"GetWindowText",8,0,H(u_GetWindowText) },
+    { U,38,"GetWindowTextLength",2,0,H(u_GetWindowTextLength) },
     { U,15,"GetCurrentTime",0,0,H(u_GetCurrentTime) },
     { U,150,"LoadMenu",6,0,H(u_LoadMenu) },
     { U,158,"SetMenu",4,0,H(u_SetMenu) },
