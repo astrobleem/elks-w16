@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Exercise real caret code against a clipped invert framebuffer."""
-import pathlib,subprocess,tempfile,os
+import pathlib,subprocess,tempfile,os,re
 root=pathlib.Path(__file__).resolve().parents[1]
 api=(root/'src/api.c').read_text()
+# Storage annotation does not change API names or the binding contract.
+api=re.sub(r'W16_RO_STRING\(("[^"]*")\)', r'\1', api)
 for ordinal,name,size in [(163,'CreateCaret',8),(164,'DestroyCaret',0),(165,'SetCaretPos',4),(166,'HideCaret',2),(167,'ShowCaret',2)]:
  assert '{ U, %d, "%s", %d, 0, H(u_%s) }'%(ordinal,name,size,name) in api
 source=(root/'src/caret.c').read_text().replace('#include "wapi.h"','')
