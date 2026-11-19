@@ -15,6 +15,7 @@ stubs = r'''
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <unistd.h>
 #include "w16.h"
 #undef FOFF
 #undef FSEG
@@ -82,6 +83,25 @@ void ne_free(struct ne_module *m) {
 const char *ne_errstr(int e) { (void)e; return "injected"; }
 int user_init(void) { event("user_init"); assert(GrOpen() >= 0); return fail("user_init"); }
 void user_shutdown(void) { event("user_shutdown"); GrClose(); }
+/* This fixture exercises a standalone task (no -T and no shared launcher).
+ * Replies/finish are therefore no-ops; attaching still owns a router. */
+static int router_attached, router_left;
+u16 task_image_sp(void) { assert(0); return 0; }
+int launch_prepare(u16 sp) { (void)sp; assert(0); return 0; }
+int launch_attach(u16 ss) {
+    (void)ss; assert(connected && !router_attached); router_attached = 1; return 0;
+}
+void launch_reply(u16 result) { (void)result; }
+u16 launch_error(int e) { (void)e; return 11; }
+void launch_finish(void) { assert(!router_attached); }
+/* No shared session was opened by the standalone fixture. */
+void session_shutdown(void) {}
+void launch_poll(void) { assert(0); }
+void int21_router_leave(void) { assert(router_attached); router_left = 1; }
+int int21_router_close(void) {
+    assert(router_attached && router_left && !connected);
+    router_attached = 0; return 0;
+}
 void dos_init(void) { event("dos_init"); }
 void kernel_shutdown(void) { event("kernel_shutdown"); }
 u32 w16_getvect(u16 v) { (void)v; return 0; }
