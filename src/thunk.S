@@ -1,3 +1,4 @@
+#include "api-slots.h"
 // thunk.S - real-mode glue between Win16 code and the ELKS loader (8086 instructions only).
 //
 // Two stacks are in use: the program's stack (SS = its automatic data segment, as on
@@ -176,7 +177,7 @@ w16_outb:
 	.global w16_stubs
 w16_stubs:
 	.set	w16_i, 0
-	.rept	320
+	.rept	W16_API_SLOTS
 	.balign	8, 0x90
 	mov	$w16_i, %ax
 	jmp	api_common

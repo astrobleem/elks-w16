@@ -50,6 +50,11 @@ static u32 global_size(u16 h){return h==0xf000?guest_length:0;}
 static int global_pointer(u16 h,u32 *p){if(h!=0xf000)return 0;guest_locks++;*p=2UL<<16;return 1;}
 static u32 global_unlock(u16 h){if(h==0xf000){assert(guest_locks);guest_locks--;}return 0;}
 static void fcopy_in(void *p,u16 seg,u16 off,u16 n){assert((seg==2||seg==3)&&(unsigned)off+n<=guest_length);memcpy(p,guest_resource+off,n);}
+static int global_image(u16 h,int set){(void)h;(void)set;return 0;}
+static u16 image_copy(u16 h){(void)h;return 0;}
+static u16 image_destroy(u16 h){(void)h;return 0;}
+static u8 *image_snapshot(u16 h,u16 *len){(void)h;(void)len;return NULL;}
+static u16 image_from_dib(u16 h,const u8 *p,u16 len){(void)h;(void)p;(void)len;return 0;}
 static struct { int used, ctl; unsigned frame, client; } wins[MAXWIN];
 static int new_calls, fail_new, short_data, missing, resource_reads, group_reads,bad_hot,bad_header,odd_height;
 static unsigned last_cursor;

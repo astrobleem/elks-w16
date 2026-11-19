@@ -1139,13 +1139,18 @@ int gdi_draw_icon(GR_WINDOW_ID wid,int x,int y,const u8 *d,u16 len)
 u32 u_DrawIcon(u16 ss,u16 ap)
 {
  struct dc *d;struct gcstate gc;struct dib_info info;struct dib_memory memory;
- const u8 *image;u16 len;u32 mask;int x,y,result;
- if(ap>0xfff8u || !(d=dc_get(AW(6))) || !(image=icon_data(AW(0),&len)))return 0;
+ const u8 *image;u8 *snapshot=0;u16 len;u32 mask;int x,y,result=0;
+ if(ap>0xfff8u || !(d=dc_get(AW(6))))return 0;
+ if(global_image(AW(0),0))image=snapshot=image_snapshot(AW(0),&len);
+ else image=icon_data(AW(0),&len);
+ if(!image)return 0;
  memory.data=image;memory.length=len;
- if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask) || info.width!=32 || info.height!=32)return 0;
- x=(i16)AW(4);y=(i16)AW(2);if(!gdi_map_point(d,&x,&y))return 0;
- memset(&gc,0,sizeof(gc));gc.gc=GrCopyGC(d->gc);if(!gc.gc)return 0;
- result=draw_icon_gc(d->wid,&gc,x,y,image,len);GrDestroyGC(gc.gc);return result==0;
+ if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask) || info.width!=32 || info.height!=32)goto done;
+ x=(i16)AW(4);y=(i16)AW(2);if(!gdi_map_point(d,&x,&y))goto done;
+ memset(&gc,0,sizeof(gc));gc.gc=GrCopyGC(d->gc);if(!gc.gc)goto done;
+ result=draw_icon_gc(d->wid,&gc,x,y,image,len)==0;GrDestroyGC(gc.gc);
+done:
+ free(snapshot);return result;
 }
 
 /* ---------------------------------------------------------------- text extents

@@ -8,6 +8,7 @@
  */
 #include <string.h>
 #include "w16.h"
+#include "api-slots.h"
 
 int opt_missing; /* explicit diagnostic mode; never returns success for missing APIs */
 
@@ -48,7 +49,8 @@ u32 u_EndPaint(u16, u16), u_CreateWindow(u16, u16), u_ShowWindow(u16, u16), u_De
 u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16), u_TranslateMessage(u16, u16);
 u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16, u16), u_LoadCursor(u16, u16);
 u32 u_DrawIcon(u16,u16),u_CopyIcon(u16,u16),u_DestroyIcon(u16,u16);
-u32 u_GetIconId(u16,u16);
+u32 u_GetIconId(u16,u16),u_LoadIconHandler(u16,u16);
+u32 u_CreateCursorIconIndirect(u16,u16),u_DumpIcon(u16,u16),u_DestroyCursor(u16,u16);
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
@@ -66,6 +68,7 @@ u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), 
 u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16), u_EnableWindow(u16, u16);
 u32 u_CheckRadioButton(u16,u16), u_CheckDlgButton(u16,u16), u_IsDlgButtonChecked(u16,u16);
 u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
+u32 k_DirectResAlloc(u16,u16);
 u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
 u32 k_WritePrivateProfileString(u16,u16);
 u32 k_GetPrivateProfileInt(u16,u16), k_GetPrivateProfileString(u16,u16);
@@ -445,11 +448,16 @@ const struct api api_table[] = {
     { K, 152, "GetNumTasks", 0, 0, H(k_GetNumTasks) },
     { U, 84, "DrawIcon", 8, 0, H(u_DrawIcon) },
     { U, 368, "CopyIcon", 4, 0, H(u_CopyIcon) },
+    { K, 168, "DirectResAlloc", 6, 0, H(k_DirectResAlloc) },
+    { U, 408, "CreateCursorIconIndirect", 14, 0, H(u_CreateCursorIconIndirect) },
+    { U, 458, "DestroyCursor", 2, 0, H(u_DestroyCursor) },
+    { U, 459, "DumpIcon", 16, 0, H(u_DumpIcon) },
+    { U, 456, "LoadIconHandler", 4, 0, H(u_LoadIconHandler) },
     { U, 455, "GetIconId", 6, 0, H(u_GetIconId) },
     { U, 457, "DestroyIcon", 2, 0, H(u_DestroyIcon) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
-typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
+typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=W16_API_SLOTS)?1:-1];
 
 /* Names of common Windows 3.0 entry points this layer does NOT implement, for diagnostics only. */
 struct known { u8 mod; u16 ord; const char *name; };

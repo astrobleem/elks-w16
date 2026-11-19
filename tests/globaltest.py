@@ -10,7 +10,7 @@ with tempfile.TemporaryDirectory() as td:
             level+=(source[end]=='{')-(source[end]=='}');end+=1
         return source[m.start():end]
     integration='#include "w16.h"\n#include <assert.h>\n#define MAXRSRC 8\nstatic struct {u8 used;u32 off;u16 len,seg;} rsrc[MAXRSRC];\n'
-    integration+='\n'.join(func(n) for n in ('rsrc_by_seg','k_GlobalLock','k_GlobalUnlock','k_GlobalSize','k_FreeResource'))
+    integration+='\n'.join(func(n) for n in ('k_DirectResAlloc','rsrc_by_seg','resource_view','k_GlobalLock','k_GlobalUnlock','k_GlobalSize','k_FreeResource'))
     integration+="""
 void test_resource(u16 stack) {
  u16 seg; u32 ptr;
@@ -21,10 +21,12 @@ void test_resource(u16 stack) {
  assert(!rsrc[0].used);
 }
 """
+    source=(root/'src/user.c').read_text()
+    integration+='\n#include <stdlib.h>\n'+func('u_LoadIconHandler')
     local=pathlib.Path(td)/'resources.c';local.write_text(integration)
     exe=str(pathlib.Path(td)/'globaltest')
     subprocess.run(['cc','-DW16_HOST','-std=c99','-Wall','-Wextra','-Werror',
                     '-fsanitize=address,undefined','-fno-omit-frame-pointer','-no-pie',
-                    '-I'+str(root/'src'),str(root/'src/global.c'),str(root/'src/mem.c'),
+                    '-I'+str(root/'src'),str(root/'src/global.c'),str(root/'src/icon.c'),str(root/'src/dib.c'),str(root/'src/mem.c'),
                     str(root/'tests/global_test.c'),str(local),'-o',exe],check=True)
     subprocess.run([exe],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

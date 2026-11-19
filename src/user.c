@@ -2008,9 +2008,26 @@ done:
  global_unlock(AW(4));return best;
 }
 
+/* Win3 LoadIconHandler(HGLOBAL, BOOL): convert caller-owned global DIB
+ * storage in place. Locked native rows remain available to DumpIcon later.
+ * Old Windows 2 device resources and shared LoadResource segments are not
+ * interchangeable with a caller-owned global block. */
+u32 u_LoadIconHandler(u16 ss,u16 ap)
+{
+ u16 h,seg,len,result;u8 *data;
+ if(ap>0xfffcu||!AW(0))return 0;
+ h=AW(2);if(!global_size(h)||!resource_view(h,&seg,&len))return 0;
+ data=len&&len<=4096?malloc(len):0;
+ if(data)fcopy_in(data,seg,0,len);
+ global_unlock(h);
+ if(!data)return 0;
+ result=image_from_dib(h,data,len);free(data);return result;
+}
 u32 u_CopyIcon(u16 ss,u16 ap)
 {
  int i,j;u8 *copy;
+ if(ap>0xfffcu || (AW(2)&&(!w16_mod||AW(2)!=w16_mod->dgroup)))return 0;
+ if(global_image(AW(0),0))return image_copy(AW(0));
  if(ap>0xfffcu || (AW(2)&&(!w16_mod||AW(2)!=w16_mod->dgroup)) || (i=icon_slot(AW(0)))<0)return 0;
  for(j=0;j<MAXICON&&icons[j].data;j++);
  if(j==MAXICON || !(copy=malloc(icons[i].len)))return 0;
@@ -2019,7 +2036,8 @@ u32 u_CopyIcon(u16 ss,u16 ap)
 }
 u32 u_DestroyIcon(u16 ss,u16 ap)
 {
- int i;if(ap>0xfffeu || (i=icon_slot(AW(0)))<0 || !icons[i].owned)return 0;
+ int i;if(ap<=0xfffeu && global_image(AW(0),0))return image_destroy(AW(0));
+ if(ap>0xfffeu || (i=icon_slot(AW(0)))<0 || !icons[i].owned)return 0;
  free(icons[i].data);icons[i].data=0;return 1;
 }
 

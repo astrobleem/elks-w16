@@ -504,6 +504,15 @@ u32 k_LoadResource(u16 ss, u16 ap)
     return rsrc[i].seg;
 }
 
+/* DirectResAlloc(hInstance, type, size): an independently allocated movable
+ * resource block owned by this task. Type (normally 0x10) is not a flags word.
+ * Unloaded/foreign module ownership is unsupported, never silently reassigned. */
+u32 k_DirectResAlloc(u16 ss,u16 ap)
+{
+ if(ap>0xfffau||!w16_mod||!w16_mod->loaded||AW(4)!=w16_mod->dgroup)return 0;
+ return global_alloc(AW(0),2);
+}
+
 /* Bounded read view for USER's resource handlers. Ordinary movable blocks
  * acquire a lock; loaded resource segments already have a stable address.
  * The caller balances either kind with global_unlock (a no-op for resources). */

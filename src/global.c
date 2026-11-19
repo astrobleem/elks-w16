@@ -5,7 +5,8 @@
 #define GLOBAL_BASE 0xf000
 #define GM_MOVEABLE 2
 #define GM_ZEROINIT 0x40
-struct global_block { u16 seg, bytes, locks, flags; u8 used, clipboard_owned; };
+/* owner: 0 caller allocation, 1 transferred clipboard, 2 native image. */
+struct global_block { u16 seg, bytes, locks, flags; u8 used, owner; };
 static struct global_block blocks[GLOBAL_MAX];
 /* GlobalLRUNewest is an advisory ordering request, not an allocation or lock.
  * Maintain the relative order without discarding data behind the guest. */
@@ -59,10 +60,9 @@ u32 global_unlock(u16 h)
 }
 u32 global_size(u16 h)
 { int i=lookup(h); return i<0?0:blocks[i].bytes; }
-u32 k_GlobalAlloc(u16 ss,u16 ap)
+u16 global_alloc(u32 bytes,u16 flags)
 {
-    u32 bytes=AL(0);
-    u16 flags=AW(4),seg=0,n;
+    u16 seg=0,n;
     int i;
     if(bytes>0xfff0UL) return 0;
     for(i=0;i<GLOBAL_MAX && blocks[i].used;i++);
@@ -72,25 +72,25 @@ u32 k_GlobalAlloc(u16 ss,u16 ap)
     if(n && seg_alloc(n>>4,&seg)) return 0;
     if(n && (flags&GM_ZEROINIT)) fzero(seg,0,n);
     blocks[i].used=1;blocks[i].seg=seg;blocks[i].bytes=n;
-    blocks[i].flags=flags;blocks[i].locks=0;blocks[i].clipboard_owned=0;
+    blocks[i].flags=flags;blocks[i].locks=0;blocks[i].owner=0;
     mark_newest((u8)i);
     return handle(i);
 }
-u32 k_GlobalFree(u16 ss,u16 ap)
+u32 k_GlobalAlloc(u16 ss,u16 ap) {return global_alloc(AL(0),AW(4));}
+u16 global_free(u16 h)
 {
-    u16 h=AW(0);
     int i=lookup(h);
     if(!h) return 0;
-    if(i<0 || blocks[i].clipboard_owned) return h;
+    if(i<0 || blocks[i].owner==1) return h;
     if(blocks[i].seg) seg_free(blocks[i].seg);
     blocks[i].used=0; return 0;
 }
-u32 k_GlobalReAlloc(u16 ss,u16 ap)
+u32 k_GlobalFree(u16 ss,u16 ap) {return global_free(AW(0));}
+u16 global_realloc(u16 h,u32 bytes,u16 flags)
 {
-    u16 flags=AW(0),h=AW(6),n,seg,copy,pos,part;
-    u32 bytes=AL(2);
+    u16 n,seg,copy,pos,part;
     int i=lookup(h);
-    if(i<0 || blocks[i].clipboard_owned || bytes>0xfff0UL) return 0;
+    if(i<0 || blocks[i].owner==1 || bytes>0xfff0UL) return 0;
     /* GMEM_MODIFY changes allocation flags, not size or identity. */
     if(flags&0x80) {
         blocks[i].flags=(blocks[i].flags&GM_MOVEABLE)|(flags&~(GM_MOVEABLE|0x80));
@@ -112,6 +112,13 @@ u32 k_GlobalReAlloc(u16 ss,u16 ap)
     blocks[i].seg=seg;blocks[i].bytes=n;
     return h;
 }
+u32 k_GlobalReAlloc(u16 ss,u16 ap) {return global_realloc(AW(6),AL(2),AW(0));}
+int global_image(u16 h,int set)
+{
+ int i=lookup(h);if(i<0 || blocks[i].owner==1)return 0;
+ if(set)blocks[i].owner=2;
+ return blocks[i].owner==2;
+}
 void global_shutdown(void)
 {
     int i;
@@ -127,12 +134,12 @@ void global_shutdown(void)
 int global_clipboard_take(u16 h)
 {
  int i=lookup(h);
- if(i<0||!(blocks[i].flags&GM_MOVEABLE)||!blocks[i].seg||!blocks[i].bytes||blocks[i].locks||blocks[i].clipboard_owned)return 0;
- blocks[i].clipboard_owned=1;return 1;
+ if(i<0||!(blocks[i].flags&GM_MOVEABLE)||!blocks[i].seg||!blocks[i].bytes||blocks[i].locks||blocks[i].owner)return 0;
+ blocks[i].owner=1;return 1;
 }
 void global_clipboard_release(u16 h)
 {
- int i=lookup(h);if(i<0||!blocks[i].clipboard_owned)return;
+ int i=lookup(h);if(i<0||blocks[i].owner!=1)return;
  if(blocks[i].seg)seg_free(blocks[i].seg);
- blocks[i].used=0;blocks[i].clipboard_owned=0;
+ blocks[i].used=0;blocks[i].owner=0;
 }

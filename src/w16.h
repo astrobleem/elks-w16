@@ -304,6 +304,14 @@ extern int  opt_ready;
 
 /* global.c: single-segment task-owned global memory */
 int resource_view(u16 h,u16 *seg,u16 *len);
+u16 global_alloc(u32 bytes,u16 flags);
+u16 global_free(u16 h);
+u16 global_realloc(u16 h,u32 bytes,u16 flags);
+int global_image(u16 h,int set);
+u16 image_copy(u16 h);
+u16 image_destroy(u16 h);
+u8 *image_snapshot(u16 h,u16 *len);
+u16 image_from_dib(u16 h,const u8 *data,u16 len);
 int global_pointer(u16 h,u32 *ptr);
 u32 global_unlock(u16 h);
 u32 global_size(u16 h);
