@@ -7,7 +7,7 @@
 .global w16_int21_router
 w16_int21_router:
  .byte 0xeb, .Ldispatch-w16_int21_router-2
- .word W16_INT21_MAGIC0, W16_INT21_MAGIC1, 1
+ .word W16_INT21_MAGIC0, W16_INT21_MAGIC1, 2
 .Ltable: .word 0
 .Lold: .word 0,0
 .Ltarget: .word 0,0
@@ -26,7 +26,7 @@ w16_int21_router:
 .Lscan:
  cmp %bx,(%si)
  je .Lfound
- add $6,%si
+ add $8,%si
  loop .Lscan
  mov %cs:.Lold,%ax
  or %cs:.Lold+2,%ax
@@ -102,7 +102,7 @@ w16_route_begin:
  pop %bp
  lret
 
-// add(table,key,handler offset,handler CS,router offset,router CS)
+// add(table,key,handler offset,handler CS,router offset,router CS,loader DS)
 // -> table byte offset + 1, or 0. Check IVT before dereferencing the table.
 .global w16_route_add
 w16_route_add:
@@ -141,7 +141,7 @@ w16_route_add:
  jne .Ladd_next
  mov %si,%bx
 .Ladd_next:
- add $6,%si
+ add $8,%si
  loop .Ladd_scan
  cmp $0xffff,%bx
  je .Ladd_fail
@@ -149,6 +149,8 @@ w16_route_add:
  mov %ax,2(%bx)
  mov 12(%bp),%ax
  mov %ax,4(%bx)
+ mov 18(%bp),%ax
+ mov %ax,6(%bx)
  mov %dx,(%bx)
  mov %bx,%ax
  inc %ax
@@ -191,7 +193,7 @@ w16_route_finish:
 .Lfinish_scan:
  cmpw $0,(%si)
  jne .Lfinish_busy
- add $6,%si
+ add $8,%si
  loop .Lfinish_scan
  movw $0,0
  mov %cs:.Lold,%ax

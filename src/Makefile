@@ -43,7 +43,7 @@ main.o int21.o: int21.h
 int21-route.o: int21-route.S int21.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-thunk.o: thunk.S api-slots.h
+thunk.o: thunk.S api-slots.h int21.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 HOSTCC     = gcc

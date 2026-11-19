@@ -1,12 +1,14 @@
 #include "api-slots.h"
+#include "int21.h"
 // thunk.S - real-mode glue between Win16 code and the ELKS loader (8086 instructions only).
 //
 // Two stacks are in use: the program's stack (SS = its automatic data segment, as on
 // Windows) and the loader's own stack in its ELKS data segment. Every transition saves
 // the other side's SS:SP so calls can nest:
 //   app -> API stub -> api_common -> C handler -> w16_call16 -> app window procedure -> API ...
-// The loader's DS is kept in the code segment (w16_ldr_ds) because an API stub has no
-// free register on entry.
+// Default private-code tasks keep loader DS in w16_ldr_ds. Explicit pristine-fork
+// tasks resolve it from the registered guest SS; no per-task callback target
+// or entry-mode scratch is kept in shared code.
 //
 // w16 is built in the medium memory model: C functions are far (called with lcall, return with
 // lret) and may live in a second code segment, while this file stays in the near text segment.
@@ -26,17 +28,19 @@ w16_ret_bx:	.word 0		// extra return registers (InitTask)
 w16_ret_cx:	.word 0
 w16_ret_es:	.word 0
 w16_exit_sp:	.word 0		// loader SP to unwind to when the program terminates
+init_call: .word 0              // per-native-task DLL versus EXE entry
 
 	.text
 	.global w16_ldr_ds
 w16_ldr_ds:	.word 0
-cb_target:	.word 0, 0
-init_call:	.word 0
+shared_context: .word 0
 
 // int w16_thunk_init(void): record the loader DS in the code segment.
 // Returns -1 if another w16 process sharing this text segment already did.
 	.global w16_thunk_init
 w16_thunk_init:
+    cmpw $0,%cs:shared_context
+    jne 2f
 	mov	%cs:w16_ldr_ds, %ax
 	or	%ax, %ax
 	jz	1f
@@ -51,8 +55,91 @@ w16_thunk_init:
 
 	.global w16_thunk_done
 w16_thunk_done:
+    cmpw $0,%cs:shared_context
+    jne 1f
 	movw	$0, %cs:w16_ldr_ds
-	lret
+1:	lret
+
+// Opt in BEFORE forking a pristine runtime, never from a running guest.
+// The default single-task/shared-CS rejection above remains unchanged.
+.global w16_thunk_share
+w16_thunk_share:
+ cmpw $0,%cs:w16_ldr_ds
+ jne 1f
+ movw $1,%cs:shared_context
+ xor %ax,%ax
+ lret
+1: mov $-1,%ax
+ lret
+
+// Near internal helper. Return this guest stack's loader DS in SI, preserving
+// every other register. No shared callback target or task DS scratch word.
+// IF=0 protects lookup against unregister/close; there are no C/kernel calls.
+.Lcontext_ds:
+ cmpw $0,%cs:shared_context
+ jne .Lcontext_shared
+ mov %cs:w16_ldr_ds,%si
+ ret
+.Lcontext_shared:
+ push %ax
+ push %bx
+ push %cx
+ push %di
+ push %es
+ pushf
+ cli
+ mov %ss,%bx
+ xor %ax,%ax
+ mov %ax,%es
+ mov %es:0x84,%di
+ mov %es:0x86,%ax
+ mov %ax,%es
+ cmpw $W16_INT21_MAGIC0,%es:2(%di)
+ jne .Lcontext_missing
+ cmpw $W16_INT21_MAGIC1,%es:4(%di)
+ jne .Lcontext_missing
+ cmpw $2,%es:6(%di)
+ jne .Lcontext_missing
+ mov %es:8(%di),%ax
+ mov %ax,%es
+ mov $2,%di
+ mov $W16_INT21_TASKS,%cx
+.Lcontext_scan:
+ cmp %bx,%es:(%di)
+ je .Lcontext_found
+ add $8,%di
+ loop .Lcontext_scan
+.Lcontext_missing:
+ xor %si,%si
+ jmp .Lcontext_done
+.Lcontext_found:
+ mov %es:6(%di),%si
+.Lcontext_done:
+ popf
+ pop %es
+ pop %di
+ pop %cx
+ pop %bx
+ pop %ax
+ ret
+
+// Unsupported/unregistered SS in the opt-in shared mode: report without
+// guessing another task's DS, and keep code resident. No guest privilege or
+// kernel change; the ordinary ELKS write reads this task's code segment.
+.Lbad_context:
+ push %cs
+ pop %ds
+ mov $4,%ax
+ mov $2,%bx
+ mov $.Lcontext_error,%cx
+ mov $.Lcontext_error_end-.Lcontext_error,%dx
+ int $0x80
+ sti
+1: hlt
+ jmp 1b
+.Lcontext_error:
+ .ascii "w16: unregistered guest stack\n"
+.Lcontext_error_end:
 
 	.global w16_get_cs
 w16_get_cs:
@@ -192,7 +279,11 @@ api_common:
 	push	%di
 	mov	%sp, %bp		// program frame: DI SI DS BP IP CS args
 	mov	%ss, %bx
-	mov	%cs:w16_ldr_ds, %si
+	call .Lcontext_ds
+	or %si,%si
+	jnz 9f
+	jmp .Lbad_context
+9:
 	mov	%si, %ds
 	mov	w16_app_ss, %cx		// enclosing program frame (nesting)
 	mov	w16_app_sp, %dx
@@ -245,7 +336,11 @@ w16_int21:
 	push	%ax			// frame: AX BX CX DX SI DI ES DS BP IP CS FLAGS
 	mov	%sp, %bp
 	mov	%ss, %bx
-	mov	%cs:w16_ldr_ds, %si
+	call .Lcontext_ds
+	or %si,%si
+	jnz 9f
+	jmp .Lbad_context
+9:
 	mov	%si, %ds
 	mov	w16_app_ss, %cx
 	mov	w16_app_sp, %dx
@@ -329,10 +424,6 @@ w16_call16:
 	push	%es
 	push	w16_ldr_sp
 	mov	%sp, w16_ldr_sp
-	mov	6(%bp), %ax
-	mov	%ax, %cs:cb_target
-	mov	8(%bp), %ax
-	mov	%ax, %cs:cb_target+2
 	mov	12(%bp), %cx
 	mov	14(%bp), %si
 	mov	w16_app_ss, %es
@@ -342,7 +433,17 @@ w16_call16:
 	lodsw
 	mov	%ax, %es:(%di)
 	loop	1b
-2:	mov	10(%bp), %ax
+2:  // Build the far target and return on the guest stack, not in shared CS.
+ sub $8,%di
+ mov 6(%bp),%ax
+ mov %ax,%es:(%di)
+ mov 8(%bp),%ax
+ mov %ax,%es:2(%di)
+ mov $.Lcallback_return,%ax
+ mov %ax,%es:4(%di)
+ mov %cs,%ax
+ mov %ax,%es:6(%di)
+ mov 10(%bp),%ax
 	mov	%es, %bx
 	cli
 	mov	%bx, %ss
@@ -350,8 +451,13 @@ w16_call16:
 	sti
 	mov	%ax, %ds
 	mov	%ax, %es
-	lcallw	*%cs:cb_target
-	mov	%cs:w16_ldr_ds, %bx
+ lret
+.Lcallback_return:
+ call .Lcontext_ds
+ or %si,%si
+ jnz 9f
+ jmp .Lbad_context
+9: mov %si,%bx
 	mov	%bx, %ds
 	cli
 	mov	%bx, %ss
@@ -368,13 +474,13 @@ w16_call16:
 // Starts the program like a Windows task; returns its exit code when w16_exit16 is called.
 	.global w16_start16
 w16_start16:
-    movw $0, %cs:init_call
+    movw $0, init_call
     jmp start_common
 
 // Same register/stack setup, but LibMain returns by RETF with AX=success.
     .global w16_init16
 w16_init16:
-    movw $1, %cs:init_call
+    movw $1, init_call
 start_common:
 	push	%bp
 	mov	%sp, %bp
@@ -385,15 +491,24 @@ start_common:
 	mov	%sp, w16_ldr_sp
 	mov	%sp, w16_exit_sp
 	mov	6(%bp), %si
-	mov	(%si), %ax
-	mov	%ax, %cs:cb_target
-	mov	2(%si), %ax
-	mov	%ax, %cs:cb_target+2
 	mov	4(%si), %es		// program SS
 	mov	6(%si), %di		// program SP
 	mov	%es, w16_app_ss
-	mov	%di, w16_app_sp
-	// build the register image below the program SP: BP DI SI DX CX BX AX ES DS
+ mov %di,w16_app_sp
+ // A DLL returns to this task's native unwind. An EXE has no return frame.
+ cmpw $0,init_call
+ je 1f
+ sub $4,%di
+ mov $init_invoke,%ax
+ mov %ax,%es:(%di)
+ mov %cs,%ax
+ mov %ax,%es:2(%di)
+1: sub $4,%di
+ mov (%si),%ax
+ mov %ax,%es:(%di)
+ mov 2(%si),%ax
+ mov %ax,%es:2(%di)
+ // build the register image below the program SP: BP DI SI DX CX BX AX ES DS
 	mov	8(%si), %ax		// DS
 	sub	$2, %di
 	mov	%ax, %es:(%di)
@@ -435,12 +550,13 @@ start_common:
 	pop	%ax
 	pop	%es
 	pop	%ds
-    cmpw $0, %cs:init_call
-    jne init_invoke
-	ljmpw	*%cs:cb_target
+    lret
 init_invoke:
-    lcallw *%cs:cb_target
-    mov %cs:w16_ldr_ds, %bx
+    call .Lcontext_ds
+    or %si,%si
+    jnz 9f
+    jmp .Lbad_context
+9:  mov %si,%bx
     mov %bx, %ds
     cli
     mov %bx, %ss

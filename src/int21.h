@@ -2,11 +2,13 @@
 #ifndef W16_INT21_H
 #define W16_INT21_H
 #define W16_INT21_TASKS 16
-#define W16_INT21_BYTES (2+6*W16_INT21_TASKS)
+#define W16_INT21_BYTES (2+8*W16_INT21_TASKS)
 #define W16_INT21_MAGIC0 0x3157
 #define W16_INT21_MAGIC1 0x5236
 #ifndef __ASSEMBLER__
 #include "w16.h"
+/* Experimental pristine-fork prerequisite; call before any guest or thunk init. */
+int W16_CDECL w16_thunk_share(void);
 int int21_router_open(u16 guest_ss);
 int int21_router_attach(u16 guest_ss,u16 table,u32 vector);
 int int21_router_info(u16 *table,u32 *vector);

@@ -1,16 +1,18 @@
 /* ELKS switches user registers, not real-mode interrupt vectors. Install a
  * single resident router, never a second process-local INT 21h vector. Each
- * private native-NE task registers its guest SS and own DOS handler; the
- * existing thunk then selects that task's loader DS/stack as before.
+ * task registers its guest SS, DOS handler and private loader DS. The
+ * thunk can select private data/stack while sharing immutable native code.
  *
  * This is routing/lifetime infrastructure, not a WinExec implementation.
- * It cannot make two a.out loaders sharing CS:w16_ldr_ds safe. Attach only
- * after w16_thunk_init has accepted a private native code context. */
+ * A private native-NE context remains the default. Shared code requires the
+ * explicit pristine-fork mode, before task setup/USER/GDI initialization;
+ * copying an already-running task is not supported. */
 #include <stdlib.h>
 #include "int21.h"
 void w16_int21_router(void);
 u16 W16_CDECL w16_route_begin(u16,u16,u16);
-u16 W16_CDECL w16_route_add(u16,u16,u16,u16,u16,u16);
+u16 W16_CDECL w16_route_add(u16,u16,u16,u16,u16,u16,u16);
+u16 W16_CDECL w16_get_ds(void);
 i16 W16_CDECL w16_route_finish(void);
 struct route_state {u32 vector;u16 table,key,token;u8 owner;};
 static struct route_state *route;
@@ -19,13 +21,13 @@ static int signature(u32 v)
 {
  u16 s=(u16)(v>>16),o=(u16)v;
  return o<=65518u&&((u32)s<<4)+o+18<=0x100000UL&&
-  rd16(s,o+2)==W16_INT21_MAGIC0&&rd16(s,o+4)==W16_INT21_MAGIC1&&rd16(s,o+6)==1;
+  rd16(s,o+2)==W16_INT21_MAGIC0&&rd16(s,o+4)==W16_INT21_MAGIC1;
 }
 static int add(u16 key)
 {
  route->key=key;
  route->token=w16_route_add(route->table,key,FOFF(w16_int21),FSEG(w16_int21),
-                            (u16)route->vector,(u16)(route->vector>>16));
+                            (u16)route->vector,(u16)(route->vector>>16),w16_get_ds());
  return route->token?0:-1;
 }
 int int21_router_open(u16 key)
@@ -49,7 +51,7 @@ int int21_router_open(u16 key)
 }
 int int21_router_attach(u16 key,u16 table,u32 vector)
 {
- if(route||!key||!table||w16_getvect(0x21)!=vector||!signature(vector)||
+ if(route||!key||!table||w16_getvect(0x21)!=vector||!signature(vector)||rd16((u16)(vector>>16),(u16)vector+6)!=2||
     rd16((u16)(vector>>16),(u16)vector+8)!=table)return -1;
  route=malloc(sizeof(*route));if(!route)return -1;
  route->owner=0;route->table=table;route->vector=vector;route->token=0;
