@@ -81,6 +81,8 @@ static int classcalls;void cursor_class(unsigned f,unsigned c,u16 h){(void)f;(vo
 void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
 void GrMapWindow(unsigned w){maps[w]++;}
 void GrUnmapWindow(unsigned w){unmaps[w]++;}
+static unsigned frame_clears;
+void GrClearArea(unsigned w,int x,int y,int wd,int ht,int expose){(void)w;(void)x;(void)y;assert(wd>=0&&ht>=0&&expose);frame_clears++;}
 void GrResizeWindow(unsigned w,int x,int y){assert(x>0&&y>0);sizes[w][0]=x;sizes[w][1]=y;}
 static unsigned raised,lowered;
 void GrRaiseWindow(unsigned w){unsigned p=native_info[w].parent;raised=w;
@@ -130,7 +132,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_ShowScrollBar','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -204,6 +206,18 @@ int main(void){u16 id;int x,y;unsigned frame;
    assert(maps[client]==1&&sizes[client][0]==200&&sizes[client][1]==100);
    assert(lastmsg==WM_SIZE&&lastlp==0x006400c8UL);
    n=msgcount;assert(u_MoveWindow(0x1000,0));assert(msgcount==n);
+   /* Showing/hiding non-client bars resizes the backing client and sends
+    * WM_SIZE, without inventing a scrollbar-control implementation. */
+   wr16(0x1000,0,1);wr16(0x1000,2,3);wr16(0x1000,4,id);
+   assert(u_ShowScrollBar(0x1000,0)&&z->cw==184&&z->ch==84&&frame_clears);
+   assert(sizes[client][0]==184&&sizes[client][1]==84&&lastmsg==WM_SIZE&&lastlp==0x005400b8UL);
+   n=msgcount;assert(u_ShowScrollBar(0x1000,0)&&msgcount==n);
+   wr16(0x1000,0,0);wr16(0x1000,2,1);assert(u_ShowScrollBar(0x1000,0)&&z->cw==200&&z->ch==84);
+   wr16(0x1000,2,0);assert(u_ShowScrollBar(0x1000,0)&&z->cw==200&&z->ch==100);
+   wr16(0x1000,2,2);assert(!u_ShowScrollBar(0x1000,0)&&z->cw==200);
+   assert(!u_ShowScrollBar(0x1000,0xffff));
+   wr16(0x1000,0,0);wr16(0x1000,2,102);wr16(0x1000,4,202);
+
    wr16(0x1000,2,2);wr16(0x1000,4,2);assert(u_MoveWindow(0x1000,0));
    assert(z->cw==0&&z->ch==0&&unmaps[client]&&sizes[client][0]==1&&sizes[client][1]==1);
    assert(lastmsg==WM_SIZE&&!lastlp);

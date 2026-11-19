@@ -1218,6 +1218,27 @@ static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
     return 1;
 }
 
+/* ShowScrollBar(hwnd, bar, show): non-client bars change the client extent,
+ * retaining their range/position. Standalone scrollbar controls are not
+ * implemented by the current control backend, so SB_CTL cannot succeed. */
+u32 u_ShowScrollBar(u16 ss,u16 ap)
+{
+ struct wnd *w;u16 hwnd,bar;u32 bits,style;int cw,ch;
+ if(ap>0xfffau)return 0;
+ hwnd=AW(4);bar=AW(2);w=win_get(hwnd);
+ if(!w||w->ctl||(bar!=0&&bar!=1&&bar!=3))return 0;
+ bits=bar==0?WS_HSCROLL:bar==1?WS_VSCROLL:WS_HSCROLL|WS_VSCROLL;
+ style=AW(0)?w->style|bits:w->style&~bits;
+ if(style==w->style)return 1;
+ cw=w->cw;ch=w->ch;w->style=style;scrollbar_forget(hwnd);
+ if(!move_window(hwnd,w->x,w->y,w->w,w->h,0))return 0;
+ if(cw!=w->cw||ch!=w->ch)win_send(w,WM_SIZE,0,((u32)(u16)w->ch<<16)|(u16)w->cw);
+ if(win_get(hwnd)!=w)return 1;
+ win_invalidate_all(w,1);
+ if(w->visible)GrClearArea(w->frame,0,0,w->w,w->h,1);
+ return 1;
+}
+
 u32 u_MoveWindow(u16 ss,u16 ap)
 {
     return move_window(AW(10),(i16)AW(8),(i16)AW(6),(i16)AW(4),(i16)AW(2),AW(0));
