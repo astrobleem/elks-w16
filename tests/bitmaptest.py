@@ -16,7 +16,8 @@ static GR_PALETTE native_palette;
 #define W16_SCRATCH 2049
 static union {u16 align;u8 bytes[W16_SCRATCH];}scratch;
 #define w16_scratch (scratch.bytes)
-static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
+static int requests;
+static void GrGetSystemPalette(GR_PALETTE*p){requests++;*p=native_palette;}
 typedef u16 GR_BITMAP;
 typedef struct{int foreground,background,mode,usebackground,fgispixelval,bgispixelval;}GR_GC_INFO;
 struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey,brushx,brushy;u16 brush;};
@@ -40,7 +41,7 @@ static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
 static int failafter=-1,maxallocbytes=16384;
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[640*480],pixdata[640*480],foreground=77;static int mode=3;
-static int background=55,usebackground,pixel_flags,requests,bitmap_requests,max_payload;
+static int background=55,usebackground,pixel_flags,bitmap_requests,max_payload;
 
 #define GR_MODE_HAVE_CAPTUREPIXELS 0x4000
 static int capture_fail_call;
@@ -283,9 +284,10 @@ static void stretch_batch_tests(void){
  }
  /* Seven indices as observed in the default card resource; compare with
   * the unchanged run fallback using the pixel-value guard. */
- for(mono=0;mono<2;mono++)for(clipped=0;clipped<2;clipped++){
+ for(mono=0;mono<3;mono++)for(clipped=0;clipped<2;clipped++){
   static const u8 colors[7]={0,1,2,3,6,7,15};int dx=clipped?-3:2,dy=clipped?-5:3;
-  indexed=mono;for(i=0;i<16;i++)native_palette.palette[i].r=native_palette.palette[i].g=native_palette.palette[i].b=i?255:0;
+  indexed=mono!=0;native_palette.count=mono?2:16;for(i=0;i<16;i++)native_palette.palette[i].r=native_palette.palette[i].g=native_palette.palette[i].b=i?255:0;
+  if(mono==2)native_palette.palette[0].r=1;
   setup(71,96,4);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
   for(y=0;y<96;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,colors[(x*((y/2)<38?16:15)/71)%7]);
   for(i=0;i<16;i++){bitmaps[bi(b)].palette[i].r=i*13;bitmaps[bi(b)].palette[i].g=i*7;bitmaps[bi(b)].palette[i].b=i*17;}
@@ -298,11 +300,13 @@ static void stretch_batch_tests(void){
   assert(stretch(d,dx,dy,71,48,0,0,71,96,0x00cc0020UL));
   assert(!memcmp(reference,surface,sizeof reference));
   assert(foreground==77&&background==55&&usebackground==clipped&&mode==3);
-  assert(bitmap_requests<=14&&requests<=34&&max_payload<=480);
-  printf("Seven-index card %s %s: %d -> %d requests (%d masks), payload <=%d; identical pixels\n",mono?"mono-native":"RGB",clipped?"clipped":"full",oldcalls,requests,bitmap_requests,max_payload);
+  assert(bitmap_requests<=14&&requests<=35&&max_payload<=480);
+  if(mono==1)assert(bitmap_requests==1&&requests==11);
+  if(mono==2)assert(bitmap_requests>1);
+  printf("Seven-index card %s %s: %d -> %d requests (%d masks), payload <=%d; identical pixels\n",mono==2?"noncanonical-mono":mono?"mono-native":"RGB",clipped?"clipped":"full",oldcalls,requests,bitmap_requests,max_payload);
   bitmap_shutdown();clean();
  }
- indexed=0;
+ indexed=0;native_palette.count=16;
  /* Two bounded packets rather than asking the client to split an oversized one. */
  setup(71,192,1);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
  requests=bitmap_requests=max_payload=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));

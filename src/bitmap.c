@@ -669,6 +669,31 @@ static void stretch_color_row(struct bitmap*s,u16 x,u16 y,u8*out,int w)
   if(++off2==BITMAP_BANK_BYTES){off2=0;bank2++;}
  }
 }
+/* The pinned palette server uses RGB Manhattan distance. Only its live,
+ * canonical black/white palette permits exact color-index merging here;
+ * other palettes retain the per-index path. No luminance approximation. */
+static int stretch_mono_colors(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
+ int sx,int sy,int dx,int dy,int w,int h)
+{
+ GR_PALETTE*p=(GR_PALETTE*)w16_scratch;GR_BITMAP*bits=(GR_BITMAP*)w16_scratch;
+ u8*row=(u8*)w16_scratch+480;u16 light=0;int i,x,y,base,rows,wpr=(w+15)>>4,batch=480/(2*wpr);
+ if(!batch||480+w>W16_SCRATCH)return 0;
+ memset(p,0,sizeof(*p));GrGetSystemPalette(p);
+ if(p->count!=2||p->palette[0].r||p->palette[0].g||p->palette[0].b||
+    p->palette[1].r!=255||p->palette[1].g!=255||p->palette[1].b!=255)return 0;
+ for(i=0;i<16;i++)if((unsigned)s->palette[i].r+s->palette[i].g+s->palette[i].b>382)light|=(u16)(1u<<i);
+ GrSetGCForeground(d->gc,rgb_to_gr(0xffffffUL));GrSetGCBackground(d->gc,rgb_to_gr(0));
+ GrSetGCUseBackground(d->gc,1);
+ for(base=0;base<h;base+=rows){
+  rows=h-base;if(rows>batch)rows=batch;memset(bits,0,2*wpr*rows);
+  for(y=0;y<rows;y++){
+   stretch_color_row(s,sx,sy+2*(base+y),row,w);
+   for(x=0;x<w;x++)if(light&(u16)(1u<<row[x]))bits[y*wpr+(x>>4)]|=(GR_BITMAP)(0x8000u>>(x&15));
+  }
+  GrBitmap(d->wid,d->gc,dx,dy+base,w,rows,bits);
+ }
+ GrSetGCBackground(d->gc,old->background);GrSetGCUseBackground(d->gc,old->usebackground);return 1;
+}
 /* Cache one bounded tile of reduced indices, then send transparent COPY
  * masks for its present palette entries. Each destination pixel belongs to one
  * mask; neither the DC clip nor palette lookup is approximated. */
@@ -677,6 +702,7 @@ static int stretch_color_pair(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
 {
  GR_BITMAP *bits=(GR_BITMAP*)w16_scratch;u8 *indices;
  int wpr=(w+15)>>4,batch=480/(2*wpr),base,rows,x,y,i;u16 present;
+ if(stretch_mono_colors(s,d,old,sx,sy,dx,dy,w,h))return 1;
  if(batch>W16_SCRATCH/(w+2*wpr))batch=W16_SCRATCH/(w+2*wpr);
  if(!batch)return 0;
  indices=(u8*)bits+2*wpr*batch;
