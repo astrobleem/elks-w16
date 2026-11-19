@@ -13,7 +13,7 @@ dib_header=(root/'src/dib.h').read_text().split('#include "w16.h"',1)[1].rsplit(
 dib_source=(root/'src/dib.c').read_text().replace('#include "dib.h"','')
 gdi=(root/'src/gdi.c').read_text();icon_source=gdi[gdi.index('static int draw_icon_gc('):gdi.index('/* ---------------------------------------------------------------- text extents')]
 user=(root/'src/user.c').read_text()
-icon_objects=user[user.index('/* Resource icons are shared'):user.index('/* GetDC(hWnd)')]
+icon_objects=user[user.index('/* Resource images share'):user.index('/* GetDC(hWnd)')]
 start=user.index('static u8 *load_icon(const char *name,');end=user.index('{',start);level=1;end+=1
 while level:
     level+=(user[end]=='{')-(user[end]=='}');end+=1
@@ -53,11 +53,16 @@ static int global_pointer(u16 h,u32 *p){if(h!=0xf000)return 0;guest_locks++;*p=2
 static u32 global_unlock(u16 h){if(h==0xf000){assert(guest_locks);guest_locks--;}return 0;}
 static void fcopy_in(void *p,u16 seg,u16 off,u16 n){assert((seg==2||seg==3)&&(unsigned)off+n<=guest_length);memcpy(p,guest_resource+off,n);}
 static int native_cursor_image;
-static int global_image(u16 h,int set){(void)set;return native_cursor_image&&h==0xf000;}
-static u16 image_copy(u16 h){(void)h;return 0;}
-static u16 image_destroy(u16 h){(void)h;return 0;}
-static u8 *image_snapshot(u16 h,u16 *len){u8*p;if(!native_cursor_image||h!=0xf000)return NULL;*len=176;p=malloc(*len);memcpy(p,icon_resource,*len);return p;}
-static u16 image_from_dib(u16 h,const u8 *p,u16 len){(void)h;(void)p;(void)len;return 0;}
+/* Rendering doubles retain DIB pixels; globaltest exercises real native storage. */
+static struct {u8 *data;u16 len;int shared;} image_test[16];
+static int image_slot(u16 h){unsigned i=(unsigned)(h-0xe000)/2;return h>=0xe000&&!(h&1)&&i<16&&image_test[i].data?(int)i:-1;}
+static const u8 *test_image_data(u16 h,u16 *len){int i=image_slot(h);if(i<0)return NULL;*len=image_test[i].len;return image_test[i].data;}
+static int global_image(u16 h,int set){(void)set;return (native_cursor_image&&h==0xf000)||image_slot(h)>=0;}
+static u16 image_from_dib(u16 h,const u8 *p,u16 len){int i;if(h)return 0;for(i=0;i<16&&image_test[i].data;i++);if(i==16)return 0;image_test[i].data=malloc(len);assert(image_test[i].data);memcpy(image_test[i].data,p,len);image_test[i].len=len;image_test[i].shared=0;return 0xe000+2*i;}
+static u16 image_copy(u16 h){int i=image_slot(h);return i<0?0:image_from_dib(0,image_test[i].data,image_test[i].len);}
+static u16 image_destroy(u16 h){int i=image_slot(h);if(i<0||image_test[i].shared)return 0;free(image_test[i].data);image_test[i].data=NULL;return 1;}
+static int global_shared_image(u16 h,int take){int i=image_slot(h);if(i<0)return 0;if(take){image_test[i].shared=1;return 1;}image_test[i].shared=0;return image_destroy(h);}
+static u8 *image_snapshot(u16 h,u16 *len){u8*p;int i=image_slot(h);if(i>=0){*len=image_test[i].len;p=malloc(*len);memcpy(p,image_test[i].data,*len);return p;}if(!native_cursor_image||h!=0xf000)return NULL;*len=176;p=malloc(*len);memcpy(p,icon_resource,*len);return p;}
 static u16 rd16(u16 seg,u16 off){u8 p[2];fcopy_in(p,seg,off,2);return p[0]|((u16)p[1]<<8);}
 static int destroyed_cursors;
 static void GrDestroyCursor(unsigned id){assert(id);destroyed_cursors++;}
@@ -211,7 +216,7 @@ int main(void) {
      args[0]=10;args[1]=0;args[2]=1;shared=u_LoadIcon(0,0);assert(shared&&shared!=HICON);
      args[0]=11;assert(u_LoadIcon(0,0)==shared); /* different groups, same leaf image */
      args[0]=shared;args[1]=1;owned=u_CopyIcon(0,0);assert(owned&&owned!=shared);
-     image=icon_data(owned,&len);assert(image&&len==304&&image!=icon_data(shared,&len));
+     image=test_image_data(owned,&len);assert(image&&len==304&&image!=test_image_data(shared,&len));
      for(j=0;j<32*32;j++)screen[j]=0x123456;
      args[0]=owned;args[1]=0;args[2]=0;args[3]=0x200;gc_mode[1]=7;gc_fg[1]=0x010203;clip_l[1]=1;
      assert(u_DrawIcon(0,0));
@@ -221,14 +226,14 @@ int main(void) {
      copy_fail=1;draw_calls=0;assert(!u_DrawIcon(0,0)&&!draw_calls);copy_fail=0;
      map_bad=1;assert(!u_DrawIcon(0,0));map_bad=0;
      args[3]=999;assert(!u_DrawIcon(0,0));args[3]=0x200;
-     args[0]=shared;assert(!u_DestroyIcon(0,0)&&icon_data(shared,&len));
-     args[0]=owned;assert(u_DestroyIcon(0,0)&&!icon_data(owned,&len)&&!u_DrawIcon(0,0));
+     args[0]=shared;assert(!u_DestroyIcon(0,0)&&test_image_data(shared,&len));
+     args[0]=owned;assert(u_DestroyIcon(0,0)&&!test_image_data(owned,&len)&&!u_DrawIcon(0,0));
      for(j=0;j<7;j++){args[0]=shared;args[1]=1;copies[j]=u_CopyIcon(0,0);assert(copies[j]);}
-     args[0]=shared;assert(!u_CopyIcon(0,0));
+     args[0]=shared;{u16 extra=u_CopyIcon(0,0);assert(extra);args[0]=extra;assert(u_DestroyIcon(0,0));}
      for(j=0;j<7;j++){args[0]=copies[j];assert(u_DestroyIcon(0,0));}
      icon_missing=1;args[0]=10;args[1]=0;args[2]=1;assert(!u_LoadIcon(0,0));icon_missing=0;
      assert(!u_LoadIcon(0,0xffff)&&!u_CopyIcon(0,0xffff)&&!u_DestroyIcon(0,0xffff)&&!u_DrawIcon(0,0xffff));
-     icon_shutdown();assert(!icon_data(shared,&len));
+     icon_shutdown();assert(!test_image_data(shared,&len));
      /* The stock 32x32 four-colour-bit resource format, including a coloured
       * XOR pixel on an AND-one backdrop, follows the same public API path. */
      memset(icon_resource,0,sizeof(icon_resource));icon_resource_len=744;

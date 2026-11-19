@@ -5,7 +5,7 @@
 #define GLOBAL_BASE 0xf000
 #define GM_MOVEABLE 2
 #define GM_ZEROINIT 0x40
-/* owner: 0 caller allocation, 1 transferred clipboard, 2 native image. */
+/* owner: 0 caller allocation, 1 transferred clipboard, 2 owned native image, 3 shared resource image. */
 struct global_block { u16 seg, bytes, locks, flags; u8 used, owner; };
 static struct global_block blocks[GLOBAL_MAX];
 /* GlobalLRUNewest is an advisory ordering request, not an allocation or lock.
@@ -81,7 +81,7 @@ u16 global_free(u16 h)
 {
     int i=lookup(h);
     if(!h) return 0;
-    if(i<0 || blocks[i].owner==1) return h;
+    if(i<0 || (blocks[i].owner==1||blocks[i].owner==3)) return h;
     if(blocks[i].seg) seg_free(blocks[i].seg);
     blocks[i].used=0; return 0;
 }
@@ -90,7 +90,7 @@ u16 global_realloc(u16 h,u32 bytes,u16 flags)
 {
     u16 n,seg,copy,pos,part;
     int i=lookup(h);
-    if(i<0 || blocks[i].owner==1 || bytes>0xfff0UL) return 0;
+    if(i<0 || (blocks[i].owner==1||blocks[i].owner==3) || bytes>0xfff0UL) return 0;
     /* GMEM_MODIFY changes allocation flags, not size or identity. */
     if(flags&0x80) {
         blocks[i].flags=(blocks[i].flags&GM_MOVEABLE)|(flags&~(GM_MOVEABLE|0x80));
@@ -116,8 +116,18 @@ u32 k_GlobalReAlloc(u16 ss,u16 ap) {return global_realloc(AW(6),AL(2),AW(0));}
 int global_image(u16 h,int set)
 {
  int i=lookup(h);if(i<0 || blocks[i].owner==1)return 0;
- if(set)blocks[i].owner=2;
- return blocks[i].owner==2;
+ if(set&&blocks[i].owner!=3)blocks[i].owner=2;
+ return blocks[i].owner==2||blocks[i].owner==3;
+}
+/* Only a validated native image may enter the resource cache. Guest Free,
+ * ReAlloc and DestroyIcon cannot release shared storage; task shutdown can. */
+int global_shared_image(u16 h,int take)
+{
+ int i=lookup(h);
+ if(i<0)return 0;
+ if(take){if(blocks[i].owner!=2||blocks[i].locks)return 0;blocks[i].owner=3;return 1;}
+ if(blocks[i].owner!=3)return 0;
+ blocks[i].owner=2;return !global_free(h);
 }
 void global_shutdown(void)
 {

@@ -10,6 +10,7 @@ struct ne_module *w16_mod;
 u32 u_LoadIconHandler(u16,u16),k_DirectResAlloc(u16,u16);
 u32 u_CreateCursorIconIndirect(u16,u16),u_DumpIcon(u16,u16),u_DestroyCursor(u16,u16);
 void test_resource(u16);
+void test_resource_icon(u16);
 static u16 stack;
 static u32 alloc(u16 flags,u32 bytes)
 { wr32(stack,0,bytes);wr16(stack,4,flags);return k_GlobalAlloc(stack,0); }
@@ -70,6 +71,7 @@ int main(void)
     u16 h,fix,i;u32 ptr,p2;u16 hs[48];
     assert(!seg_alloc(16,&stack));
     test_resource(stack);
+    test_resource_icon(stack);
     native_images();
     wr16(stack,0,0xffff);assert(!k_GlobalLRUNewest(stack,0));
     h=alloc(0x42,64);assert(h && global_size(h)==64);

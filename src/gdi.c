@@ -1141,8 +1141,7 @@ u32 u_DrawIcon(u16 ss,u16 ap)
  struct dc *d;struct gcstate gc;struct dib_info info;struct dib_memory memory;
  const u8 *image;u8 *snapshot=0;u16 len;u32 mask;int x,y,result=0;
  if(ap>0xfff8u || !(d=dc_get(AW(6))))return 0;
- if(global_image(AW(0),0))image=snapshot=image_snapshot(AW(0),&len);
- else image=icon_data(AW(0),&len);
+ image=snapshot=image_snapshot(AW(0),&len);
  if(!image)return 0;
  memory.data=image;memory.length=len;
  if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask) || info.width!=32 || info.height!=32)goto done;

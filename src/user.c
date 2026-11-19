@@ -292,7 +292,7 @@ static void draw_nc(struct wnd *w)
         u16 len,hicon=w->cls>=0&&w->cls<MAXCLASS?classes[w->cls].hicon:0;
         const u8 *data=0;u8 *snapshot=0;
         gdi_fill(f,gray,0,0,W,H);
-        if(hicon){data=icon_data(hicon,&len);if(!data)data=snapshot=image_snapshot(hicon,&len);}
+        if(hicon)data=snapshot=image_snapshot(hicon,&len);
         if(data)gdi_draw_icon(f,(W-32)/2,0,data,len);
         else { /* generic window icon when the class supplies none */
             gdi_fg(black);GrRect(f,gc,(W-28)/2,2,28,28);
@@ -2341,35 +2341,29 @@ u32 u_InvalidateRect(u16 ss, u16 ap)
     return 0;
 }
 
-/* Resource icons are shared until task shutdown. CopyIcon creates a
- * separately owned image; these opaque WORD handles are not global blocks. */
-#define ICON_BASE 0x05a0
+/* Resource images share genuine lockable native global storage until task
+ * shutdown. Cache only resource identity and handle; DrawIcon takes a fresh
+ * snapshot so application edits through LockResource remain visible. */
 #define MAXICON 8
-static struct {u8 *data;u16 len,resource;u8 owned;} icons[MAXICON];
+static struct {u16 handle,resource;} icons[MAXICON];
 static u8 *load_icon(const char *,u16,u16 *,u16 *);
-static int icon_slot(u16 h)
-{
- u16 i=(u16)(h-ICON_BASE)/2;
- return h>=ICON_BASE && !(h&1) && i<MAXICON && icons[i].data ? (int)i:-1;
-}
-const u8 *icon_data(u16 h,u16 *len)
-{int i=icon_slot(h);if(i<0)return 0;*len=icons[i].len;return icons[i].data;}
 static void icon_shutdown(void)
-{int i;for(i=0;i<MAXICON;i++){free(icons[i].data);icons[i].data=0;}}
+{int i;for(i=0;i<MAXICON;i++)if(icons[i].handle){global_shared_image(icons[i].handle,0);icons[i].handle=0;}}
 u32 u_LoadIcon(u16 ss,u16 ap)
 {
- char name[34];u16 id,len,resource;u8 *data;struct dib_info info;struct dib_memory memory;u32 mask;int i;
+ char name[34];u16 id,len,resource,h;u8 *data;int i;
  if(ap>0xfffau)return 0;
  if(!AW(4))return 0; /* no predefined backing images yet; never return a placeholder */
  if(!w16_mod || AW(4)!=w16_mod->dgroup)return 0;
  res_name(AW(0),AW(2),name,&id);data=load_icon(name[0]?name:0,id,&len,&resource);
  if(!data)return 0;
- memory.data=data;memory.length=len;
- if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask)){free(data);return 0;}
- for(i=0;i<MAXICON;i++)if(icons[i].data&&!icons[i].owned&&icons[i].resource==resource){free(data);return ICON_BASE+2*i;}
- for(i=0;i<MAXICON&&icons[i].data;i++);
+ for(i=0;i<MAXICON;i++)if(icons[i].handle&&icons[i].resource==resource){free(data);return icons[i].handle;}
+ for(i=0;i<MAXICON&&icons[i].handle;i++);
  if(i==MAXICON){free(data);return 0;}
- icons[i].data=data;icons[i].len=len;icons[i].resource=resource;icons[i].owned=0;return ICON_BASE+2*i;
+ h=image_from_dib(0,data,len);free(data);
+ if(!h)return 0;
+ if(!global_shared_image(h,1)){image_destroy(h);return 0;}
+ icons[i].handle=h;icons[i].resource=resource;return h;
 }
 /* GetIconId(HGLOBAL group, DWORD type). Progman's type 3 requests a
  * Win3 group-icon image suited to our 32x32, 16-colour display. No private
@@ -2410,21 +2404,11 @@ u32 u_LoadIconHandler(u16 ss,u16 ap)
 }
 u32 u_CopyIcon(u16 ss,u16 ap)
 {
- int i,j;u8 *copy;
  if(ap>0xfffcu || (AW(2)&&(!w16_mod||AW(2)!=w16_mod->dgroup)))return 0;
- if(global_image(AW(0),0))return image_copy(AW(0));
- if(ap>0xfffcu || (AW(2)&&(!w16_mod||AW(2)!=w16_mod->dgroup)) || (i=icon_slot(AW(0)))<0)return 0;
- for(j=0;j<MAXICON&&icons[j].data;j++);
- if(j==MAXICON || !(copy=malloc(icons[i].len)))return 0;
- memcpy(copy,icons[i].data,icons[i].len);icons[j].data=copy;icons[j].len=icons[i].len;
- icons[j].resource=0;icons[j].owned=1;return ICON_BASE+2*j;
+ return image_copy(AW(0));
 }
 u32 u_DestroyIcon(u16 ss,u16 ap)
-{
- int i;if(ap<=0xfffeu && global_image(AW(0),0))return image_destroy(AW(0));
- if(ap>0xfffeu || (i=icon_slot(AW(0)))<0 || !icons[i].owned)return 0;
- free(icons[i].data);icons[i].data=0;return 1;
-}
+{return ap<=0xfffeu?image_destroy(AW(0)):0;}
 
 /* GetDC(hWnd): the client area, or the screen for hWnd 0 */
 u32 u_GetDC(u16 ss, u16 ap)

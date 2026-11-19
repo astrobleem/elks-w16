@@ -314,6 +314,7 @@ u16 global_alloc(u32 bytes,u16 flags);
 u16 global_free(u16 h);
 u16 global_realloc(u16 h,u32 bytes,u16 flags);
 int global_image(u16 h,int set);
+int global_shared_image(u16 h,int take);
 u16 image_copy(u16 h);
 u16 image_destroy(u16 h);
 u8 *image_snapshot(u16 h,u16 *len);

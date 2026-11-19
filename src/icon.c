@@ -86,6 +86,7 @@ u16 image_from_dib(u16 h,const u8 *data,u16 len)
  if(!dib_icon_open(&info,dib_read_memory,&mem,len,&mask))return 0;
  bpp=info.bpp;as=((info.width+15)/16)*2;xs=((info.width*bpp+15)/16)*2;
  a=as*info.height;xr=xs*info.height;n=12+a+xr;raw=calloc(1,n);if(!raw)return 0;
+ putw(raw,info.width/2);putw(raw+2,info.height/2);
  putw(raw+4,info.width);putw(raw+6,info.height);putw(raw+8,as);raw[10]=1;raw[11]=(u8)bpp;
  for(x=0;x<info.colors;x++){
   if(bpp==1){
