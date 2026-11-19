@@ -664,7 +664,7 @@ int main(int argc,char**argv){
   for(n=0;n<36*276;n++)assert(rams[bitmaps[bi(b)].bank[0]-1][n]==0);
   for(n=36*276;n<16384;n++)assert(rams[bitmaps[bi(b)].bank[0]-1][n]==0xa5);
  }
- setup(1,1,1);native_palette.count=15;assert(!compatible(9,71,96));clean();
+ setup(1,1,1);native_palette.count=17;assert(!compatible(9,71,96));clean();
  native_palette.count=0;assert(!compatible(9,71,96));clean();native_palette.count=16;
  setup(1,1,1);b=compatible(9,71,96);assert(b&&seglive==1&&!pixlive);object_check(b,71,96,4);
  d=dcnew();e=compatible(d,71,96);assert(e&&seglive==2);object_check(e,71,96,1);
@@ -850,7 +850,7 @@ int main(int argc,char**argv){
   capture_mode=0;segfail=1;capture_calls=0;
   assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
   assert(!capture_calls&&seglive==1&&!memcmp(saved,rams[target->bank[0]-1],3456));segfail=0;
-  native_palette.count=15;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
+  native_palette.count=17;assert(!memblit(d,9,0,0,281,116,71,96,0x00cc0020));
   assert(!capture_calls&&!memcmp(saved,rams[target->bank[0]-1],3456));native_palette.count=16;
   capture_mode=7;assert(memblit(d,9,0,0,281,116,71,96,0x00cc0020));
   assert(capture_x==281&&capture_y==116&&capture_w==71&&capture_h==96&&seglive==1);
