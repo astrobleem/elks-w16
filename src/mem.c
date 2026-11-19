@@ -176,6 +176,25 @@ void wlog(const char *fmt, ...)
     emit();
 }
 
+#if defined(W16_SHARED_RODATA) && !defined(W16_HOST)
+void wlog_far(const char __far *fmt, ...)
+{
+    char nearfmt[256];
+    unsigned i;
+    va_list ap;
+    /* Every caller is bounded by the literal adapter's compile-time check. */
+    for (i = 0; i < sizeof(nearfmt); i++) {
+        nearfmt[i] = fmt[i];
+        if (!nearfmt[i]) break;
+    }
+    if (i == sizeof(nearfmt)) abort();
+    va_start(ap, fmt);
+    vsnprintf(logbuf, sizeof(logbuf), nearfmt, ap);
+    va_end(ap);
+    emit();
+}
+#endif
+
 void vlog(const char *fmt, ...)
 {
     va_list ap;

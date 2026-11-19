@@ -33,7 +33,7 @@ for ch, width in enumerate(widths):
         value = ((packed[at] << 16) | (packed[at+1] << 8) | packed[at+2]) >> (8-pos%8)
         assert (value & (0xffff << (16-width)) & 0xffff) == rows[ch*13+y]
 def emit(typ, name, values):
-    print('static const ' + typ + ' ' + name + '[] = {')
+    print('static const ' + typ + ' W16_RO_FAR ' + name + '[] = {')
     for i in range(0, len(values), 16):
         print(' ' + ','.join(str(v) for v in values[i:i+16]) + ',')
     print('};')

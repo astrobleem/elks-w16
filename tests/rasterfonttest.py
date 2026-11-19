@@ -17,7 +17,7 @@ def validate(source, directory, name):
     path.write_text(source, encoding='latin1')
     packed = subprocess.check_output(['python3', str(root/'scripts/pack-rasterfont.py'), str(path)], text=True)
     (directory/'rasterfont-data.h').write_text(packed)
-    code = '#include <stdint.h>\n#include <assert.h>\ntypedef uint8_t u8;typedef uint16_t u16;typedef uint32_t u32;\n'
+    code = '#define W16_RO_FAR\n#include <stdint.h>\n#include <assert.h>\ntypedef uint8_t u8;typedef uint16_t u16;typedef uint32_t u32;\n'
     code += (root/'src/rasterfont.c').read_text().replace('#include "wapi.h"', '')
     code += '\nstatic u16 expected[]={' + ','.join(map(str,rows)) + '};\n'
     code += 'static u8 widths[]={' + ','.join(map(str,widths)) + '};\n'

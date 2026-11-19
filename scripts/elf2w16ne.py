@@ -12,18 +12,22 @@ def name(h):return names[h[0]:names.index(0,h[0])].decode()
 def contents(h):
  need(h[4]+h[5]<=len(b),'section exceeds ELF file')
  return bytes(h[5]) if h[1]==8 else b[h[4]:h[4]+h[5]]
-sec={name(h):h for h in sections};allowed={'.text','.fartext','.bitmap','.data','.bss','.rel.dyn'}
+sec={name(h):h for h in sections};required={'.text','.fartext','.bitmap','.data','.bss','.rel.dyn'};allowed=required|{'.sharedconst'}
 for h in sections:
  need(not(h[2]&2 and h[5]) or name(h) in allowed,'unhandled allocated section '+name(h))
-for nm in allowed:need(sum(name(h)==nm for h in sections)==1,'missing or duplicate '+nm)
+for nm in required:need(sum(name(h)==nm for h in sections)==1,'missing or duplicate '+nm)
+need(sum(name(h)=='.sharedconst' for h in sections)<=1,'duplicate shared constant section')
 for h in sections:need(h[1] not in (4,9) or not h[5] or name(h)=='.rel.dyn','unhandled relocation section '+name(h))
 code=[sec[x] for x in ['.text','.fartext','.bitmap']];d=sec['.data'];z=sec['.bss']
 need(d[3]+d[5]==z[3],'non-contiguous near data/BSS')
 need(not any(contents(z)),'nonzero BSS requires explicit handling')
-blobs=[bytearray(contents(h)) for h in code+[d]];bases=[h[3] for h in code+[d]]
+ro=sec.get('.sharedconst');groups=code+[d]+([ro] if ro and ro[5] else [])
+need(len(groups)<=5,'ELKS native segment limit exceeded')
+if ro:need(not(ro[2]&1),'shared constants must not be writable')
+blobs=[bytearray(contents(h)) for h in groups];bases=[h[3] for h in groups]
 minimum=[len(x) for x in blobs];minimum[3]+=z[5];heap=0x2800;stack=0x1800
 for i,m in enumerate(minimum):need(0<m<=0xfff0 and bases[i]%16==0,'invalid segment extent')
-for i in range(4):
+for i in range(len(groups)):
  for j in range(i):need(bases[i]+minimum[i]<=bases[j] or bases[j]+minimum[j]<=bases[i],'overlapping segment extents')
 need(minimum[3]+heap+stack+1024<=0xfff0,'near data/heap/stack/argv budget exceeded')
 need(code[0][3]<=entry<code[0][3]+code[0][5],'entry outside first code group')
@@ -51,9 +55,10 @@ for sym in sections:
   need(size==2 and d[3]<=value and value+2<=d[3]+d[5],'shared capability outside initialized data')
   s.pack_into('<H',blobs[3],value-d[3],int(data_segment_references==0))
 image=bytearray(256);image[:2]=b'MZ';s.pack_into('<H',image,8,4);s.pack_into('<H',image,16,256);s.pack_into('<H',image,24,64);s.pack_into('<I',image,60,128);image[64:69]=b'\xb8\x01\x4c\xcd\x21'
-h=bytearray(64);h[:4]=b'NE\x01\x00';s.pack_into('<HH',h,4,112,2);h[12]=2
-s.pack_into('<HHHHHHHH',h,14,4,heap,stack,entry-bases[0],1,minimum[3]+heap+stack,4,4)
-s.pack_into('<HHHHH',h,34,64,96,100,110,110);s.pack_into('<H',h,50,4);h[54]=1;image[128:192]=h;image[228:238]=b'\x06W16NE3\x00\x00\x00'
+count=len(groups);resource=64+8*count;resident=resource+4;imports=resident+10
+h=bytearray(64);h[:4]=b'NE\x01\x00';s.pack_into('<HH',h,4,imports+2,2);h[12]=2
+s.pack_into('<HHHHHHHH',h,14,4,heap,stack,entry-bases[0],1,minimum[3]+heap+stack,4,count)
+s.pack_into('<HHHHH',h,34,64,resource,resident,imports,imports);s.pack_into('<H',h,50,4);h[54]=1;image[128:192]=h;image[128+resident:128+resident+10]=b'\x06W16NE3\x00\x00\x00'
 for i,(blob,rs) in enumerate(zip(blobs,fix)):
  while len(image)%16:image.append(0)
  need(len(image)//16<=65535 and len(rs)<=65535,'NE file/relocation extent exceeded')
@@ -62,4 +67,4 @@ for i,(blob,rs) in enumerate(zip(blobs,fix)):
  if rs:image+=s.pack('<H',len(rs))+b''.join(rs)
 s.pack_into('<HH',image,2,len(image)%512,(len(image)+511)//512)
 out=Path(sys.argv[2]);out.write_bytes(image);out.chmod(0o755)
-print('NE code:',minimum[:3],'data/BSS:',len(blobs[3]),z[5],'fixups:',[len(x) for x in fix],'heap/stack:',heap,stack)
+print('NE code:',minimum[:3],'data/BSS:',len(blobs[3]),z[5],'fixups:',[len(x) for x in fix],'heap/stack:',heap,stack,'shared constants:',minimum[4:])

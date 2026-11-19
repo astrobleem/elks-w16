@@ -21,6 +21,9 @@ for i in range(nmod):
 
 # api_table order defines the stub index; constants carry a value
 table = []
+# Normalize explicit address-space annotations; table order/flags stay authoritative.
+apic = apic.replace(' W16_RO_FAR', '')
+apic = re.sub(r'W16_RO_STRING\(("[^"]*")\)', r'\1', apic)
 body = apic[apic.index('const struct api api_table[]'):apic.index('const int api_count')]
 for m in re.finditer(r'\{\s*([KUGPSLB]),\s*(\d+),\s*"(\w+)",\s*(\d+),\s*([\w|]+)\s*,\s*([^,}]+?)(?:,\s*(0x[0-9A-Fa-f]+|\d+))?\s*\}', body):
     table.append(dict(mod={'K': 'KERNEL', 'U': 'USER', 'G': 'GDI', 'P': 'PBRUSH', 'S': 'SOUND', 'L': 'SHELL', 'B': 'KEYBOARD'}[m[1]], ord=int(m[2]), name=m[3], flags=m[5],

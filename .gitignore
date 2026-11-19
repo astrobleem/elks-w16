@@ -25,3 +25,6 @@ __pycache__/
 /src/w16-ne.ld.tmp
 /src/w16-ne.elf
 /src/w16.ne
+
+/src/w16-ro.elf
+/src/w16-ro.ne

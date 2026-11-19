@@ -64,7 +64,8 @@ w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h wapi.h
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
-	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp w16-ne.ld w16-ne.ld.tmp w16-ne.elf w16.ne
+	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp w16-ne.ld w16-ne.ld.tmp w16-ne.elf w16.ne w16-ro.elf w16-ro.ne
+	rm -rf .ro
 
 .PHONY: all host clean
 
@@ -104,3 +105,29 @@ int21route-probe: int21.o int21-route.o thunk.o mem.o w16-ne.ld
 	--defsym=_heap=0x2800 --defsym=_stack=0x1800 -T $(CURDIR)/w16-ne.ld -o probe.elf \
 	"$$ne_crt" probe.o probe-asm.o user.o $(addprefix $(CURDIR)/,int21.o int21-route.o thunk.o mem.o) "$$ne_gcc" "$$ne_libc" "$$ne_gcc"
 	python3 ../scripts/elf2w16ne.py ../build/int21route/probe.elf ../build/int21route/route-ne
+
+# Isolated optional shared-read-only build; normal objects/a.out stay untouched.
+RO_OBJS = $(addprefix .ro/,$(OBJS))
+.ro/user.o .ro/menu.o: CFLAGS += -fno-inline
+.ro/%.o: %.c w16.h wapi.h api-slots.h int21.h launch.h taskimage.h polygon.h rasterfont-data.h
+	mkdir -p .ro
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+.ro/%.o: %.S w16.h api-slots.h int21.h taskimage.h
+	mkdir -p .ro
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+.ro/taskimage-asm.o: taskimage.S taskimage.h
+	mkdir -p .ro
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+w16-ro.elf: $(RO_OBJS) $(NANOX_LIB) w16-ne.ld
+	mkdir -p ../build
+	@ne_crt=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-file-name=crt0.o); \
+	ne_libc=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-file-name=libc.a); \
+	ne_gcc=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-libgcc-file-name); \
+	ia16-elf-ld.gold -m i386elks --gc-sections --defsym=_heap=0x2800 --defsym=_stack=0x1800 \
+	-T w16-ne.ld -Map ../build/w16-ro.map -o $@ "$$ne_crt" $(RO_OBJS) $(NANOX_LIB) "$$ne_gcc" "$$ne_libc" "$$ne_gcc"
+w16-ro.ne: w16-ro.elf ../scripts/elf2w16ne.py
+	python3 ../scripts/elf2w16ne.py $< $@
+
+.PHONY: check-shared-rodata
+check-shared-rodata: w16-ro.ne
+	cd .. && python3 tests/sharedrodatatest.py

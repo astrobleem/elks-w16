@@ -93,12 +93,32 @@ void palette_shutdown(void);
 int palette_entry(u16 h,u16 index,u8 *out);
 u16 palette_nearest(u16 h,u32 rgb,const u32 *device,u16 count);
 
+/* Optional native NE read-only bank. Generic pointers stay near; only
+ * explicitly qualified objects and their readers use IA-16 far access. */
+#if defined(W16_SHARED_RODATA) && !defined(W16_HOST)
+#define W16_RO_FAR __far
+#define W16_RO_STRING(s) ((const char __far[]){s})
+#else
+#define W16_RO_FAR
+#define W16_RO_STRING(s) s
+#endif
+
 /* ---------------------------------------------------------------- logging */
 extern int opt_verbose, opt_trace, opt_debugport;
 void wlog(const char *fmt, ...);        /* stderr (and port 0xE9 with -e) */
+void wlog_far(const char W16_RO_FAR *fmt, ...);
 void vlog(const char *fmt, ...);       /* only with -v */
 /* The ELKS image has two 64K text banks. Keep API call tracing and actual
  * errors in the compact build, but omit the per-operation verbose strings. */
+#if defined(W16_SHARED_RODATA) && !defined(W16_HOST) && !defined(W16_LOG_IMPLEMENTATION)
+/* Literal-only adapter: preserve near %s arguments and the existing formatter.
+ * Reject oversized formats at compile time rather than truncating them. */
+#define wlog(format, ...) ({ \
+    static const char __far w16_format_[] = format; \
+    (void)sizeof(char[(sizeof(w16_format_) <= 256) ? 1 : -1]); \
+    wlog_far(w16_format_, ##__VA_ARGS__); \
+})
+#endif
 #if defined(W16_COMPACT_LOG) && !defined(W16_LOG_IMPLEMENTATION)
 #define vlog(...) ((void)0)
 #endif
@@ -253,13 +273,14 @@ typedef u32 (*api_fn)(u16 ss, u16 ap);   /* ap: offset of the last-pushed argume
 struct api {
     u8   mod;
     u16  ord;
-    const char *name;
+    const char W16_RO_FAR *name;
     u8   argbytes;          /* Pascal: bytes the callee pops */
     u8   flags;
     api_fn fn;              /* or constant value for API_CONST */
     u16  value;
 };
-extern const struct api api_table[];
+extern const struct api W16_RO_FAR api_table[];
+const char *api_name(int idx);
 extern const int api_count;
 int  api_find_ord(int mod, u16 ord);
 int  api_find_name(int mod, const char *name);

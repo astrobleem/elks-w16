@@ -656,7 +656,7 @@ static int chk_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
     idx = resolve_import(m, r, desc, sizeof(desc));
     if (idx >= 0) {
         if ((api_table[idx].flags & API_CONST) && r->st == RS_FARADDR) {
-            wlog("w16: %s: constant import %s used as a far address\n", m->path, api_table[idx].name);
+            wlog("w16: %s: constant import %s used as a far address\n", m->path, api_name(idx));
             c->bad++;
         }
         return 0;
