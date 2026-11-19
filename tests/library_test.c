@@ -1,6 +1,10 @@
 #include <assert.h>
 #include <stdio.h>
 #include "w16.h"
+#include "launch.h"
+/* Standalone loader check: inject session counts without a native launcher. */
+static u16 session_task_count=1;
+u16 launch_tasks(void){return session_task_count;}
 extern int host_live,host_fail_after;
 u32 k_GetModuleHandle(u16,u16),k_GetNumTasks(u16,u16),k_GetDriveType(u16,u16);
 int main(int argc,char **argv)
@@ -42,7 +46,8 @@ int main(int argc,char **argv)
     assert(rd16(app.seg[0].sel,12)==dll.seg[0].sel);
     {u16 args;assert(!seg_alloc(16,&args));w16_mod=&app;
      wr32(args,0,0);assert(k_GetModuleHandle(args,0)==app.dgroup&&k_GetNumTasks(0,0)==1);
-     app.loaded=0;assert(!k_GetModuleHandle(args,0)&&!k_GetNumTasks(0,0));app.loaded=1;
+     session_task_count=3;assert(k_GetNumTasks(0,0)==3);
+     app.loaded=0;assert(!k_GetModuleHandle(args,0)&&!k_GetNumTasks(0,0));app.loaded=1;session_task_count=1;
      fcopy_out(args,32,"dllname.exe",12);wr16(args,0,32);wr16(args,2,args);
      assert(k_GetModuleHandle(args,0)==app.dgroup);
      fcopy_out(args,32,"test.DLL",9);assert(k_GetModuleHandle(args,0)==dll.dgroup);
