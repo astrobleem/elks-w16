@@ -43,6 +43,7 @@ static u16 modal_owner, modal_hwnd;                  /* the modal dialog running
 char opt_dump[40];
 int  opt_ready;
 static char readyfile[40] = "/tmp/w16.ready";
+static u16 activation_serial;
 static u16 capture_hwnd, focus_hwnd;    /* SetCapture / SetFocus */
 static u16 key_mods;                    /* MWKMOD_* of the latest key event (GetKeyState, accelerators) */
 static u16 mouse_buttons;               /* MWBUTTON_* of the latest mouse event */
@@ -80,6 +81,42 @@ u32 u_IsWindowVisible(u16 ss,u16 ap)
     return 0;
 }
 
+u32 u_GetParent(u16 ss,u16 ap)
+{
+ struct wnd *w;if(ap>0xfffeu)return 0;w=win_get(AW(0));
+ return w?(w->parent?w->parent:((w->style&WS_POPUP)?w->owner:0)):0;
+}
+
+/* Native order includes foreign windows and non-HWND frame/client surfaces.
+ * Enumerate only this task's matching frame windows, without slot-order guesses. */
+u32 u_GetWindow(u16 ss,u16 ap)
+{
+ struct wnd *w,*p;GR_WINDOW_INFO info;GR_WINDOW_ID native,id;u16 hwnd,cmd,parent,previous=0,last=0;int i,seen=0;
+ if(ap>0xfffcu)return 0;
+ cmd=AW(0);hwnd=AW(2);w=win_get(hwnd);
+ if(!w && hwnd!=DESKTOP_HWND)return 0;
+ if(cmd==4)return w?w->owner:0; /* GW_OWNER */
+ if(cmd==5) {parent=hwnd==DESKTOP_HWND?0:hwnd;native=w?w->client:GR_ROOT_WINDOW_ID;cmd=0;}
+ else {
+  if(!w || cmd>3)return 0;
+  parent=w->parent;p=win_get(parent);if(parent&&!p)return 0;
+  native=p?p->client:GR_ROOT_WINDOW_ID;
+ }
+ GrGetWindowInfo(native,&info);if(info.wid!=native)return 0;id=info.child;
+ while(id) {
+  GrGetWindowInfo(id,&info);if(info.wid!=id)return 0;
+  for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==parent&&wins[i].frame==id)break;
+  if(i<MAXWIN) {
+   u16 found=wins[i].hwnd;
+   if(cmd==0 || (cmd==2&&seen))return found;
+   if(found==hwnd){if(cmd==3)return previous;seen=1;}
+   previous=last=found;
+  }
+  id=info.sibling;
+ }
+ return cmd==1?last:0;
+}
+
 /* GWL_STYLE and GWL_WNDPROC are DWORD values even in 16-bit Windows.
  * A style write alone does not move, resize or recreate the native frame. */
 u32 u_GetWindowLong(u16 ss,u16 ap)
@@ -115,7 +152,7 @@ static u32 window_word(u16 ss,u16 ap,int set)
     if(set) value=AW(0);
     if(index==-6) field=&w->hinst;
     else if(index==-12) field=&w->id;
-    else if(index==-8 && !set) return w->parent;
+    else if(index==-8 && !set) return w->parent?w->parent:w->owner;
     if(field) {old=*field; if(set)*field=value; return old;}
     if(index<0 || !w->extra || w->cls<0 || w->cls>=MAXCLASS ||
        classes[w->cls].cbwndextra<2 || (u16)index>classes[w->cls].cbwndextra-2) return 0;
@@ -1025,6 +1062,8 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         wlog("w16: CreateWindow: window table full (%d)\n", MAXWIN);
         return 0;
     }
+    if(!pw && parent==DESKTOP_HWND)parent=0;
+    if(!pw && parent && !win_get(parent))return 0;
     c = ci==CLASS_MDICLIENT ? &builtin : &classes[ci];
     w = &wins[i];
     memset(w, 0, sizeof(*w));
@@ -1038,6 +1077,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         w->defid=rd16(ps,po+2);
     }
     if (pw) { w->parent = parent; w->id = hmenu; }
+    else if(parent)w->owner=top_window(win_get(parent))->hwnd;
     w->hinst = c->hinst ? c->hinst : hinst;
     w->procoff = c->procoff; w->procseg = c->procseg;
     if (!pw) {
@@ -1261,8 +1301,11 @@ static void destroy_window(struct wnd *w)
     vlog("w16: DestroyWindow %04x\n", hwnd);
     win_send(w, WM_DESTROY, 0, 0);
     for (i = 0; i < MAXWIN; i++)
-        if (wins[i].used && !wins[i].ctl && wins[i].parent == hwnd)
-            destroy_window(&wins[i]);
+        if (wins[i].used && !wins[i].ctl && (wins[i].parent == hwnd || wins[i].owner == hwnd)) {
+            /* Modal windows finish through run_dialog, which owns their teardown. */
+            if(wins[i].isdialog)wins[i].ended=1;
+            else destroy_window(&wins[i]);
+        }
     win_send(w, WM_NCDESTROY, 0, 0);
     caret_destroy(hwnd);
     menu_close_for(hwnd);
@@ -1617,6 +1660,32 @@ u32 u_GetActiveWindow(u16 ss,u16 ap)
     struct wnd *w=top_window(win_by_nx(GrGetFocus(),&client));
     (void)ss; (void)ap;
     return w?w->hwnd:0;
+}
+
+/* This task can activate its own top-level windows. Foreign Nano-X focus
+ * has no Win16 HWND and must never be fabricated as a previous active window. */
+u32 u_SetActiveWindow(u16 ss,u16 ap)
+{
+ struct wnd *w,*old;u16 hwnd,prev,serial;
+ if(ap>0xfffeu)return 0;
+ hwnd=AW(0);w=win_get(hwnd);
+ if(hwnd && (!w || w->parent || w->active || !w->visible || (w->style&WS_DISABLED) || blocked(w)))return 0;
+ prev=(u16)u_GetActiveWindow(0,0);if(prev==hwnd)return prev;
+ serial=++activation_serial;old=win_get(prev);
+ if(old)win_send(old,0x0086,0,0); /* WM_NCACTIVATE */
+ if(serial!=activation_serial)return prev;
+ old=win_get(prev);if(old)win_send(old,0x0006,0,hwnd); /* WM_ACTIVATE, WA_INACTIVE */
+ if(serial!=activation_serial)return prev;
+ w=win_get(hwnd);if(hwnd&&(!w || w->active || !w->visible || (w->style&WS_DISABLED) || blocked(w)))return prev;
+ if(w)GrRaiseWindow(w->frame);
+ set_focus(w);
+ if(!w)GrSetFocus(GR_ROOT_WINDOW_ID);
+ if(serial!=activation_serial)return prev;
+ w=win_get(hwnd);if(!w || (u16)u_GetActiveWindow(0,0)!=hwnd)return prev;
+ win_send(w,0x0086,1,0);
+ if(serial!=activation_serial)return prev;
+ w=win_get(hwnd);if(w)win_send(w,0x0006,1,prev); /* WA_ACTIVE, previous HWND */
+ return prev;
 }
 
 /* SetFocus(hWnd): returns the window that had the focus */
@@ -2441,6 +2510,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     d = win_alloc();
     if (!d)
         return 0xFFFF;
+    d->owner = owner && win_get(owner) ? top_window(win_get(owner))->hwnd : 0;
     d->isdialog = 1;
     d->style = dtmpl.style | ((dtmpl.style & DS_MODALFRAME) ? WS_THICKFRAME : 0);
     d->hinst = hinst ? hinst : w16_mod->dgroup;

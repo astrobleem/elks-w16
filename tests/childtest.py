@@ -15,6 +15,9 @@ pre='''#include "w16.h"
 #include <string.h>
 #include <stdio.h>
 typedef unsigned GR_WINDOW_ID, GR_COLOR;
+typedef struct {unsigned wid,parent,child,sibling;} GR_WINDOW_INFO;
+static GR_WINDOW_INFO native_info[700];
+static void GrGetWindowInfo(unsigned id,GR_WINDOW_INFO *i){assert(id<700);*i=native_info[id];}
 #define GR_RGB(a,b,c) 0
 #define GR_ROOT_WINDOW_ID 1
 #define GR_WM_PROPS_NODECORATE 1
@@ -71,7 +74,7 @@ void GrUnmapWindow(unsigned w){unmaps[w]++;}
 void GrResizeWindow(unsigned w,int x,int y){assert(x>0&&y>0);sizes[w][0]=x;sizes[w][1]=y;}
 static unsigned raised,lowered;
 void GrRaiseWindow(unsigned w){raised=w;}void GrLowerWindow(unsigned w){lowered=w;}
-void GrSetFocus(unsigned w){(void)w;}
+void GrSetFocus(unsigned w){nx_focus=w;}
 
 static u32 mdi_message(struct wnd*,u16,u16,u32);
 static int valid_coords(u16,u16,u16);
@@ -79,9 +82,17 @@ u32 u_DefWindowProc(u16,u16);
 struct dc { int paint; struct wnd *w; };
 static struct dc *dc_get(u16 h){(void)h;return NULL;}
 static void gdi_fill(unsigned w,unsigned c,int x,int y,int wd,int ht){(void)w;(void)c;(void)x;(void)y;(void)wd;(void)ht;}
+static u16 activation_serial;
+static u16 reenter_on,reenter_to;static unsigned activation_events;
+u32 u_SetActiveWindow(u16,u16);
+static int modal_block;
+static int blocked(struct wnd*w){(void)w;return modal_block;}
 static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl;
-u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){if(w->cls==CLASS_MDICLIENT)return mdi_message(w,m,p,l);
+u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
+if(m==6||m==0x86)activation_events++;
+if(m==6&&!p&&w->hwnd==reenter_on){reenter_on=0;wr16(0x1000,0,reenter_to);u_SetActiveWindow(0x1000,0);}
+if(w->cls==CLASS_MDICLIENT)return mdi_message(w,m,p,l);
 if(w->extra&&m==WM_CREATE){assert(w->extra[0]==0&&w->extra[1]==0);w->extra[0]=0x34;w->extra[1]=0x12;extra_creates++;}
 if(w->extra&&m==WM_NCDESTROY){assert(w->extra[0]);extra_destroys++;}
 if(create_fail&&m==WM_CREATE)return 0xffffffffUL;
@@ -92,7 +103,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -203,7 +214,46 @@ int main(void){u16 id;int x,y;unsigned frame;
   u_DefMDIChildProc(0x1000,0);assert(!win_get(group)&&win_get(mdi)&&wins[0].used&&!g->extra);
   destroy_window(c);assert(!win_get(mdi)&&wins[0].used);
  }
- puts("Registered child and MDI creation/state/open-close lifecycle checks passed");return 0;}
+ /* Native sibling order deliberately differs from allocation order and
+  * contains more foreign windows than the W16 table has slots. */
+ {u16 popup,owned,child,other=HWND_BASE+16;unsigned pf,cf;int j;
+  setup(WS_POPUP|WS_VISIBLE,HWND_BASE,1,1,100,60);popup=u_CreateWindow(0x1000,0);assert(popup);pf=win_get(popup)->frame;
+  setup(0,HWND_BASE,1,1,100,60);owned=u_CreateWindow(0x1000,0);assert(owned);
+  setup(WS_CHILD|WS_VISIBLE,HWND_BASE,1,1,10,10);child=u_CreateWindow(0x1000,0);assert(child);cf=win_get(child)->frame;
+  wins[4]=wins[0];wins[4].hwnd=other;wins[4].frame=500;wins[4].client=501;wins[4].visible=1;
+  native_info[1].wid=1;native_info[1].child=2;
+  for(j=2;j<46;j++){native_info[j].wid=j;native_info[j].sibling=j+1;}
+  native_info[45].sibling=500;native_info[500].wid=500;native_info[500].sibling=76;
+  native_info[76].wid=76;native_info[76].sibling=pf;native_info[pf].wid=pf;
+  native_info[77].wid=77;native_info[77].child=600;native_info[600].wid=600;native_info[600].sibling=cf;native_info[cf].wid=cf;
+  wr16(0x1000,2,HWND_BASE);wr16(0x1000,0,0);assert(u_GetWindow(0x1000,0)==other);
+  wr16(0x1000,0,1);assert(u_GetWindow(0x1000,0)==popup);
+  wr16(0x1000,0,2);assert(u_GetWindow(0x1000,0)==popup);
+  wr16(0x1000,0,3);assert(u_GetWindow(0x1000,0)==other);
+  wr16(0x1000,2,popup);wr16(0x1000,0,2);assert(!u_GetWindow(0x1000,0));
+  wr16(0x1000,0,4);assert(u_GetWindow(0x1000,0)==HWND_BASE);
+  wr16(0x1000,2,HWND_BASE);wr16(0x1000,0,5);assert(u_GetWindow(0x1000,0)==child);
+  wr16(0x1000,2,DESKTOP_HWND);assert(u_GetWindow(0x1000,0)==other);
+  wr16(0x1000,0,popup);assert(u_GetParent(0x1000,0)==HWND_BASE);
+  wr16(0x1000,0,owned);assert(!u_GetParent(0x1000,0));
+  wr16(0x1000,2,owned);wr16(0x1000,0,4);assert(u_GetWindow(0x1000,0)==HWND_BASE);
+  wr16(0x1000,0,child);assert(u_GetParent(0x1000,0)==HWND_BASE);
+  assert(!u_GetWindow(0x1000,0xffff)&&!u_GetParent(0x1000,0xffff));
+  nx_focus=77;focus_hwnd=HWND_BASE;activation_events=0;
+  wr16(0x1000,0,other);assert(u_SetActiveWindow(0x1000,0)==HWND_BASE);
+  assert(u_GetActiveWindow(0,0)==other&&raised==500&&activation_events==4);
+  wr16(0x1000,0,child);assert(!u_SetActiveWindow(0x1000,0)&&u_GetActiveWindow(0,0)==other);
+  win_get(popup)->style|=WS_DISABLED;wr16(0x1000,0,popup);assert(!u_SetActiveWindow(0x1000,0));win_get(popup)->style&=~WS_DISABLED;
+  modal_block=1;wr16(0x1000,0,HWND_BASE);assert(!u_SetActiveWindow(0x1000,0));modal_block=0;
+  nx_focus=650;focus_hwnd=0;assert(!u_SetActiveWindow(0x1000,0)&&u_GetActiveWindow(0,0)==HWND_BASE);
+  reenter_on=HWND_BASE;reenter_to=popup;wr16(0x1000,0,other);
+  assert(u_SetActiveWindow(0x1000,0)==HWND_BASE&&u_GetActiveWindow(0,0)==popup);
+  wr16(0x1000,0,0);assert(u_SetActiveWindow(0x1000,0)==popup&&!u_GetActiveWindow(0,0));
+  wins[5]=wins[4];wins[5].hwnd=HWND_BASE+20;wins[5].owner=HWND_BASE;wins[5].isdialog=1;wins[5].frame=510;
+  destroy_window(&wins[0]);assert(wins[5].used&&wins[5].ended);destroy_window(&wins[5]);
+  assert(!win_get(popup)&&!win_get(owned)&&!win_get(child)&&win_get(other));destroy_window(win_get(other));
+ }
+ puts("Window tree, native order, ownership, activation and MDI lifecycle checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
     p=pathlib.Path(td);(p/'test.c').write_text(code)

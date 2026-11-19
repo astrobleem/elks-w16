@@ -112,6 +112,7 @@ struct wnd {
     char title[100];
     struct filelist *list;
     GR_WINDOW_ID frame, client; /* controls: one Nano-X window, frame == client */
+    u16  owner;                 /* owned top-level window; distinct from a child parent */
     u16  parent;                /* controls: the dialog */
     u8   ctl, pressed, isdialog, ended, checked;
     u16  id, result, defid;

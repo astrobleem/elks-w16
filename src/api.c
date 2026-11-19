@@ -89,6 +89,7 @@ u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetClassWord(u16,u16);
 u32 u_DefMDIChildProc(u16,u16);
+u32 u_GetParent(u16,u16),u_GetWindow(u16,u16),u_SetActiveWindow(u16,u16);
 u32 u_GetWindowWord(u16,u16),u_SetWindowWord(u16,u16);
 u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
@@ -364,7 +365,7 @@ const struct api api_table[] = {
     { U,  45, "BringWindowToTop", 2, 0, H(u_BringWindowToTop) },
     { U,  47, "IsWindow", 2, 0, H(u_IsWindow) },
     { U,  49, "IsWindowVisible", 2, 0, H(u_IsWindowVisible) },
-    { U,  59, "SETACTIVEWINDOW", 0, API_MISSING, 0 },
+    { U,  59, "SetActiveWindow", 2, 0, H(u_SetActiveWindow) },
     { U,  60, "GetActiveWindow", 0, 0, H(u_GetActiveWindow) },
     { U,61,"ScrollWindow",14,0,H(u_ScrollWindow) },
     { U,  62, "SetScrollPos", 8, 0, H(u_SetScrollPos) },
@@ -433,6 +434,8 @@ const struct api api_table[] = {
     { U, 433, "IsCharAlpha", 2, 0, H(u_IsCharAlpha) },
     { U, 434, "IsCharAlphaNumeric", 2, 0, H(u_IsCharAlphaNumeric) },
     { U, 437, "AnsiUpperBuff", 6, 0, H(u_AnsiUpperBuff) },
+    { U, 46, "GetParent", 2, 0, H(u_GetParent) },
+    { U, 262, "GetWindow", 4, 0, H(u_GetWindow) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
