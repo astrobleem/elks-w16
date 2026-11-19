@@ -47,18 +47,26 @@ DEFINE_applyOpR
 #endif
 static FARADDR shadow;
 static unsigned short shadow_seg;
-static int dirty;
 int cga_viewx,cga_viewy;
+/* Visible dirty rows only; off-screen writes remain in the shadow for panning. */
+static int dirty_top,dirty_bottom;
+static void dirty_row(int x,int end,int y)
+{
+    if(end<cga_viewx || x>=cga_viewx+CGA_WIDTH || y<cga_viewy || y>=cga_viewy+200)return;
+    y-=cga_viewy;
+    if(y<dirty_top)dirty_top=y;
+    if(y>dirty_bottom)dirty_bottom=y;
+}
 static int present(PSD p)
 {
     int y,x;
-    if(!dirty)return 0;
-    for(y=0;y<200;y++){
+    if(dirty_top>dirty_bottom)return 0;
+    for(y=dirty_top;y<=dirty_bottom;y++){
         volatile unsigned short __far *d=(volatile unsigned short __far *)(CGA_BASE+((y&1)<<13)+(y>>1)*80);
         volatile unsigned short __far *s=(volatile unsigned short __far *)(shadow+(unsigned)(y+cga_viewy)*p->pitch+cga_viewx/CGA_PPB);
         for(x=0;x<40;x++)d[x]=s[x];
     }
-    dirty=0;return 0;
+    dirty_top=200;dirty_bottom=-1;return 0;
 }
 /* Alt+I/J/K/L pans up/left/down/right; Alt+H returns to the origin. */
 int cga_pan_key(MWKEY key,int *dx,int *dy)
@@ -73,7 +81,7 @@ int cga_pan_key(MWKEY key,int *dx,int *dy)
     if(x>CGA_VWIDTH-CGA_WIDTH)x=CGA_VWIDTH-CGA_WIDTH;
     if(y<0)y=0;
     if(y>CGA_VHEIGHT-200)y=CGA_VHEIGHT-200;
-    *dx=x-cga_viewx;*dy=y-cga_viewy;cga_viewx=x;cga_viewy=y;dirty=1;
+    *dx=x-cga_viewx;*dy=y-cga_viewy;cga_viewx=x;cga_viewy=y;dirty_top=0;dirty_bottom=199;
     EPRINTF("CGA-PAN viewport=%d,%d\n",x,y);
     return 1;
 }
@@ -96,7 +104,7 @@ static void putpixel(PSD p,int x,int y,MWPIXELVAL c,int op)
     unsigned value=op==MWROP_COPY?c:(unsigned)applyOpR(op,c,(old>>shift)&CGA_MASK);
     *a=(old&~(CGA_MASK<<shift))|((value&CGA_MASK)<<shift);
 #if CGA_PAN
-    if(p->flags&PSF_SCREEN)dirty=1;
+    if(p->flags&PSF_SCREEN)dirty_row(x,x,y);
 #endif
 }
 static void pixel(PSD p,MWCOORD x,MWCOORD y,MWPIXELVAL c)
@@ -105,7 +113,7 @@ static void hline(PSD p,MWCOORD x,MWCOORD end,MWCOORD y,MWPIXELVAL c)
 {
     unsigned char value=(c&CGA_MASK)*(255/CGA_MASK);
 #if CGA_PAN
-    if(p->flags&PSF_SCREEN)dirty=1;
+    if(p->flags&PSF_SCREEN)dirty_row(x,end,y);
 #endif
     if(gr_mode!=MWROP_COPY){while(x<=end)putpixel(p,x++,y,c,gr_mode);return;}
     while(x<=end&&(x&(CGA_PPB-1)))putpixel(p,x++,y,c,MWROP_COPY);
@@ -142,7 +150,7 @@ static PSD open_screen(PSD p)
     fmemset((void __far *)shadow,0,(CGA_VWIDTH/CGA_PPB)*CGA_VHEIGHT);
     p->xres=p->xvirtres=CGA_VWIDTH;p->yres=p->yvirtres=CGA_VHEIGHT;
     p->pitch=CGA_VWIDTH/CGA_PPB;p->PreSelect=present;
-    cga_viewx=cga_viewy=0;dirty=1;
+    cga_viewx=cga_viewy=0;dirty_top=0;dirty_bottom=199;
     EPRINTF("CGA-PAN allocated %lu bytes; virtual=%dx%d physical=%dx200\n",(unsigned long)p->pitch*CGA_VHEIGHT,CGA_VWIDTH,CGA_VHEIGHT,CGA_WIDTH);
 #endif
     set_subdriver(p,&packed);
