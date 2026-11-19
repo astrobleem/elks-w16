@@ -91,7 +91,7 @@ u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16
 u32 k_GetModuleUsage(u16, u16);
 u32 k_GetModuleHandle(u16,u16),k_GetNumTasks(u16,u16),k_GetDriveType(u16,u16);
 u32 k_GetCurPID(u16,u16);
-u32 k_GetWindowsDirectory(u16,u16),u_ExitWindows(u16,u16);
+u32 k_GetWindowsDirectory(u16,u16),u_ExitWindows(u16,u16),k_WinExec(u16,u16);
 u32 u_GlobalAddAtom(u16,u16),u_GlobalDeleteAtom(u16,u16),u_GlobalFindAtom(u16,u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
@@ -476,6 +476,7 @@ const struct api api_table[] = {
     { U, 269, "GlobalDeleteAtom", 2, 0, H(u_GlobalDeleteAtom) },
     { U, 270, "GlobalFindAtom", 4, 0, H(u_GlobalFindAtom) },
     { K, 134, "GetWindowsDirectory", 6, 0, H(k_GetWindowsDirectory) },
+    { K, 166, "WinExec", 6, 0, H(k_WinExec) },
     { U, 7, "ExitWindows", 6, 0, H(u_ExitWindows) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);

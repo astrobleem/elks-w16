@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include "wapi.h"
+#include "launch.h"
 #include "filelist.h"
 #include "dib.h"
 
@@ -1927,6 +1928,7 @@ static int next_msg(struct qmsg *m, int block)
     static u8 quit_sent;
 
     for (;;) {
+        launch_poll();
         if (opt_quit_s && !quit_sent && now_ms() - w16_t0 >= (u32)opt_quit_s * 1000ul) {
             quit_sent = 1;                  /* -q: close the main window as the system menu would */
             for (i = 0; i < MAXWIN; i++)
@@ -1991,6 +1993,7 @@ static int next_msg(struct qmsg *m, int block)
                 if ((u32)left < wait)
                     wait = (u32)left;
             }
+            wait=launch_wait(wait);
             if (!block)                         /* PeekMessage: nothing to report */
                 return 0;
             if (wait != 0xFFFFFFFFul) {         /* sleep in the client library until input or the next timer */

@@ -365,3 +365,23 @@ u32 k_GetWindowsDirectory(u16 ss,u16 ap)
  if(!far_range(seg,off,n+1))return 0;
  fcopy_out(seg,off,dos,n+1);return n;
 }
+
+/* Only mapped regular Win16 executables, with current-directory then explicit
+ * configured Windows-directory lookup. No native PATH or shell execution. */
+int files_executable(const char *input,char *out)
+{
+ char name[PATHLEN],path[PATHLEN];const char *p,*base=input,*windir;unsigned n;
+ if(strlen(input)>=sizeof(name)){errno=ENAMETOOLONG;return -1;}
+ for(p=input;*p;p++)if(*p=='/'||*p=='\\'||*p==':')base=p+1;
+ strcpy(name,input);
+ if(!strchr(base,'.')){if(strlen(name)+5>sizeof(name)){errno=ENAMETOOLONG;return -1;}strcat(name,".exe");}
+ if(!local_path(name,out,0))return 0;
+ if(errno!=ENOENT||base!=input)return -1;
+ windir=getenv("W16WINDIR");
+ if(!windir||strlen(windir)<3||(windir[0]!='C'&&windir[0]!='c')||windir[1]!=':'||
+    (windir[2]!='\\'&&windir[2]!='/')||files_directory(windir,path,0))return -1;
+ n=strlen(windir);
+ if(n+strlen(name)+2>sizeof(path)){errno=ENAMETOOLONG;return -1;}
+ strcpy(path,windir);path[n++]='\\';strcpy(path+n,name);
+ return local_path(path,out,0);
+}

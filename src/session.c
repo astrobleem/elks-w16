@@ -104,12 +104,12 @@ static int save_members(const u32 *m)
 /* Pointer is the only static near-data allocation. The small process record
  * lives in the existing heap. Callers can pass the returned path explicitly
  * to another native task via W16SESSION; no private atom table is aliased. */
-const char *session_directory(void)
+static const char *session_start(const char *join)
 {
- const char *join;u32 m[SESSION_TASKS+1];unsigned i,j;int made=0,slot=-1,alive;char lease[96];
+ u32 m[SESSION_TASKS+1];unsigned i,j;int made=0,slot=-1,alive;char lease[96];
  if(session)return session->pid==(u32)getpid()?session->dir:0;
  session=malloc(sizeof(*session));if(!session)return 0;
- session->pid=(u32)getpid();session->slot=0;session->livefd=-1;join=getenv("W16SESSION");
+ session->pid=(u32)getpid();session->slot=0;session->livefd=-1;
  if(join&&*join) {
   if(*join!='/'||strlen(join)>=sizeof(session->dir))goto fail;
   strcpy(session->dir,join);
@@ -150,6 +150,16 @@ const char *session_directory(void)
  fail:
  if(made){char p[96];path(p,"next");unlink(p);rmdir(session->dir);}
  free(session);session=0;return 0;
+}
+const char *session_directory(void){return session_start(getenv("W16SESSION"));}
+int session_join(const char *name){return name&&*name&&session_start(name)?0:-1;}
+u16 session_tasks(void)
+{
+ u32 m[SESSION_TASKS+1];u16 i,n=0;
+ if(!session)return 1;
+ if(lock())return 0;
+ if(!members(m))for(i=1;i<=SESSION_TASKS;i++)if(m[i]&&member_alive(i)==1)n++;
+ unlock();return n;
 }
 void session_shutdown(void)
 {

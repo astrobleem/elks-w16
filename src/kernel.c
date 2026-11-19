@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "w16.h"
+#include "launch.h"
 
 struct ne_module *w16_mod;
 u16 w16_exit_code;
@@ -130,7 +131,7 @@ u32 k_GetNumTasks(u16 ss,u16 ap)
 {
  (void)ss;(void)ap;
  /* Bound libraries are modules of this one task, not additional tasks. */
- return w16_mod && w16_mod->loaded && !w16_mod->library;
+ return w16_mod && w16_mod->loaded && !w16_mod->library?launch_tasks():0;
 }
 
 /* GetModuleFileName(hModule, lpFilename, nSize) */
@@ -165,7 +166,7 @@ u32 k_InitTask(u16 ss, u16 ap)
         vlog("w16: InitTask: hInstance %04x, PSP %04x, command line \"%s\"\n",
              m->dgroup, m->psp, tail);
     }
-    return 0x00010001ul;                /* DX = SW_SHOWNORMAL, AX = 1 */
+    return ((u32)launch_show()<<16)|1;   /* actual WinExec nCmdShow */
 }
 
 /* GetWinFlags(): real mode on an 8086-class CPU, no EMS frame */

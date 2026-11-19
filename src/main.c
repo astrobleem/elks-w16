@@ -201,6 +201,8 @@ int main(int argc, char **argv)
 /* ---------------------------------------------------------------- ELKS */
 #include "nano-X.h"
 #include "int21.h"
+#include "launch.h"
+#include "taskimage.h"
 extern int opt_strict_dos, opt_metrics, opt_quit_s;
 extern u32 w16_t0;
 u32  now_ms(void);
@@ -211,18 +213,15 @@ void W16_CDECL w16_thunk_done(void);
 
 static void usage(void)
 {
-    fputs("usage: w16 [-u] [-v] [-t] [-e] [-n] [-s] [-m] [-d PREFIX] [-r] [-q SECS] [-l MODULE=DLL] PROGRAM.EXE [ARGS...]\n", stderr);
+    fputs("usage: w16 [-u] [-v] [-t] [-e] [-n] [-s] [-m] [-T] [-d PREFIX] [-r] [-q SECS] [-l MODULE=DLL] PROGRAM.EXE [ARGS...]\n", stderr);
     exit(2);
 }
 
 int main(int argc, char **argv)
 {
-    static struct ne_module m, dll;
     const char *dllpath=0;
     char dllname[9];
-    int dllindex=-1;
-    int i, e, checkonly = 0, graphics_open = 0;
-    u16 regs[13], code;
+    int i,e,checkonly=0,tasks=0;
     const char *path;
 
     /* Refuse a legacy stack-call Nano-X archive at link time. */
@@ -253,6 +252,7 @@ int main(int argc, char **argv)
             case 's': opt_strict_dos = 1; break;
             case 'r': opt_ready = 1; break;
             case 'm': opt_metrics = 1; break;
+            case 'T': tasks=1; break;
             default: usage();
             }
     }
@@ -260,13 +260,27 @@ int main(int argc, char **argv)
         usage();
     path = argv[i];
 
+    if(tasks&&!checkonly) {
+        e=launch_prepare(task_image_sp());
+        if(e){wlog("w16: %s rejected: %s\n",path,ne_errstr(e));launch_finish();exit(e);}
+    }
+    w16_run(path,argc-i-1,argv+i+1,dllpath,dllname,checkonly);
+    return 1;
+}
+
+void w16_run(const char *path,int argc,char **argv,const char *dllpath,const char *dllname,int checkonly)
+{
+    static struct ne_module m,dll;
+    int dllindex=-1,e,graphics_open=0;
+    u16 regs[13],code;
+    w16_t0=now_ms();
     {
         extern int W16_CDECL w16_cpu_is_nec(void);
         vlog("w16: CPU %s\n", w16_cpu_is_nec() ? "NEC V20/V30 (AAD ignores its base operand)" : "Intel 8086/8088 class");
     }
     if (w16_thunk_init()) {
         wlog("w16: another w16 process shares this program's code segment; run one Win16 program at a time\n");
-        exit(1);
+        launch_reply(8);session_shutdown();launch_finish();exit(1);
     }
     dll.fd=-1;
     e = ne_open(&m, path);
@@ -282,7 +296,7 @@ int main(int argc, char **argv)
         ne_free(&m);
         w16_thunk_done();
         /* Match check-only teardown: do not return through the ELKS CRT. */
-        exit(1);
+        launch_reply(8);session_shutdown();launch_finish();exit(1);
     }
     if (!e && !checkonly) graphics_open = 1;
 #ifdef W16_STARTUP_TRACE
@@ -305,14 +319,14 @@ int main(int argc, char **argv)
     }
     if (!e) e = ne_check_imports(&m);
     if (!e) e = ne_load(&m);
-    if (!e) e = task_setup(&m, path, argc - i - 1, argv + i + 1);
+    if (!e) e = task_setup(&m,path,argc,argv);
     if (e) {
         wlog("w16: %s rejected: %s\n", path, ne_errstr(e));
         ne_free(&m); ne_free(&dll);
         if (graphics_open) GrClose();
         w16_thunk_done();
         /* Never unwind through the ELKS medium-model CRT on rejection. */
-        exit(e);
+        launch_reply(launch_error(e));session_shutdown();launch_finish();exit(e);
     }
     wlog("w16: %s loaded: %u segments, %lu bytes, %u fixups (%u import references), DGROUP %04x (%u bytes)\n",
          path, m.nseg, (unsigned long)m.total_bytes, m.nreloc, m.nimport, m.dgroup, m.dgroup_size);
@@ -322,14 +336,14 @@ int main(int argc, char **argv)
         wlog("w16: check only (-n): all segments freed\n");
         /* Use explicit libc teardown, as on the run path. Returning from
          * this check-only path has crashed in ELKS medium-model guests. */
-        exit(0);
+        session_shutdown();launch_finish();exit(0);
     }
     w16_mod = &m;
     if (user_init()) {
         ne_free(&m); ne_free(&dll);
         GrClose();
         w16_thunk_done();
-        exit(1);
+        launch_reply(8);session_shutdown();launch_finish();exit(1);
     }
     dos_init();
 
@@ -345,8 +359,8 @@ int main(int argc, char **argv)
     signal(SIGINT, SIG_IGN);                 /* a handler cannot run while the program owns SS/DS */
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
-    if(int21_router_open(m.dgroup)) {
-        wlog("w16: INT21 failed\n");code=1;goto finished;
+    if(launch_attach(m.dgroup)) {
+        wlog("w16: INT21 failed\n");launch_reply(8);code=1;goto finished;
     }
     vlog("w16: starting %s at %04x:%04x, SS:SP %04x:%04x\n", path, regs[1], regs[0], regs[2], regs[3]);
     if (opt_debugport)
@@ -367,6 +381,7 @@ int main(int argc, char **argv)
             goto finished;
         }
     }
+    launch_reply(m.dgroup);
     code = w16_start16(regs);
 finished:
 
@@ -385,7 +400,8 @@ finished:
     /* The native root owns the resident router until every attached task
      * has unregistered. Its guest/windows may already be gone. Never free
      * code or overwrite a vector after an ownership conflict. */
-    while(int21_router_close())usleep(50000);
+    while(int21_router_close()){launch_poll();usleep(50000);}
+    launch_finish();
     if (opt_debugport) {
         char line[32];
         sprintf(line, "@@EXIT %u\n", code);

@@ -14,7 +14,7 @@ CFLAGS  = -mcmodel=medium -melks-libc -march=i8086 -mtune=i8086 -Os -mregparmcal
           -I$(TOPDIR)/include -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include \
           -I$(MWDIR)/src/include -DELKS=1 -DW16_COMPACT_LOG -DMWCONFIG_FILE='"mwconfig.elks"'
 LDFLAGS = -mregparmcall -mcmodel=medium -melks-libc -maout-heap=0x2800 -maout-stack=0x1800
-OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o palette.o global.o session.o int21.o int21-route.o icon.o drag.o clipboard.o caret.o user.o scrollbar.o menu.o cursor.o pointer.o gdi.o mapping.o polygon.o oval.o bitmap.o rasterfont.o dib.o rect.o registered.o textlayout.o linedda.o enumobj.o enumfont.o displayic.o ansistr.o dlgtmpl.o profile.o thunk.o
+OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o palette.o global.o session.o int21.o int21-route.o taskimage.o taskimage-asm.o launch.o icon.o drag.o clipboard.o caret.o user.o scrollbar.o menu.o cursor.o pointer.o gdi.o mapping.o polygon.o oval.o bitmap.o rasterfont.o dib.o rect.o registered.o textlayout.o linedda.o enumobj.o enumfont.o displayic.o ansistr.o dlgtmpl.o profile.o thunk.o
 
 
 # Keep USER/menu helpers out of line within the two code-group budget.
@@ -40,7 +40,15 @@ api.o: api-slots.h
 
 main.o int21.o: int21.h
 
+main.o kernel.o user.o launch.o: launch.h
+launch.o: taskimage.h int21.h
+
 int21-route.o: int21-route.S int21.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+taskimage.o: taskimage.h int21.h
+
+taskimage-asm.o: taskimage.S taskimage.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 thunk.o: thunk.S api-slots.h int21.h

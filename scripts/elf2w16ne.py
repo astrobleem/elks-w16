@@ -27,6 +27,7 @@ for i in range(4):
  for j in range(i):need(bases[i]+minimum[i]<=bases[j] or bases[j]+minimum[j]<=bases[i],'overlapping segment extents')
 need(minimum[3]+heap+stack+1024<=0xfff0,'near data/heap/stack/argv budget exceeded')
 need(code[0][3]<=entry<code[0][3]+code[0][5],'entry outside first code group')
+data_segment_references=0
 fix=[[] for _ in blobs];seen=set();r=sec['.rel.dyn'];need(r[1]==9 and r[9]==8 and r[5]%8==0,'bad relocation section')
 for at in range(r[4],r[4]+r[5],8):
  address,info=s.unpack_from('<II',b,at);need(info==48,'unsupported dynamic relocation '+str(info))
@@ -34,8 +35,21 @@ for at in range(r[4],r[4]+r[5],8):
  need(len(places)==1 and address not in seen,'stray or duplicate relocation');seen.add(address)
  i=places[0];place=address-bases[i];target=s.unpack_from('<H',blobs[i],place)[0]*16
  need(target in bases,'segment relocation has unknown target base')
+ if target==bases[3]:data_segment_references+=1
  fix[i].append(s.pack('<BBHBBH',2,0,place,bases.index(target)+1,0,0))
  s.pack_into('<H',blobs[i],place,0xffff)
+# Sharing native text is enabled only when no absolute DS selector occurs.
+# Keep every normal relocation above; incompatible images still run privately.
+for sym in sections:
+ if sym[1]!=2:continue
+ strings=sections[sym[6]];pool=contents(strings)
+ need(sym[9]==16 and sym[5]%16==0,'bad symbol table')
+ for pos in range(sym[4],sym[4]+sym[5],16):
+  nm,value,size,info,other,index=s.unpack_from('<IIIBBH',b,pos)
+  need(nm<len(pool),'bad symbol name')
+  if pool[nm:pool.index(0,nm)]!=b'w16_shared_safe':continue
+  need(size==2 and d[3]<=value and value+2<=d[3]+d[5],'shared capability outside initialized data')
+  s.pack_into('<H',blobs[3],value-d[3],int(data_segment_references==0))
 image=bytearray(256);image[:2]=b'MZ';s.pack_into('<H',image,8,4);s.pack_into('<H',image,16,256);s.pack_into('<H',image,24,64);s.pack_into('<I',image,60,128);image[64:69]=b'\xb8\x01\x4c\xcd\x21'
 h=bytearray(64);h[:4]=b'NE\x01\x00';s.pack_into('<HH',h,4,112,2);h[12]=2
 s.pack_into('<HHHHHHHH',h,14,4,heap,stack,entry-bases[0],1,minimum[3]+heap+stack,4,4)
