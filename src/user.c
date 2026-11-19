@@ -41,6 +41,25 @@ static u16 mdi_serial;
 u32 u_CreateWindow(u16,u16),u_DefWindowProc(u16,u16);
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
+#ifdef W16_LAZY_UI
+/* Keep storage until task shutdown: callbacks may still hold this slot's
+ * address/text after DestroyWindow. Reuse preserves the fixed-table lifetime. */
+static int window_text_prepare(struct wnd *w)
+{
+    char *text = w->title;
+    if (!text && !(text = calloc(100, 1))) return 0;
+    memset(w, 0, sizeof(*w));
+    w->title = text;
+    text[0] = 0;
+    return 1;
+}
+static void window_text_shutdown(void)
+{
+    int i;
+    for (i = 0; i < MAXWIN; i++) { free(wins[i].title); wins[i].title = 0; }
+}
+#endif
+
 
 #define QSIZE 24
 struct qmsg { u16 hwnd, msg, wp; u32 lp; i16 x, y; u32 time; u8 ch; };
@@ -1119,7 +1138,11 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if(!pw && parent && !win_get(parent))return 0;
     c = ci==CLASS_MDICLIENT ? &builtin : &classes[ci];
     w = &wins[i];
+#ifdef W16_LAZY_UI
+    if (!window_text_prepare(w)) return 0;
+#else
     memset(w, 0, sizeof(*w));
+#endif
     w->used = 1;
     w->hwnd = HWND_BASE + 4 * i;
     w->cls = ci;
@@ -1159,7 +1182,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         }
     }
     if (tseg)
-        fstrncpy_in(w->title, tseg, toff, sizeof(w->title));
+        fstrncpy_in(w->title, tseg, toff, 100);
     bg = rgb_to_gr(brush_color(c->hbrush, &isnull));
     if(style & WS_VSCROLL) w->cw-=SCROLLBAR_SIZE;
     if(style & WS_HSCROLL) w->ch-=SCROLLBAR_SIZE;
@@ -1878,7 +1901,7 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
     case WM_SYSKEYDOWN:case WM_SYSKEYUP:case WM_SYSCHAR:
         return default_system_key(w,msg,wp,AL(0));
     case 0x000c: { /* WM_SETTEXT, including a null pointer for an empty title */
-        char text[sizeof(w->title)];u16 n=0,off=(u16)AL(0),seg=(u16)(AL(0)>>16);
+        char text[100];u16 n=0,off=(u16)AL(0),seg=(u16)(AL(0)>>16);
         if(!off&&!seg)text[0]=0;
         else {
             while(n+1u<sizeof(text)){
@@ -2233,7 +2256,7 @@ u32 u_SetWindowText(u16 ss, u16 ap)
     struct wnd *w = win_get(AW(4));
     if (!w)
         return 0;
-    fstrncpy_in(w->title, AW(2), AW(0), sizeof(w->title));
+    fstrncpy_in(w->title, AW(2), AW(0), 100);
     vlog("w16: SetWindowText(%04x) \"%s\"\n", AW(4), w->title);
     if (w->visible && w->ctl)
         paint_control(w);
@@ -2617,7 +2640,11 @@ static struct wnd *win_alloc(void)
         wlog("w16: window table full (%d)\n", MAXWIN);
         return 0;
     }
+#ifdef W16_LAZY_UI
+    if (!window_text_prepare(&wins[i])) return 0;
+#else
     memset(&wins[i], 0, sizeof(wins[i]));
+#endif
     wins[i].used = 1;
     wins[i].hwnd = HWND_BASE + 4 * i;
     wins[i].cls = -1;
@@ -2817,9 +2844,9 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
              it->cls >= 0x80 && it->cls <= 0x85 ? names[it->cls - 0x80] : it->clsname);
     if (w->ctl == CTL_BUTTON && BUTTON_TYPE(w) > BS_RADIOBUTTON && BUTTON_TYPE(w) != BS_GROUPBOX)
         wlog("w16: button control %u style %lx drawn as a push button\n", it->id, (unsigned long)(it->style & 0xF));
-    strncpy(w->title, text ? text : it->text, sizeof(w->title) - 1);
+    strncpy(w->title, text ? text : it->text, 100 - 1);
     if(w->ctl==CTL_LIST){w->list=calloc(1,sizeof(*w->list));if(!w->list){w->used=0;return 0;}w->list->selected=-1;}
-    w->edit_limit=sizeof(w->title)-1;
+    w->edit_limit=100-1;
     w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
     w->x = DX(it->x); w->y = DY(it->y); w->w = DX(it->cx); w->h = DY(it->cy);
     if (w->w < 1) w->w = 1;
@@ -2909,8 +2936,8 @@ static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
         n=len;if(n>=wp)n=wp-1;fcopy_out(seg,off,w->title,n);wr8(seg,off+n,0);return n;
     }
     if(msg==0x000c){ /* WM_SETTEXT */
-        if(!seg || (u32)off+sizeof(w->title)>65536UL || ((u32)seg<<4)+off+sizeof(w->title)>0x100000UL)return 0;
-        fstrncpy_in(w->title,seg,off,sizeof(w->title));w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
+        if(!seg || (u32)off+100>65536UL || ((u32)seg<<4)+off+100>0x100000UL)return 0;
+        fstrncpy_in(w->title,seg,off,100);w->edit_cursor=w->edit_anchor=(u8)strlen(w->title);
         if(w->visible)paint_control(w);
         return 1;
     }
@@ -2919,7 +2946,7 @@ static u32 control_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
     if(msg==0x0401){a=(u16)lp;b=(u16)(lp>>16); /* EM_SETSEL */
         if(a==0xffff)a=b=w->edit_cursor;
         w->edit_anchor=a>len?len:a;w->edit_cursor=b>len?len:b;return 0;}
-    if(msg==0x0415){w->edit_limit=wp&&wp<sizeof(w->title)?wp:sizeof(w->title)-1;return 0;}
+    if(msg==0x0415){w->edit_limit=wp&&wp<100?wp:100-1;return 0;}
     if(msg==WM_KEYDOWN){
         if(wp==0x24)w->edit_cursor=0;
         else if(wp==0x23)w->edit_cursor=len;
@@ -3095,7 +3122,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
     d->hinst = hinst ? hinst : w16_mod->dgroup;
     d->procoff = procoff; d->procseg = procseg;
     d->defid = IDOK;
-    strncpy(d->title, dtmpl.caption, sizeof(d->title) - 1);
+    strncpy(d->title, dtmpl.caption, 100 - 1);
     d->x = x; d->y = y; d->w = W; d->h = H;
     d->cx = b; d->cy = b + cap; d->cw = W - 2 * b; d->ch = H - 2 * b - cap;
     d->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, d->title, GR_ROOT_WINDOW_ID, x, y, W, H,
@@ -3331,7 +3358,7 @@ u32 u_SetDlgItemText(u16 ss, u16 ap)
         wlog("w16: SetDlgItemText: no control %u in dialog %04x\n", id, hdlg);
         return 0;
     }
-    fstrncpy_in(c->title, seg, off, sizeof(c->title));
+    fstrncpy_in(c->title, seg, off, 100);
     c->edit_cursor=c->edit_anchor=(u8)strlen(c->title);
     vlog("w16: SetDlgItemText(%u, \"%s\")\n", id, c->title);
     if (c->visible)
@@ -3532,6 +3559,9 @@ int user_init(void)
         scr_w = si.cols;
         scr_h = si.rows;
     }
+#ifdef W16_LAZY_UI
+    window_text_shutdown();
+#endif
     memset(wins, 0, sizeof(wins));
     memset(classes, 0, sizeof(classes));
     if (gdi_init())
@@ -3567,6 +3597,9 @@ void user_shutdown(void)
         vlog("w16: destroyed %d window(s) the program left open\n", n);
     while(placements){struct placement *p=placements;placements=p->next;free(p);}
     gdi_shutdown();
+#ifdef W16_LAZY_UI
+    window_text_shutdown();
+#endif
     GrClose();
 }
 
@@ -3640,7 +3673,7 @@ u32 u_DlgDirList(u16 ss,u16 ap)
     fstrncpy_in(spec,seg,off,sizeof(spec));filelist_clear(w->list);
     if(list_directory(w,spec,flags,1)<0){filelist_clear(w->list);paint_control(w);return 0;}
     fcopy_out(seg,off,spec,strlen(spec)+1);paint_control(w);
-    if(t){files_directory_label(path);strncpy(t->title,path,sizeof(t->title)-1);t->title[sizeof(t->title)-1]=0;paint_control(t);}
+    if(t){files_directory_label(path);strncpy(t->title,path,100-1);t->title[100-1]=0;paint_control(t);}
     return 1;
 }
 u32 u_DlgDirSelect(u16 ss,u16 ap)

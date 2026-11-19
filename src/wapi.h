@@ -120,7 +120,11 @@ struct wnd {
     int  x, y, w, h;            /* frame: screen coordinates (controls: parent client coordinates) */
     int  cx, cy, cw, ch;        /* client area inside the frame */
     int  ul, ut, ur, ub;        /* update rectangle, client coordinates */
+#ifdef W16_LAZY_UI
+    char *title;               /* 100 bytes, allocated before the slot is committed */
+#else
     char title[100];
+#endif
     struct filelist *list;
     GR_WINDOW_ID frame, client; /* controls: one Nano-X window, frame == client */
     u16  mdi_active;            /* active child HWND, MDICLIENT only */

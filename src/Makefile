@@ -111,13 +111,13 @@ RO_OBJS = $(addprefix .ro/,$(OBJS))
 .ro/user.o .ro/menu.o: CFLAGS += -fno-inline
 .ro/%.o: %.c w16.h wapi.h api-slots.h int21.h launch.h taskimage.h polygon.h rasterfont-data.h
 	mkdir -p .ro
-	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -DW16_LAZY_UI -c -o $@ $<
 .ro/%.o: %.S w16.h api-slots.h int21.h taskimage.h
 	mkdir -p .ro
-	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -DW16_LAZY_UI -c -o $@ $<
 .ro/taskimage-asm.o: taskimage.S taskimage.h
 	mkdir -p .ro
-	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -c -o $@ $<
+	$(CC) $(CFLAGS) -DW16_SHARED_RODATA -DW16_LAZY_UI -c -o $@ $<
 w16-ro.elf: $(RO_OBJS) $(NANOX_LIB) w16-ne.ld
 	mkdir -p ../build
 	@ne_crt=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-file-name=crt0.o); \
