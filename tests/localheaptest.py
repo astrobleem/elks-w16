@@ -14,10 +14,13 @@ int main(void)
     assert(!seg_alloc(64,&app.dgroup));
     assert(!seg_alloc(80,&dll.dgroup));
     assert(!seg_alloc(8,&ss));
-    app.heap_start=128; app.dgroup_size=512; app.heap=384;
+    app.heap_start=128; app.dgroup_size=512; app.heap=384;app.loaded=1;
     dll.heap_start=224; dll.dgroup_size=1248; dll.heap=1024;dll.loaded=1;
     app.dependencies[0]=&dll;app.nmod=1;w16_mod=&app;
     lheap_init(&app);
+    wr16(ss,32,app.dgroup);assert(k_GetHeapSpaces(ss,32)==0x0180017eUL);
+    app.loaded=0;assert(!k_GetHeapSpaces(ss,32));app.loaded=1;
+    wr16(ss,32,0xffff);assert(!k_GetHeapSpaces(ss,32)&&!k_GetHeapSpaces(ss,0xffff));
     wr16(ss,24,dll.dgroup); /* saved caller DS, ap-8 */
     wr16(ss,32,1024);wr16(ss,34,0);wr16(ss,36,0);
     assert(k_LocalInit(ss,32));
@@ -27,6 +30,11 @@ int main(void)
     for(i=0;i<20;i++)assert(!rd8(dll.dgroup,h1+i));
     wr16(ss,24,app.dgroup);
     h2=k_LocalAlloc(ss,32);assert(h2==130);
+    wr16(ss,32,app.dgroup);assert(k_GetHeapSpaces(ss,32)==0x01800168UL);
+    wr16(ss,32,dll.dgroup);assert(k_GetHeapSpaces(ss,32)==0x040003e8UL);
+    /* Do not report plausible free memory when an arena is corrupt. */
+    wr16(dll.dgroup,246,1);assert(!k_GetHeapSpaces(ss,32));wr16(dll.dgroup,246,1002);
+
     wr16(ss,32,h1);assert(!k_LocalSize(ss,32));
     wr16(ss,24,dll.dgroup);assert(k_LocalSize(ss,32)==20);
     assert(k_LocalLock(ss,32)==h1);assert(!k_LocalFree(ss,32));

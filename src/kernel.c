@@ -311,6 +311,26 @@ void lheap_census(u16 *used, u16 *blocks, u16 *size)
     *size = w16_mod->local_end - w16_mod->local_start;
 }
 
+/* GetHeapSpaces(hModule): LOWORD free local payload bytes, HIWORD heap
+ * extent. Query the selected loaded task/DLL arena, never the loader heap
+ * or an invented system-provider heap. Damaged/uninitialized arenas fail. */
+u32 k_GetHeapSpaces(u16 ss,u16 ap)
+{
+ struct ne_module *m;u16 p,end,freebytes=0;
+ if(ap>0xfffeu||!(m=local_owner(AW(0)))||!m->loaded)return 0;
+ p=m->local_start;end=m->local_end;
+ if(!p||p>=end||end>m->dgroup_size)return 0;
+ while(p<end){
+  u16 hd,sz;
+  if((u32)p+2>end)return 0;
+  hd=rd16(m->dgroup,p);sz=hd&~1u;
+  if(sz<2||(u32)p+sz>end)return 0;
+  if(!(hd&1))freebytes+=sz-2;
+  p+=sz;
+ }
+ return ((u32)(end-m->local_start)<<16)|freebytes;
+}
+
 /* LocalInit(hInstance,start,end). The zero-start DLL startup form passes
  * its NE heap byte count; it must agree with the reserved tail of DGROUP. */
 u32 k_LocalInit(u16 ss,u16 ap)

@@ -68,7 +68,7 @@ u32 k_FreeProcInstance(u16, u16), u_DialogBox(u16, u16), u_EndDialog(u16, u16), 
 u32 u_GetDlgItem(u16, u16), u_GetSystemMetrics(u16, u16), u_EnableWindow(u16, u16);
 u32 u_CheckRadioButton(u16,u16), u_CheckDlgButton(u16,u16), u_IsDlgButtonChecked(u16,u16);
 u32 k_LocalAlloc(u16, u16), k_LocalFree(u16, u16), k_LocalLock(u16, u16), k_LocalUnlock(u16, u16), k_LocalSize(u16, u16);
-u32 k_DirectResAlloc(u16,u16);
+u32 k_DirectResAlloc(u16,u16),k_GetHeapSpaces(u16,u16);
 u32 k_GlobalLock(u16, u16), k_GlobalUnlock(u16, u16), k_GetInstanceData(u16, u16), k_GetProfileInt(u16, u16);
 u32 k_WritePrivateProfileString(u16,u16);
 u32 k_GetPrivateProfileInt(u16,u16), k_GetPrivateProfileString(u16,u16);
@@ -450,6 +450,7 @@ const struct api api_table[] = {
     { U, 84, "DrawIcon", 8, 0, H(u_DrawIcon) },
     { U, 368, "CopyIcon", 4, 0, H(u_CopyIcon) },
     { U, 267, "ShowScrollBar", 6, 0, H(u_ShowScrollBar) },
+    { K, 138, "GetHeapSpaces", 2, 0, H(k_GetHeapSpaces) },
     { K, 168, "DirectResAlloc", 6, 0, H(k_DirectResAlloc) },
     { U, 408, "CreateCursorIconIndirect", 14, 0, H(u_CreateCursorIconIndirect) },
     { U, 458, "DestroyCursor", 2, 0, H(u_DestroyCursor) },
