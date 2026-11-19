@@ -372,6 +372,7 @@ finished:
     w16_setvect(0x21, (u16)old21, (u16)(old21 >> 16));
     user_shutdown();
     kernel_shutdown();
+    session_shutdown();
     {
         u32 bytes = m.total_bytes + dll.total_bytes;
         u16 nseg = m.nseg + dll.nseg;

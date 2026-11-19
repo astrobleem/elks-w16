@@ -1687,6 +1687,33 @@ u32 u_DestroyWindow(u16 ss, u16 ap)
     return 1;
 }
 
+/* Windows 3.0: ExitWindows(DWORD reserved, WORD DOS return code).
+ * Query top-level windows before committing; the default procedure consents.
+ * Keep identities on the stack so callbacks may destroy/reuse window slots.
+ * Single-task session only: other participants cause a truthful refusal. */
+u32 u_ExitWindows(u16 ss,u16 ap)
+{
+ u16 ids[MAXWIN],n=0,i,queried=0,code=AW(0);GR_WINDOW_ID frames[MAXWIN];
+ int agree=1,dialog;struct wnd *w;
+ if(AL(2)||!session_end_begin())return 0;
+ for(i=0;i<MAXWIN;i++)if(wins[i].used&&!wins[i].ctl&&!(wins[i].style&WS_CHILD)) {
+  ids[n]=wins[i].hwnd;frames[n++]=wins[i].frame;
+ }
+ for(i=0;i<n;i++) {
+  queried=i+1;w=win_get(ids[i]);
+  if(w&&w->frame==frames[i]) {
+   /* FALSE from a dialog procedure leaves this to its default handler. */
+   dialog=w->isdialog;
+   if(!win_send(w,WM_QUERYENDSESSION,0,0)&&!dialog){agree=0;break;}
+  }
+ }
+ for(i=0;i<queried;i++) {
+  w=win_get(ids[i]);if(w&&w->frame==frames[i])win_send(w,WM_ENDSESSION,agree,0);
+ }
+ if(!agree){session_end_cancel();return 0;}
+ w16_exit16(code);return 0;
+}
+
 /* Minimal MDI lifecycle. Layout, activation and menu merging remain separate. */
 static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
 {
@@ -1854,6 +1881,7 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
     case 0x000d: case 0x000e: /* WM_GETTEXT / WM_GETTEXTLENGTH */
         return control_message(w,msg,wp,AL(0));
     case WM_QUERYOPEN:
+    case WM_QUERYENDSESSION:
         return 1;
     case WM_CLOSE:
         destroy_window(w);

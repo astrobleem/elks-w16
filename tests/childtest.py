@@ -11,6 +11,7 @@ def func(name):
     return u[m.start():p]+'\n'
 pre='''#include "w16.h"
 #include <assert.h>
+#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -123,8 +124,16 @@ static int blocked(struct wnd*w){return modal_block||actual_blocked(w);}
 static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair,mdi_syslp;
 static u16 mdi_deactivated,mdi_activated,mdi_reenter_on,mdi_reenter_to;
+static jmp_buf session_jump;
+static int end_admit=1,end_queries,end_notifications,end_cancels,end_result;
+static u16 end_veto,end_code;
+int session_end_begin(void){if(!end_admit)return 0;end_admit=0;return 1;}
+void session_end_cancel(void){end_admit=1;end_cancels++;}
+void w16_exit16(u16 code){end_code=code;longjmp(session_jump,1);}
 static u32 drag_message(struct wnd*,u16,u16,u32);
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
+if(m==WM_QUERYENDSESSION){end_queries++;return w->hwnd!=end_veto;}
+if(m==WM_ENDSESSION){end_notifications++;end_result=p;return 0;}
 if(m>=0x22a&&m<=0x22f)return drag_message(w,m,p,l);
 if(m==WM_QUERYOPEN)return query_open;
 if(m==WM_SIZE&&w->hwnd==destroy_on_size){destroy_on_size=0;destroy_window(w);return 0;}
@@ -168,7 +177,7 @@ const char *prof_path(void){return "win.ini";}
 int prof_get(const char*path,const char*app,const char*key,char*out,int n){assert(!strcmp(path,"win.ini")&&!strcmp(app,"windows")&&!strcmp(key,"Beep"));if(!beep_setting)return -1;snprintf(out,n,"%s",beep_setting);return strlen(out);}
 void GrBell(void){bells++;}
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','win_client_origin','top_window','win_by_nx','user_input_blocked','user_window_relative','u_SetSysModalWindow','u_GetSysModalWindow','user_drag_capture','user_drag_alive','user_drag_release','user_drag_next','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','win_client_origin','top_window','win_by_nx','user_input_blocked','user_window_relative','u_SetSysModalWindow','u_GetSysModalWindow','user_drag_capture','user_drag_alive','user_drag_release','user_drag_next','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','u_ExitWindows','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+=func('blocked').replace('blocked(', 'actual_blocked(',1)
 code+=(root/'src/drag.c').read_text().replace('#include \"wapi.h\"','')
 code+='''
@@ -517,8 +526,23 @@ int main(void){u16 id;int x,y;unsigned frame;
   destroy_window(&wins[0]);assert(wins[5].used&&wins[5].ended);destroy_window(&wins[5]);
   assert(!win_get(popup)&&!win_get(owned)&&!win_get(child)&&win_get(other));destroy_window(win_get(other));
  }
+
+ /* Win3 ExitWindows is (reserved DWORD, return WORD), not the later ABI. */
+ memset(wins,0,sizeof(wins));
+ {int i;for(i=0;i<4;i++){wins[i].used=1;wins[i].hwnd=HWND_BASE+i*4;wins[i].frame=100+i;}}
+ wins[2].style=WS_CHILD;wins[3].ctl=1;
+ wr32(0x1000,2,1);wr16(0x1000,0,0x1234);assert(!u_ExitWindows(0x1000,0)&&!end_queries);
+ wr32(0x1000,2,0);end_admit=0;assert(!u_ExitWindows(0x1000,0)&&!end_queries);end_admit=1;
+ end_veto=wins[1].hwnd;assert(!u_ExitWindows(0x1000,0));
+ assert(end_queries==2&&end_notifications==2&&!end_result&&end_cancels==1&&end_admit);
+ wr16(0x1000,6,WM_QUERYENDSESSION);wr16(0x1000,8,wins[0].hwnd);
+ assert(u_DefWindowProc(0x1000,0)==1);
+ end_veto=0;end_queries=end_notifications=0;
+ if(!setjmp(session_jump)){u_ExitWindows(0x1000,0);abort();}
+ assert(end_code==0x1234&&end_queries==2&&end_notifications==2&&end_result==1);
+ memset(wins,0,sizeof(wins));
  drag_protocol();
- puts("Window tree, MDI, drag protocol, system modality and bell policy checks passed");return 0;}
+ puts("Window tree, MDI, drag protocol, system modality, ordered session exit/veto and bell policy checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
     p=pathlib.Path(td);(p/'test.c').write_text(code)

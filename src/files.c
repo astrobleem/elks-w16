@@ -1,5 +1,6 @@
 /* Win16 file APIs. Guest handles are never ELKS descriptors. DOS C: is rooted
  * at the task's working directory; paths cannot escape through .. or links. */
+#include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -345,4 +346,22 @@ u32 k_GetTempFileName(u16 ss,u16 ap)
         if(errno!=EEXIST) return 0;
     }
     return 0;
+}
+
+/* There is no implicit Windows installation in a mapped DOS drive. Require
+ * an explicitly configured absolute DOS path, and verify its real directory
+ * under the existing drive mapping without changing the logical cwd. */
+u32 k_GetWindowsDirectory(u16 ss,u16 ap)
+{
+ char native[PATHLEN],dos[PATHLEN];const char *configured=getenv("W16WINDIR");
+ u16 size=AW(0),off=AW(2),seg=AW(4),n,i;
+ if(!configured||(configured[0]!='C'&&configured[0]!='c')||configured[1]!=':'||
+    (configured[2]!='\\'&&configured[2]!='/')||files_directory(configured,native,0))return 0;
+ strcpy(dos,"C:\\");
+ if(strcmp(native,"."))strcat(dos,native);
+ for(i=3;dos[i];i++)if(dos[i]=='/')dos[i]='\\';
+ n=strlen(dos);
+ if(size<=n)return n+1;
+ if(!far_range(seg,off,n+1))return 0;
+ fcopy_out(seg,off,dos,n+1);return n;
 }

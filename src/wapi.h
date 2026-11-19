@@ -13,6 +13,8 @@
 #define WM_ENABLE        0x000A
 #define WM_PAINT         0x000F
 #define WM_CLOSE         0x0010
+#define WM_QUERYENDSESSION 0x0011
+#define WM_ENDSESSION    0x0016
 #define WM_QUIT          0x0012
 #define WM_ERASEBKGND    0x0014
 #define WM_SHOWWINDOW    0x0018
