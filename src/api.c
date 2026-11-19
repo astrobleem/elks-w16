@@ -88,7 +88,7 @@ u32 k_GetCurPID(u16,u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetClassWord(u16,u16);
-u32 u_DefMDIChildProc(u16,u16);
+u32 u_DefMDIChildProc(u16,u16),u_TranslateMDISysAccel(u16,u16);
 u32 u_GetParent(u16,u16),u_GetWindow(u16,u16),u_SetActiveWindow(u16,u16);
 u32 u_GetWindowWord(u16,u16),u_SetWindowWord(u16,u16);
 u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
@@ -436,6 +436,7 @@ const struct api api_table[] = {
     { U, 437, "AnsiUpperBuff", 6, 0, H(u_AnsiUpperBuff) },
     { U, 46, "GetParent", 2, 0, H(u_GetParent) },
     { U, 262, "GetWindow", 4, 0, H(u_GetWindow) },
+    { U, 451, "TranslateMDISysAccel", 6, 0, H(u_TranslateMDISysAccel) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];

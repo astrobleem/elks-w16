@@ -32,7 +32,13 @@ static void GrGetWindowInfo(unsigned id,GR_WINDOW_INFO *i){assert(id<700);*i=nat
 #define CLASS_MDICLIENT (-2)
 #define WM_MDICREATE 0x0220
 #define WM_MDIDESTROY 0x0221
+#define WM_MDIACTIVATE 0x0222
+#define WM_MDINEXT 0x0224
+#define WM_MDIGETACTIVE 0x0229
 #define SC_CLOSE 0xf060
+#define MWKMOD_CTRL 1
+#define MWKMOD_SHIFT 2
+#define MWKMOD_ALT 4
 #define CAPH 14
 #define DESKTOP_HWND 1
 #define MENUH 16\n#define SCROLLBAR_SIZE 16
@@ -65,7 +71,11 @@ static u16 lastmsg;static u32 lastlp;
 unsigned GrNewWindowEx(unsigned p,const char*t,unsigned parent,int x,int y,int w,int h,unsigned c){(void)p;(void)t;(void)x;(void)y;(void)w;(void)h;(void)c;frame_parent=parent;createdx=x;createdy=y;return fail_frame?0:nextid++;}
 unsigned GrNewWindow(unsigned p,int x,int y,int w,int h,int b,unsigned c,unsigned bc){assert(w>0&&h>0);(void)p;(void)x;(void)y;(void)w;(void)h;(void)b;(void)c;(void)bc;return fail_client?0:nextid++;}
 void GrMoveWindow(unsigned w,int x,int y){(void)w;movex=x;movey=y;moves++;}
-void GrDestroyWindow(unsigned w){destroyed[ndestroy++]=w;}
+static void native_unlink(unsigned w){unsigned p=native_info[w].parent,*n;
+ if(!p)return;
+ n=&native_info[p].child;while(*n&&*n!=w)n=&native_info[*n].sibling;
+ if(*n==w)*n=native_info[w].sibling;}
+void GrDestroyWindow(unsigned w){native_unlink(w);destroyed[ndestroy++]=w;}
 void GrSelectEvents(unsigned w,unsigned m){(void)w;(void)m;}
 static int classcalls;void cursor_class(unsigned f,unsigned c,u16 h){(void)f;(void)c;(void)h;classcalls++;}
 void cursor_attach(unsigned f,unsigned c){(void)f;(void)c;}
@@ -73,7 +83,9 @@ void GrMapWindow(unsigned w){maps[w]++;}
 void GrUnmapWindow(unsigned w){unmaps[w]++;}
 void GrResizeWindow(unsigned w,int x,int y){assert(x>0&&y>0);sizes[w][0]=x;sizes[w][1]=y;}
 static unsigned raised,lowered;
-void GrRaiseWindow(unsigned w){raised=w;}void GrLowerWindow(unsigned w){lowered=w;}
+void GrRaiseWindow(unsigned w){unsigned p=native_info[w].parent;raised=w;
+ if(p){native_unlink(w);native_info[w].sibling=native_info[p].child;native_info[p].child=w;}}void GrLowerWindow(unsigned w){unsigned p=native_info[w].parent,*n;lowered=w;
+ if(p){native_unlink(w);n=&native_info[p].child;while(*n)n=&native_info[*n].sibling;*n=w;native_info[w].sibling=0;}}
 void GrSetFocus(unsigned w){nx_focus=w;}
 
 static u32 mdi_message(struct wnd*,u16,u16,u32);
@@ -82,20 +94,34 @@ u32 u_DefWindowProc(u16,u16);
 struct dc { int paint; struct wnd *w; };
 static struct dc *dc_get(u16 h){(void)h;return NULL;}
 static void gdi_fill(unsigned w,unsigned c,int x,int y,int wd,int ht){(void)w;(void)c;(void)x;(void)y;(void)wd;(void)ht;}
+static u16 key_mods,mdi_serial;
+static int mdi_default_commands=1;
+u32 u_DefMDIChildProc(u16,u16);
+static struct wnd *mdi_child(struct wnd*);
+static int mdi_activate(struct wnd*,u16);
+static int mdi_eligible(struct wnd*,struct wnd*);
+static void mdi_release(struct wnd*);
+static u16 set_focus(struct wnd*);
 static u16 activation_serial;
 static u16 reenter_on,reenter_to;static unsigned activation_events;
 u32 u_SetActiveWindow(u16,u16);
 static int modal_block;
 static int blocked(struct wnd*w){(void)w;return modal_block;}
 static unsigned create_fail,extra_creates,extra_destroys;
-static u16 senthw,sentm,sentp;static u32 sentl;
+static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair;
+static u16 mdi_deactivated,mdi_activated,mdi_reenter_on,mdi_reenter_to;
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
 if(m==6||m==0x86)activation_events++;
+if(m==WM_CREATE)createarg=l;
+if(m==WM_MDIACTIVATE){mdi_pair=l;if(p)mdi_activated=w->hwnd;else mdi_deactivated=w->hwnd;
+ if(!p&&w->hwnd==mdi_reenter_on){mdi_reenter_on=0;mdi_activate(&wins[(w->parent-HWND_BASE)/4],mdi_reenter_to);}}
 if(m==6&&!p&&w->hwnd==reenter_on){reenter_on=0;wr16(0x1000,0,reenter_to);u_SetActiveWindow(0x1000,0);}
 if(w->cls==CLASS_MDICLIENT)return mdi_message(w,m,p,l);
 if(w->extra&&m==WM_CREATE){assert(w->extra[0]==0&&w->extra[1]==0);w->extra[0]=0x34;w->extra[1]=0x12;extra_creates++;}
 if(w->extra&&m==WM_NCDESTROY){assert(w->extra[0]);extra_destroys++;}
 if(create_fail&&m==WM_CREATE)return 0xffffffffUL;
+if(mdi_default_commands && (m==WM_CLOSE||m==WM_SYSCOMMAND) && w->parent && wins[(w->parent-HWND_BASE)/4].cls==CLASS_MDICLIENT) {
+ wr32(0x1000,0x400,l);wr16(0x1000,0x404,p);wr16(0x1000,0x406,m);wr16(0x1000,0x408,w->hwnd);return u_DefMDIChildProc(0x1000,0x400);}
 senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
 void scrollbar_forget(u16 w){(void)w;}\nvoid caret_destroy(u16 w){(void)w;} void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
@@ -103,7 +129,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -194,7 +220,7 @@ int main(void){u16 id;int x,y;unsigned frame;
    assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
  }
  /* A real built-in MDI client and a decorated registered group child. */
- {u16 mdi,group;struct wnd *c,*g;
+ {u16 mdi,group,second,third,pane;struct wnd *c,*g,*g2,*g3;
   strcpy((char*)host_ptr(0x2000,0,16),"mDiClIeNt");
   wr16(0x2000,32,0);wr16(0x2000,34,1000);
   setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,280,150);
@@ -207,11 +233,65 @@ int main(void){u16 id;int x,y;unsigned frame;
   group=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(group);g=win_get(group);
   assert(g->parent==mdi&&frame_parent==c->client&&g->id==1000&&g->visible);
   assert((g->style&WS_CAPTION)==WS_CAPTION&&g->x==5&&g->y==6&&g->cw==174);
-  assert(rd32(w16_app_ss,(u16)lastlp)==0x20000040UL); /* CREATESTRUCT.lpCreateParams */
+  assert(rd32(w16_app_ss,(u16)createarg)==0x20000040UL); /* CREATESTRUCT.lpCreateParams */
   assert(g->extra[0]==0x34&&g->extra[1]==0x12);
+  assert(win_send(c,WM_MDIGETACTIVE,0,0)==group&&mdi_activated==group);
+  second=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(second&&second!=group);g2=win_get(second);
+  assert(c->mdi_active==second);
+  native_info[c->client].wid=c->client;native_info[c->client].child=g2->frame;
+  native_info[g2->frame].wid=g2->frame;native_info[g2->frame].parent=c->client;native_info[g2->frame].sibling=g->frame;
+  native_info[g->frame].wid=g->frame;native_info[g->frame].parent=c->client;
+  third=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(third);g3=win_get(third);
+  native_info[g3->frame].wid=g3->frame;native_info[g3->frame].parent=c->client;
+  native_info[g3->frame].sibling=native_info[c->client].child;native_info[c->client].child=g3->frame;
+  win_send(c,WM_MDIACTIVATE,group,0);
+  win_send(c,WM_MDINEXT,group,0);assert(c->mdi_active==third);
+  win_send(c,WM_MDINEXT,third,0);assert(c->mdi_active==second);
+  win_send(c,WM_MDINEXT,second,0);assert(c->mdi_active==group);
+  win_send(c,WM_MDINEXT,group,1);assert(c->mdi_active==second);
+  win_send(c,WM_MDINEXT,second,1);assert(c->mdi_active==third);
+  win_send(c,WM_MDINEXT,third,1);assert(c->mdi_active==group);
+  win_send(c,WM_MDIDESTROY,third,0);assert(!win_get(third)&&c->mdi_active==group);
+  win_send(c,WM_MDIACTIVATE,second,0);
+  win_send(c,WM_MDIACTIVATE,group,0);
+  assert(c->mdi_active==group&&mdi_deactivated==second&&mdi_activated==group&&mdi_pair==(((u32)second<<16)|group));
+  win_send(c,WM_MDINEXT,group,0);assert(c->mdi_active==second);
+  win_send(c,WM_MDINEXT,second,1);assert(c->mdi_active==group);
+  win_send(c,WM_MDIACTIVATE,HWND_BASE,0);assert(c->mdi_active==group);
+  win_send(c,WM_MDINEXT,HWND_BASE,0);assert(c->mdi_active==group);
+  wr16(0x1000,0,0);wr16(0x1000,2,group);u_ShowWindow(0x1000,0);
+  assert(c->mdi_active==second&&!g->visible);
+  wr16(0x1000,0,8);u_ShowWindow(0x1000,0);assert(g->visible&&c->mdi_active==second);
+  setup(WS_CHILD|WS_VISIBLE,group,1,1,20,20);pane=u_CreateWindow(0x1000,0);assert(pane&&c->mdi_active==second);
+  nx_focus=g2->client;focus_hwnd=second;wr16(0x1000,0,pane);u_SetFocus(0x1000,0);
+  assert(c->mdi_active==group&&nx_focus==win_get(pane)->client&&senthw==pane&&sentm==WM_SETFOCUS&&sentp==group);
+  wr16(0x1000,0,1);wr16(0x1000,2,group);u_ShowWindow(0x1000,0);assert(c->mdi_active==group);
+  wr16(0x1000,0,0x97);wr16(0x1000,12,group);u_SetWindowPos(0x1000,0);assert(!g->visible&&c->mdi_active==second);
+  wr16(0x1000,0,0x57);u_SetWindowPos(0x1000,0);assert(g->visible&&c->mdi_active==second);
+  wr16(0x1000,6,group);wr16(0x1000,4,(u16)-16);wr32(0x1000,0,g->style|WS_DISABLED);u_SetWindowLong(0x1000,0);
+  win_send(c,WM_MDIACTIVATE,group,0);assert(c->mdi_active==second);g->style&=~WS_DISABLED;
+  nx_focus=77;focus_hwnd=HWND_BASE;wr16(0x1000,0,group);u_SetFocus(0x1000,0);
+  assert(c->mdi_active==group&&nx_focus==g->client);
+  wr16(0x1000,6,group);wr16(0x1000,4,(u16)-16);wr32(0x1000,0,g->style|WS_DISABLED);u_SetWindowLong(0x1000,0);
+  assert(c->mdi_active==second);g->style&=~WS_DISABLED;wr16(0x1000,0,group);u_SetFocus(0x1000,0);assert(c->mdi_active==group);
+  mdi_reenter_on=group;mdi_reenter_to=group;win_send(c,WM_MDIACTIVATE,second,0);assert(c->mdi_active==group);
   win_send(c,WM_MDIDESTROY,HWND_BASE,0);assert(wins[0].used&&g->used);
-  wr32(0x1000,0,0);wr16(0x1000,4,0);wr16(0x1000,6,WM_CLOSE);wr16(0x1000,8,group);
-  u_DefMDIChildProc(0x1000,0);assert(!win_get(group)&&win_get(mdi)&&wins[0].used&&!g->extra);
+  /* Use frame-addressed MSGs, as Progman's main message loop does. */
+  wr16(0x1000,0,0x300);wr16(0x1000,2,0x2000);wr16(0x1000,4,mdi);
+  wr16(0x2000,0x300,HWND_BASE);wr16(0x2000,0x302,WM_KEYDOWN);wr16(0x2000,0x304,9);
+  key_mods=0;assert(!u_TranslateMDISysAccel(0x1000,0));
+  key_mods=MWKMOD_CTRL|MWKMOD_ALT;assert(!u_TranslateMDISysAccel(0x1000,0));
+  key_mods=MWKMOD_CTRL;assert(u_TranslateMDISysAccel(0x1000,0)&&c->mdi_active==second);
+  key_mods|=MWKMOD_SHIFT;wr16(0x2000,0x304,0x75);assert(u_TranslateMDISysAccel(0x1000,0)&&c->mdi_active==group);
+  wr16(0x2000,0x304,0x76);assert(!u_TranslateMDISysAccel(0x1000,0));
+  wr16(0x2000,0x304,0x73);wr16(0x2000,0x302,WM_KEYUP);assert(!u_TranslateMDISysAccel(0x1000,0));
+  wr16(0x2000,0x302,WM_SYSKEYDOWN);key_mods=MWKMOD_CTRL;mdi_default_commands=0;
+  assert(u_TranslateMDISysAccel(0x1000,0)&&win_get(group)&&c->mdi_active==group); /* application veto */
+  mdi_default_commands=1;assert(u_TranslateMDISysAccel(0x1000,0)&&!win_get(group)&&c->mdi_active==second&&!g->extra);
+  assert(!u_TranslateMDISysAccel(0x1000,0xffff));
+  wr32(0x1000,0,0);wr16(0x1000,4,0);wr16(0x1000,6,WM_CLOSE);
+  wr16(0x1000,8,second);u_DefMDIChildProc(0x1000,0);
+  assert(!win_get(second)&&!c->mdi_active&&win_get(mdi)&&wins[0].used);
   destroy_window(c);assert(!win_get(mdi)&&wins[0].used);
  }
  /* Native sibling order deliberately differs from allocation order and

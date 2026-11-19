@@ -16,8 +16,16 @@
 #define CLASS_MDICLIENT (-2)
 #define WM_MDICREATE 0x0220
 #define WM_MDIDESTROY 0x0221
+#define WM_MDIACTIVATE 0x0222
+#define WM_MDINEXT 0x0224
+#define WM_MDIGETACTIVE 0x0229
 static u32 mdi_message(struct wnd *,u16,u16,u32);
 static int valid_coords(u16,u16,u16);
+static struct wnd *mdi_child(struct wnd *);
+static int mdi_activate(struct wnd *,u16);
+static void mdi_release(struct wnd *);
+static u16 set_focus(struct wnd *);
+static u16 mdi_serial;
 u32 u_CreateWindow(u16,u16),u_DefWindowProc(u16,u16);
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
@@ -89,11 +97,10 @@ u32 u_GetParent(u16 ss,u16 ap)
 
 /* Native order includes foreign windows and non-HWND frame/client surfaces.
  * Enumerate only this task's matching frame windows, without slot-order guesses. */
-u32 u_GetWindow(u16 ss,u16 ap)
+static u16 window_relative(u16 hwnd,u16 cmd)
 {
- struct wnd *w,*p;GR_WINDOW_INFO info;GR_WINDOW_ID native,id;u16 hwnd,cmd,parent,previous=0,last=0;int i,seen=0;
- if(ap>0xfffcu)return 0;
- cmd=AW(0);hwnd=AW(2);w=win_get(hwnd);
+ struct wnd *w,*p;GR_WINDOW_INFO info;GR_WINDOW_ID native,id;u16 parent,previous=0,last=0;int i,seen=0;
+ w=win_get(hwnd);
  if(!w && hwnd!=DESKTOP_HWND)return 0;
  if(cmd==4)return w?w->owner:0; /* GW_OWNER */
  if(cmd==5) {parent=hwnd==DESKTOP_HWND?0:hwnd;native=w?w->client:GR_ROOT_WINDOW_ID;cmd=0;}
@@ -117,6 +124,9 @@ u32 u_GetWindow(u16 ss,u16 ap)
  return cmd==1?last:0;
 }
 
+u32 u_GetWindow(u16 ss,u16 ap)
+{ return ap>0xfffcu?0:window_relative(AW(2),AW(0)); }
+
 /* GWL_STYLE and GWL_WNDPROC are DWORD values even in 16-bit Windows.
  * A style write alone does not move, resize or recreate the native frame. */
 u32 u_GetWindowLong(u16 ss,u16 ap)
@@ -133,7 +143,7 @@ u32 u_SetWindowLong(u16 ss,u16 ap)
     struct wnd *w; i16 index; u32 old,v;
     if(ap>0xfff8u) return 0;
     w=win_get(AW(6)); index=(i16)AW(4); v=AL(0); if(!w) return 0;
-    if(index==-16) {old=w->style; w->style=v; return old;}
+    if(index==-16) {old=w->style; w->style=v; if(v&WS_DISABLED)mdi_release(w); return old;}
     if(index==-4 && v) {
         old=((u32)w->procseg<<16)|w->procoff;
         w->procoff=(u16)v; w->procseg=(u16)(v>>16);return old;
@@ -664,6 +674,9 @@ static void translate_event(GR_EVENT *ev)
         }
         if (!w || blocked(w))
             break;
+        if(down && mdi_child(w)) {
+            u16 hwnd=w->hwnd;set_focus(w);w=win_get(hwnd);if(!w)break;
+        }
         if(w->ctl==CTL_LIST && down && w->list){
             int row=(ev->button.y-2)/12+w->list->top;
             focus_hwnd=w->hwnd;GrSetFocus(w->frame);
@@ -970,8 +983,7 @@ u32 u_BringWindowToTop(u16 ss,u16 ap)
     if(!w)return 0;
     GrRaiseWindow(w->frame);
     if(w->visible&&!(w->style&WS_DISABLED)&&!blocked(w)){
-        focus_hwnd=w->hwnd;
-        GrSetFocus(w->ctl?w->frame:w->client);
+        set_focus(w);
     }
     return 1;
 }
@@ -1162,8 +1174,9 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         if (w->w && w->h) GrMapWindow(w->frame);
         w->visible = 1;
         win_invalidate_all(w, 1);
+        if(pw && pw->cls==CLASS_MDICLIENT)mdi_activate(pw,w->hwnd);
     }
-    return w->hwnd;
+    return w->used?w->hwnd:0;
 }
 
 /* MoveWindow(hwnd, x, y, width, height, repaint). Empty Win16 clients
@@ -1228,7 +1241,8 @@ u32 u_SetWindowPos(u16 ss,u16 ap)
         w->visible=1;w->style|=WS_VISIBLE;
         if(!(flags&8))win_invalidate_all(w,1);
     }
-    if(!(flags&0x10)&&w->visible){focus_hwnd=hwnd;GrSetFocus(w->client);}
+    if(flags&0x80)mdi_release(w);
+    w=win_get(hwnd);if(!(flags&0x10)&&w&&w->visible)set_focus(w);
     return 1;
 }
 
@@ -1237,15 +1251,80 @@ u32 u_SetWindowPos(u16 ss,u16 ap)
  * editing child. A reentrant SetFocus from WM_KILLFOCUS wins. */
 static u16 set_focus(struct wnd *w)
 {
-    u16 prev=focus_hwnd, target=w?w->hwnd:0;
-    struct wnd *old=win_get(prev);
-    if(prev==target)return prev;
+    u16 prev=focus_hwnd, target=w?w->hwnd:0,notified;
+    struct wnd *old=win_get(prev),*child=mdi_child(w);
+    if(child) {
+        struct wnd *c=win_get(child->parent);
+        if(c->mdi_active!=child->hwnd && !mdi_activate(c,child->hwnd))return prev;
+        w=win_get(target);if(!w)return prev;
+    }
+    if(focus_hwnd==target)return prev;
+    notified=focus_hwnd;old=win_get(notified);
     focus_hwnd=target;
     if(old)win_send(old,0x0008,target,0); /* WM_KILLFOCUS */
     if(focus_hwnd!=target)return prev;
     w=win_get(target);
-    if(w){GrSetFocus(w->ctl?w->frame:w->client);win_send(w,WM_SETFOCUS,prev,0);}
+    if(w){GrSetFocus(w->ctl?w->frame:w->client);win_send(w,WM_SETFOCUS,notified,0);}
     return prev;
+}
+
+/* One state word per client; Win16 WM_MDIACTIVATE uses a BOOL wParam and
+ * MAKELONG(activating, deactivating), unlike the Win32 message convention. */
+static struct wnd *mdi_child(struct wnd *w)
+{
+ int n;struct wnd *p;
+ for(n=0;w&&n<MAXWIN;n++,w=p) {
+  p=win_get(w->parent);if(!p)return 0;
+  if(p->cls==CLASS_MDICLIENT)return w;
+ }
+ return 0;
+}
+static int mdi_eligible(struct wnd *c,struct wnd *w)
+{ return w && w->parent==c->hwnd && !w->ctl && !w->active && w->visible && !(w->style&WS_DISABLED); }
+static u16 mdi_successor(struct wnd *c,u16 exclude,int reverse)
+{
+ u16 first=window_relative(c->hwnd,5),h;struct wnd *w=win_get(exclude);
+ int wrapped=0;
+ if(exclude&&(!w||w->parent!=c->hwnd))return 0;
+ h=exclude?window_relative(exclude,reverse?3:2):(reverse&&first?window_relative(first,1):first);
+ for(;;) {
+  if(!h) {if(wrapped)return 0;wrapped=1;h=reverse&&first?window_relative(first,1):first;if(!h)return 0;}
+  if(h==exclude)return 0;
+  if(mdi_eligible(c,win_get(h)))return h;
+  h=window_relative(h,reverse?3:2);
+ }
+}
+static int mdi_activate(struct wnd *c,u16 hwnd)
+{
+ struct wnd *w,*old;u16 before,serial,client;u32 pair;int isclient,focused;
+ if(!c || !c->used || c->cls!=CLASS_MDICLIENT || c->active)return 0;
+ if(hwnd&&!mdi_eligible(c,win_get(hwnd)))return 0;
+ before=c->mdi_active;if(before==hwnd)return 1;
+ client=c->hwnd;serial=++mdi_serial;pair=((u32)before<<16)|hwnd;
+ focused=top_window(win_by_nx(GrGetFocus(),&isclient))==top_window(c);
+ c->mdi_active=hwnd;
+ old=win_get(before);if(old)win_send(old,0x0086,0,0);
+ if(serial!=mdi_serial || !win_get(client) || c->active)return 0;
+ old=win_get(before);if(old)win_send(old,WM_MDIACTIVATE,0,pair);
+ if(serial!=mdi_serial || !win_get(client) || c->active)return 0;
+ w=win_get(hwnd);
+ if(hwnd) {
+  if(!mdi_eligible(c,w)) {c->mdi_active=0;return 0;}
+  GrRaiseWindow(w->frame);win_send(w,0x0086,1,0);
+  if(serial!=mdi_serial || !win_get(client) || c->active)return 0;
+  w=win_get(hwnd);if(!mdi_eligible(c,w)){c->mdi_active=0;return 0;}
+  win_send(w,WM_MDIACTIVATE,1,pair);
+ }
+ if(serial!=mdi_serial || !win_get(client) || c->active)return 0;
+ if(focused) {w=hwnd?win_get(hwnd):c;if(w)set_focus(w);}
+ return c->mdi_active==hwnd;
+}
+static void mdi_release(struct wnd *w)
+{
+ struct wnd *c=w?win_get(w->parent):0;
+ if(!c || c->cls!=CLASS_MDICLIENT || c->mdi_active!=w->hwnd)return;
+ if(c->active){c->mdi_active=0;return;}
+ mdi_activate(c,mdi_successor(c,w->hwnd,0));
 }
 
 /* ShowWindow(hwnd, nCmdShow) */
@@ -1260,6 +1339,7 @@ u32 u_ShowWindow(u16 ss, u16 ap)
     if (cmd == 0) {
         GrUnmapWindow(w->frame);
         w->visible = 0; w->style &= ~WS_VISIBLE;
+        mdi_release(w);
         return prev;
     }
     if (w->cw && w->ch) GrMapWindow(w->client);
@@ -1270,7 +1350,11 @@ u32 u_ShowWindow(u16 ss, u16 ap)
         win_send(w, WM_SIZE, 0, ((u32)w->ch << 16) | (u16)w->cw);
     }
     win_invalidate_all(w, 1);
-    if(!w->parent && cmd!=4 && cmd!=8)set_focus(w);
+    if(cmd!=4 && cmd!=8) {
+        struct wnd *child=mdi_child(w);
+        if(child==w)mdi_activate(win_get(w->parent),w->hwnd);
+        else if(!w->parent)set_focus(w);
+    }
     return prev;
 }
 
@@ -1298,6 +1382,7 @@ static void destroy_window(struct wnd *w)
     if (w->active)                      /* already being destroyed (re-entered from WM_DESTROY) */
         return;
     w->active = 1;
+    mdi_release(w);
     vlog("w16: DestroyWindow %04x\n", hwnd);
     win_send(w, WM_DESTROY, 0, 0);
     for (i = 0; i < MAXWIN; i++)
@@ -1342,6 +1427,23 @@ static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
     u16 ss=w16_app_ss,save=w16_app_sp,ap,off=(u16)lp,seg=(u16)(lp>>16),id;
     u32 style,r; int x,y,wd,h,i,tries;
     struct wnd *child;
+    if(msg==WM_MDIGETACTIVE)return w->mdi_active; /* no maximized children in this runtime */
+    if(msg==WM_MDIACTIVATE){mdi_activate(w,wp);return 0;}
+    if(msg==WM_MDINEXT) {
+        u16 current=wp?wp:w->mdi_active;
+        id=mdi_successor(w,current,lp!=0);
+        if(id) {
+            child=win_get(current);
+            /* Forward cycling rotates the old child to the bottom; simply
+             * raising the successor would toggle the first two forever. */
+            if(!lp && child)GrLowerWindow(child->frame);
+            mdi_activate(w,id);
+        }
+        return 0;
+    }
+    if(msg==WM_SETFOCUS && w->mdi_active) {
+        child=win_get(w->mdi_active);if(mdi_eligible(w,child))set_focus(child);return 0;
+    }
     if(msg==WM_MDIDESTROY) {
         child=win_get(wp);
         if(child && !child->ctl && child->parent==w->hwnd)destroy_window(child);
@@ -1371,11 +1473,31 @@ static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
         wr16(ss,ap+10,h);wr16(ss,ap+12,wd);wr16(ss,ap+14,y);wr16(ss,ap+16,x);
         wr32(ss,ap+18,style);wr32(ss,ap+22,rd32(seg,off+4));wr32(ss,ap+26,rd32(seg,off));
         w16_app_sp=ap;r=u_CreateWindow(ss,ap);w16_app_sp=save;
+        child=win_get((u16)r);if(mdi_eligible(w,child))mdi_activate(w,(u16)r);
         return r;
     }
     if(save<16)return 0;
     ap=save-12;wr32(ss,ap,lp);wr16(ss,ap+4,wp);wr16(ss,ap+6,msg);wr16(ss,ap+8,w->hwnd);
     w16_app_sp=ap;r=u_DefWindowProc(ss,ap);w16_app_sp=save;return r;
+}
+
+/* Win3.0 consumes Ctrl+F4 and Ctrl+Tab/F6 only. Dispatch a system command
+ * through the application's child procedure, so it can handle or veto it. */
+u32 u_TranslateMDISysAccel(u16 ss,u16 ap)
+{
+ struct wnd *c,*child;u16 off,seg,msg,key,command;
+ if(ap>0xfffau)return 0;
+ off=AW(0);seg=AW(2);c=win_get(AW(4));
+ if(!c || c->cls!=CLASS_MDICLIENT || c->active || !valid_coords(seg,off,18))return 0;
+ child=win_get(c->mdi_active);
+ if(!mdi_eligible(c,child) || blocked(child) || !(key_mods&MWKMOD_CTRL) || (key_mods&MWKMOD_ALT))return 0;
+ msg=rd16(seg,off+2);if(msg!=WM_KEYDOWN&&msg!=WM_SYSKEYDOWN)return 0;
+ key=rd16(seg,off+4);
+ if(key==0x73)command=SC_CLOSE;
+ else if(key==9 || key==0x75)command=0xf040; /* SC_NEXTWINDOW; Shift interpreted by child default proc */
+ else return 0;
+ win_send(child,WM_SYSCOMMAND,command,key);
+ return 1;
 }
 
 /* The default child procedure closes through its MDI client, preserving siblings. */
@@ -1386,6 +1508,11 @@ u32 u_DefMDIChildProc(u16 ss,u16 ap)
     w=win_get(AW(8));parent=w?win_get(w->parent):0;
     if(!parent || parent->cls!=CLASS_MDICLIENT)return 0;
     if(AW(6)==WM_CLOSE)return mdi_message(parent,WM_MDIDESTROY,w->hwnd,0);
+    if(AW(6)==WM_SYSCOMMAND) {
+        u16 command=AW(4)&0xfff0u;
+        if(command==0xf040 || command==0xf050)
+            return mdi_message(parent,WM_MDINEXT,w->hwnd,command==0xf050 || (key_mods&MWKMOD_SHIFT));
+    }
     return u_DefWindowProc(ss,ap);
 }
 
@@ -2677,6 +2804,7 @@ u32 u_EnableWindow(u16 ss, u16 ap)
         w->style &= ~WS_DISABLED;
     else {
         w->style |= WS_DISABLED;
+        mdi_release(w);if(!w->used)return was_disabled;
         w->pressed = 0;
         if (capture_hwnd == w->hwnd)
             capture_hwnd = 0;
