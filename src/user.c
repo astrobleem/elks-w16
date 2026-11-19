@@ -1496,7 +1496,7 @@ u32 u_TranslateMDISysAccel(u16 ss,u16 ap)
  if(key==0x73)command=SC_CLOSE;
  else if(key==9 || key==0x75)command=0xf040; /* SC_NEXTWINDOW; Shift interpreted by child default proc */
  else return 0;
- win_send(child,WM_SYSCOMMAND,command,key);
+ win_send(child,WM_SYSCOMMAND,command,0x00010000UL|key); /* Win3 accelerator-origin flag */
  return 1;
 }
 

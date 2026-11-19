@@ -108,9 +108,10 @@ u32 u_SetActiveWindow(u16,u16);
 static int modal_block;
 static int blocked(struct wnd*w){(void)w;return modal_block;}
 static unsigned create_fail,extra_creates,extra_destroys;
-static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair;
+static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair,mdi_syslp;
 static u16 mdi_deactivated,mdi_activated,mdi_reenter_on,mdi_reenter_to;
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
+if(m==WM_SYSCOMMAND)mdi_syslp=l;
 if(m==6||m==0x86)activation_events++;
 if(m==WM_CREATE)createarg=l;
 if(m==WM_MDIACTIVATE){mdi_pair=l;if(p)mdi_activated=w->hwnd;else mdi_deactivated=w->hwnd;
@@ -281,12 +282,12 @@ int main(void){u16 id;int x,y;unsigned frame;
   wr16(0x2000,0x300,HWND_BASE);wr16(0x2000,0x302,WM_KEYDOWN);wr16(0x2000,0x304,9);
   key_mods=0;assert(!u_TranslateMDISysAccel(0x1000,0));
   key_mods=MWKMOD_CTRL|MWKMOD_ALT;assert(!u_TranslateMDISysAccel(0x1000,0));
-  key_mods=MWKMOD_CTRL;assert(u_TranslateMDISysAccel(0x1000,0)&&c->mdi_active==second);
+  key_mods=MWKMOD_CTRL;assert(u_TranslateMDISysAccel(0x1000,0)&&c->mdi_active==second&&mdi_syslp==0x00010009UL);
   key_mods|=MWKMOD_SHIFT;wr16(0x2000,0x304,0x75);assert(u_TranslateMDISysAccel(0x1000,0)&&c->mdi_active==group);
   wr16(0x2000,0x304,0x76);assert(!u_TranslateMDISysAccel(0x1000,0));
   wr16(0x2000,0x304,0x73);wr16(0x2000,0x302,WM_KEYUP);assert(!u_TranslateMDISysAccel(0x1000,0));
   wr16(0x2000,0x302,WM_SYSKEYDOWN);key_mods=MWKMOD_CTRL;mdi_default_commands=0;
-  assert(u_TranslateMDISysAccel(0x1000,0)&&win_get(group)&&c->mdi_active==group); /* application veto */
+  assert(u_TranslateMDISysAccel(0x1000,0)&&win_get(group)&&c->mdi_active==group&&mdi_syslp==0x00010073UL); /* application veto */
   mdi_default_commands=1;assert(u_TranslateMDISysAccel(0x1000,0)&&!win_get(group)&&c->mdi_active==second&&!g->extra);
   assert(!u_TranslateMDISysAccel(0x1000,0xffff));
   wr32(0x1000,0,0);wr16(0x1000,4,0);wr16(0x1000,6,WM_CLOSE);
