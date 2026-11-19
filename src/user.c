@@ -3150,6 +3150,7 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
         if (w == d || (w->ctl && w->parent == d->hwnd)) {
             switch (m.msg) {
             case WM_SYSKEYDOWN:
+                if(m.wp==0x79){default_system_key(d,m.msg,m.wp,m.lp);break;}
                 if(m.wp==0x73&&(m.lp&0x20000000UL)){dlg_command(d,IDCANCEL);break;}
                 if(m.wp==0x20&&(m.lp&0x20000000UL)){menu_sys_open(d,1,0);break;}
                 /* Alt mnemonics use the existing dialog button path. */

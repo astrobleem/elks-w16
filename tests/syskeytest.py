@@ -39,12 +39,18 @@ static int blocked(struct wnd*w){(void)w;return 0;}
 static int post(u16 h,u16 m,u16 p,u32 l,int x,int y){struct qmsg*q;assert(qcount<QSIZE);q=&queue[(qhead+qcount++)%QSIZE];memset(q,0,sizeof(*q));q->hwnd=h;q->msg=m;q->wp=p;q->lp=l;q->x=x;q->y=y;q->time=++msgclock;return 1;}
 int menu_key(struct wnd*w,GR_KEY ch,u32 mods){assert(w==nodes&&w->hmenu==9);assert((mods&MWKMOD_ALT)||ch==MWKEY_F10);menus++;lastchar=ch;return 1;}
 int menu_sys_open(struct wnd*w,int keyboard,u32 hilite){assert(w==nodes&&keyboard&&!hilite);systems++;return 1;}
+static int cancels;
+#define IDCANCEL 2
+static void dlg_command(struct wnd*w,u16 id){assert(w==nodes&&id==IDCANCEL);cancels++;}
 static u32 default_system_key(struct wnd*,u16,u16,u32);
 u32 win_send(struct wnd*w,u16 msg,u16 key,u32 lp){callbacks++;if(intercept&&w==nodes+2)return 77;if(msg==WM_SYSCOMMAND){assert(w==nodes&&key==SC_CLOSE);closes++;return 1;}return default_system_key(w,msg,key,lp);}
 """
 keys=u[u.index('    case GR_EVENT_TYPE_KEY_DOWN: {'):u.index('    case GR_EVENT_TYPE_BUTTON_DOWN:',u.index('    case GR_EVENT_TYPE_KEY_DOWN: {'))]
 pre='\n'.join(x for x in (root/'src/wapi.h').read_text().splitlines() if x.startswith(('#define WM_','#define WS_','#define SC_')))+'\n'+pre
 code=pre+fn('vk_from_key')+fn('dequeue')+fn('u_TranslateMessage')+fn('default_system_key')
+modal_end=u.index('            case WM_KEYDOWN:                    /* the dialog manager')
+modal=u[u.rfind('            case WM_SYSKEYDOWN:',0,modal_end):modal_end]
+code+='static void modal_down(u16 key,u32 lp){struct{u16 msg,wp;u32 lp;}m={WM_SYSKEYDOWN,key,lp};struct wnd*d=nodes;switch(m.msg){'+modal+'case WM_KEYDOWN:break;}}\n'
 code+='static void event(GR_EVENT *ev){struct wnd*w;int isclient;switch(ev->type){'+keys+'}}\n'
 code+=r"""
 static void key(int type,int ch,unsigned mods){GR_EVENT e;memset(&e,0,sizeof(e));e.type=type;e.keystroke.wid=3;e.keystroke.ch=ch;e.keystroke.modifiers=mods;e.keystroke.scancode=17;event(&e);}
@@ -64,6 +70,7 @@ int main(void){struct qmsg m,c;
  win_send(nodes+2,WM_SYSKEYDOWN,0x73,1);assert(closes==1);
  win_send(nodes+2,WM_SYSKEYUP,0x79,0xc0000001UL);assert(menus==1); /* handled down never armed default */
  win_send(nodes+2,WM_SYSKEYDOWN,0x79,1);assert(menus==1);win_send(nodes+2,WM_SYSKEYUP,0x79,0xc0000001UL);assert(menus==2&&lastchar==MWKEY_F10);
+ nodes[0].hmenu=0;modal_down(0x79,1);win_send(nodes,WM_SYSKEYUP,0x79,0xc0000001UL);assert(systems==2);modal_down(0x73,0x20000001UL);assert(cancels==1);
  puts("USER system keys: context, real/synthetic releases, translation, MDI default routing, interception and normal characters passed");
 }
 """
