@@ -1986,6 +1986,28 @@ u32 u_LoadIcon(u16 ss,u16 ap)
  if(i==MAXICON){free(data);return 0;}
  icons[i].data=data;icons[i].len=len;icons[i].resource=resource;icons[i].owned=0;return ICON_BASE+2*i;
 }
+/* GetIconId(HGLOBAL group, DWORD type). Progman's type 3 requests a
+ * Win3 group-icon image suited to our 32x32, 16-colour display. No private
+ * native icon header is involved: the input is a locked resource directory. */
+u32 u_GetIconId(u16 ss,u16 ap)
+{
+ u16 seg,len,n,k,best=0;int bestscore=-1;u8 e[14];
+ if(ap>0xfffau || AW(0)!=3 || AW(2) || !resource_view(AW(4),&seg,&len))return 0;
+ if(len<6)goto done;
+ fcopy_in(e,seg,0,6);n=(u16)(e[4]|(e[5]<<8));
+ if(e[0]||e[1]||e[2]!=1||e[3]||!n||n>(len-6)/14)goto done;
+ for(k=0;k<n;k++){
+  int w,h,bits,score;
+  fcopy_in(e,seg,6+14*k,14);
+  w=e[0]?e[0]:256;h=e[1]?e[1]:256;bits=e[6]|(e[7]<<8);
+  score=(w==32&&h==32?100:w<=32&&h<=32?50:0)+(bits==4?20:bits==1?10:-100);
+  if(score>bestscore){bestscore=score;best=(u16)(e[12]|(e[13]<<8));}
+ }
+ if(bestscore<0)best=0;
+done:
+ global_unlock(AW(4));return best;
+}
+
 u32 u_CopyIcon(u16 ss,u16 ap)
 {
  int i,j;u8 *copy;

@@ -504,6 +504,18 @@ u32 k_LoadResource(u16 ss, u16 ap)
     return rsrc[i].seg;
 }
 
+/* Bounded read view for USER's resource handlers. Ordinary movable blocks
+ * acquire a lock; loaded resource segments already have a stable address.
+ * The caller balances either kind with global_unlock (a no-op for resources). */
+int resource_view(u16 h,u16 *seg,u16 *len)
+{
+    int i=rsrc_by_seg(h);u32 size,ptr;
+    if(i>=0){*seg=h;*len=rsrc[i].len;return 1;}
+    size=global_size(h);
+    if(!size || size>65520UL || !global_pointer(h,&ptr))return 0;
+    *seg=(u16)(ptr>>16);*len=(u16)size;return 1;
+}
+
 /* GlobalLock(hMem) / LockResource(hResData): far pointer to a loaded resource */
 u32 k_GlobalLock(u16 ss, u16 ap)
 {

@@ -303,6 +303,7 @@ extern char opt_dump[40];
 extern int  opt_ready;
 
 /* global.c: single-segment task-owned global memory */
+int resource_view(u16 h,u16 *seg,u16 *len);
 int global_pointer(u16 h,u32 *ptr);
 u32 global_unlock(u16 h);
 u32 global_size(u16 h);

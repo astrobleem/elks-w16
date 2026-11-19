@@ -17,6 +17,9 @@ start=user.index('static u8 *load_icon(const char *name,');end=user.index('{',st
 while level:
     level+=(user[end]=='{')-(user[end]=='}');end+=1
 icon_loader=user[start:end]
+kernel=(root/'src/kernel.c').read_text()
+resource_table=kernel[kernel.index('#define MAXRSRC'):kernel.index('/* FindResource(hInstance')]
+resource_view=kernel[kernel.index('int resource_view('):kernel.index('/* GlobalLock(hMem)')]
 setup = r'''
 #include <assert.h>
 #include <stdarg.h>
@@ -42,6 +45,11 @@ static u8 icon_resource[744];static u16 icon_resource_len;
 static int icon_missing;
 static u16 args[4];
 #define AW(n) args[(n)/2]
+static u8 guest_resource[4096];static u16 guest_length,guest_locks;
+static u32 global_size(u16 h){return h==0xf000?guest_length:0;}
+static int global_pointer(u16 h,u32 *p){if(h!=0xf000)return 0;guest_locks++;*p=2UL<<16;return 1;}
+static u32 global_unlock(u16 h){if(h==0xf000){assert(guest_locks);guest_locks--;}return 0;}
+static void fcopy_in(void *p,u16 seg,u16 off,u16 n){assert((seg==2||seg==3)&&(unsigned)off+n<=guest_length);memcpy(p,guest_resource+off,n);}
 static struct { int used, ctl; unsigned frame, client; } wins[MAXWIN];
 static int new_calls, fail_new, short_data, missing, resource_reads, group_reads,bad_hot,bad_header,odd_height;
 static unsigned last_cursor;
@@ -224,13 +232,34 @@ int main(void) {
      args[0]=owned;assert(u_DestroyIcon(0,0));icon_shutdown();
      args[0]=0x7f00;args[1]=0;args[2]=0;assert(!u_LoadIcon(0,0)); /* no fake predefined token */
     }
+    /* Actual global/resource view and bounded Win3 group selection. */
+    {u16 len,seg;
+     guest_length=48;memset(guest_resource,0,48);
+     guest_resource[2]=1;guest_resource[4]=3;
+     guest_resource[6]=16;guest_resource[7]=16;guest_resource[12]=4;guest_resource[18]=7;
+     guest_resource[20]=32;guest_resource[21]=32;guest_resource[26]=1;guest_resource[32]=8;
+     guest_resource[34]=32;guest_resource[35]=32;guest_resource[40]=4;guest_resource[46]=9;
+     args[0]=3;args[1]=0;args[2]=0xf000;assert(u_GetIconId(0,0)==9&&!guest_locks);
+     guest_length=47;assert(!u_GetIconId(0,0)&&!guest_locks);guest_length=48;
+     guest_resource[2]=2;assert(!u_GetIconId(0,0)&&!guest_locks);guest_resource[2]=1;
+     args[0]=1;assert(!u_GetIconId(0,0)&&!guest_locks);args[0]=3;
+     args[1]=1;assert(!u_GetIconId(0,0)&&!guest_locks);args[1]=0;
+     args[2]=999;assert(!u_GetIconId(0,0));
+     rsrc[0].used=1;rsrc[0].seg=3;rsrc[0].len=48;
+     args[2]=3;assert(u_GetIconId(0,0)==9&&!guest_locks);
+     /* The exact resource length, rather than rounded allocation, bounds it. */
+     rsrc[0].len=47;assert(!u_GetIconId(0,0));rsrc[0].len=48;
+     assert(!resource_view(999,&seg,&len));
+     assert(!u_GetIconId(0,0xffff));
+     icon_shutdown();
+    }
     puts("Shared icon/cursor DIB decoding, masked drawing, cursor reuse and failure checks passed");
     return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
     c=pathlib.Path(tmp)/'cursor.c'; exe=pathlib.Path(tmp)/'cursor'
-    c.write_text(setup+dib_header+dib_source+source+icon_objects+icon_loader+render+icon_source+checks)
+    c.write_text(setup+resource_table+resource_view+dib_header+dib_source+source+icon_objects+icon_loader+render+icon_source+checks)
     subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Wno-unused-parameter',
                     '-fsanitize=address,undefined','-fno-pie','-no-pie',str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=0'})
