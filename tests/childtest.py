@@ -3,7 +3,7 @@ import pathlib,re,subprocess,tempfile,os
 root=pathlib.Path(__file__).resolve().parents[1]
 u=(root/'src/user.c').read_text(); h=(root/'src/wapi.h').read_text()
 def func(name):
-    m=re.search(r'^(?:static )?(?:struct wnd \*|u32 |u16 |void |int )'+name+r'\(',u,re.M)
+    m=re.search(r'^(?:static )?(?:struct wnd \*|u32 |u16 |void |int )'+name+r'\([^;{}]*\)\s*\{',u,re.M)
     assert m,name
     start=u.index('{',m.start()); level=1; p=start+1
     while level:
@@ -26,6 +26,10 @@ typedef unsigned GR_WINDOW_ID, GR_COLOR;
 #define GR_EVENT_MASK_KEY_UP 16
 #define GR_EVENT_MASK_BUTTON_UP 32
 #define GR_EVENT_MASK_MOUSE_POSITION 64
+#define CLASS_MDICLIENT (-2)
+#define WM_MDICREATE 0x0220
+#define WM_MDIDESTROY 0x0221
+#define SC_CLOSE 0xf060
 #define CAPH 14
 #define DESKTOP_HWND 1
 #define MENUH 16\n#define SCROLLBAR_SIZE 16
@@ -43,7 +47,7 @@ u8 host_mem[0x110000]; u16 w16_app_sp=200,w16_app_ss=0x1000;
 u8 *host_ptr(u16 s,u16 o,u16 n) { assert((u32)o+n<=65536);return host_mem+LIN(s,o); }
 void fzero(u16 s,u16 o,u16 n){memset(host_ptr(s,o,n),0,n);}
 u16 fstrncpy_in(char*d,u16 s,u16 o,u16 n){strncpy(d,(char*)host_ptr(s,o,1),n);d[n-1]=0;return strlen(d);}
-static int find_class(u16 o,u16 s){(void)o;(void)s;return 0;}
+''' + func('find_class').replace('    if (!seg) {','    if (!seg && !off)return 0;\n    if (!seg) {',1) + '''
 static int menu_load(struct wnd*w,const char*n,u16 id){(void)w;(void)n;(void)id;abort();}
 static int menu_attach(struct wnd*w,u16 h){(void)w;(void)h;abort();}
 u32 brush_color(u16 h,int *n){(void)h;*n=0;return 0;}
@@ -69,9 +73,16 @@ static unsigned raised,lowered;
 void GrRaiseWindow(unsigned w){raised=w;}void GrLowerWindow(unsigned w){lowered=w;}
 void GrSetFocus(unsigned w){(void)w;}
 
+static u32 mdi_message(struct wnd*,u16,u16,u32);
+static int valid_coords(u16,u16,u16);
+u32 u_DefWindowProc(u16,u16);
+struct dc { int paint; struct wnd *w; };
+static struct dc *dc_get(u16 h){(void)h;return NULL;}
+static void gdi_fill(unsigned w,unsigned c,int x,int y,int wd,int ht){(void)w;(void)c;(void)x;(void)y;(void)wd;(void)ht;}
 static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl;
-u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){if(w->extra&&m==WM_CREATE){assert(w->extra[0]==0&&w->extra[1]==0);w->extra[0]=0x34;w->extra[1]=0x12;extra_creates++;}
+u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){if(w->cls==CLASS_MDICLIENT)return mdi_message(w,m,p,l);
+if(w->extra&&m==WM_CREATE){assert(w->extra[0]==0&&w->extra[1]==0);w->extra[0]=0x34;w->extra[1]=0x12;extra_creates++;}
 if(w->extra&&m==WM_NCDESTROY){assert(w->extra[0]);extra_destroys++;}
 if(create_fail&&m==WM_CREATE)return 0xffffffffUL;
 senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
@@ -81,7 +92,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_ShowWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -171,7 +182,28 @@ int main(void){u16 id;int x,y;unsigned frame;
    setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,0,0);id=u_CreateWindow(0x1000,0);
    assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
  }
- puts("Registered child hierarchy, window-extra state, geometry, failure and teardown checks passed");return 0;}
+ /* A real built-in MDI client and a decorated registered group child. */
+ {u16 mdi,group;struct wnd *c,*g;
+  strcpy((char*)host_ptr(0x2000,0,16),"mDiClIeNt");
+  wr16(0x2000,32,0);wr16(0x2000,34,1000);
+  setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,280,150);
+  wr16(0x1000,26,0);wr16(0x1000,28,0x2000);wr32(0x1000,0,0x20000020UL);
+  mdi=u_CreateWindow(0x1000,0);assert(mdi);c=win_get(mdi);
+  assert(c->cls==CLASS_MDICLIENT&&c->parent==HWND_BASE&&frame_parent==77&&c->defid==1000&&!c->extra);
+  fzero(0x2000,64,26);wr32(0x2000,64,0xc000);wr16(0x2000,72,0x1234);
+  wr16(0x2000,74,5);wr16(0x2000,76,6);wr16(0x2000,78,180);wr16(0x2000,80,100);
+  wr32(0x2000,86,0xbeef);
+  group=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(group);g=win_get(group);
+  assert(g->parent==mdi&&frame_parent==c->client&&g->id==1000&&g->visible);
+  assert((g->style&WS_CAPTION)==WS_CAPTION&&g->x==5&&g->y==6&&g->cw==174);
+  assert(rd32(w16_app_ss,(u16)lastlp)==0x20000040UL); /* CREATESTRUCT.lpCreateParams */
+  assert(g->extra[0]==0x34&&g->extra[1]==0x12);
+  win_send(c,WM_MDIDESTROY,HWND_BASE,0);assert(wins[0].used&&g->used);
+  wr32(0x1000,0,0);wr16(0x1000,4,0);wr16(0x1000,6,WM_CLOSE);wr16(0x1000,8,group);
+  u_DefMDIChildProc(0x1000,0);assert(!win_get(group)&&win_get(mdi)&&wins[0].used&&!g->extra);
+  destroy_window(c);assert(!win_get(mdi)&&wins[0].used);
+ }
+ puts("Registered child and MDI creation/state/open-close lifecycle checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
     p=pathlib.Path(td);(p/'test.c').write_text(code)

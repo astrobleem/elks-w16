@@ -13,6 +13,12 @@
 #include "wapi.h"
 #include "filelist.h"
 
+#define CLASS_MDICLIENT (-2)
+#define WM_MDICREATE 0x0220
+#define WM_MDIDESTROY 0x0221
+static u32 mdi_message(struct wnd *,u16,u16,u32);
+static int valid_coords(u16,u16,u16);
+u32 u_CreateWindow(u16,u16),u_DefWindowProc(u16,u16);
 struct wnd wins[MAXWIN];
 static struct wclass classes[MAXCLASS];
 
@@ -158,6 +164,7 @@ static struct wnd *win_by_nx(GR_WINDOW_ID wid, int *isclient)
 u32 win_send(struct wnd *w, u16 msg, u16 wp, u32 lp)
 {
     u16 words[5];
+    if(w->cls==CLASS_MDICLIENT)return mdi_message(w,msg,wp,lp);
     words[0] = w->hwnd; words[1] = msg; words[2] = wp;
     words[3] = (u16)(lp >> 16); words[4] = (u16)lp;
     if (!w->procoff && !w->procseg)     /* built-in controls have no program window procedure */
@@ -850,6 +857,8 @@ static int find_class(u16 off, u16 seg)
         return -1;
     }
     fstrncpy_in(name, seg, off, sizeof(name));
+    for(k=0;name[k];k++)if(name[k]>='a'&&name[k]<='z')name[k]-=32;
+    if(!strcmp(name,"MDICLIENT"))return CLASS_MDICLIENT;
     for (i = 0; i < MAXCLASS; i++) {
         if (!classes[i].used)
             continue;
@@ -940,7 +949,7 @@ u32 u_RegisterClass(u16 ss, u16 ap)
         wlog("w16: RegisterClass: class atoms are not supported\n");
         return 0;
     }
-    if (find_class(noff, nseg) >= 0)
+    if (find_class(noff, nseg) != -1)
         return 0;
     for (i = 0; i < MAXCLASS && classes[i].used; i++)
         ;
@@ -981,13 +990,13 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     u32 style = AL(18);
     u16 toff = AW(22), tseg = AW(24), coff = AW(26), cseg = AW(28);
     int ci = find_class(coff, cseg), i, b, cap;
-    struct wclass *c;
+    struct wclass *c, builtin;
     struct wnd *w, *pw = 0;
     u32 r;
     int isnull;
     GR_COLOR bg;
 
-    if (ci < 0) {
+    if (ci < 0 && ci!=CLASS_MDICLIENT) {
         char nm[24];
         if (cseg)
             fstrncpy_in(nm, cseg, coff, sizeof(nm));
@@ -996,10 +1005,15 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         wlog("w16: CreateWindow: class \"%s\" is not registered (system control classes are not provided)\n", nm);
         return 0;
     }
+    if(ci==CLASS_MDICLIENT) {
+        if(!(style&WS_CHILD) || !valid_coords((u16)(AL(0)>>16),(u16)AL(0),4))return 0;
+        memset(&builtin,0,sizeof(builtin));builtin.hbrush=13;
+    }
     if (style & WS_CHILD) {
         pw = win_get(parent);
-        /* Bounded registered children: plain/bordered client windows only. */
-        if (!pw || pw->active || (style & (WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) != (style & WS_BORDER) ||
+        /* Ordinary registered children stay plain/bordered; MDI groups may have frames. */
+        if (!pw || pw->active || (style & WS_POPUP) ||
+            (pw->cls!=CLASS_MDICLIENT && (style & (WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) != (style & WS_BORDER)) ||
             wd < 0 || h < 0 || wd > 32760 || h > 32760) {
             wlog("w16: CreateWindow: unsupported child geometry, decoration or parent\n");
             return 0;
@@ -1011,13 +1025,18 @@ u32 u_CreateWindow(u16 ss, u16 ap)
         wlog("w16: CreateWindow: window table full (%d)\n", MAXWIN);
         return 0;
     }
-    c = &classes[ci];
+    c = ci==CLASS_MDICLIENT ? &builtin : &classes[ci];
     w = &wins[i];
     memset(w, 0, sizeof(*w));
     w->used = 1;
     w->hwnd = HWND_BASE + 4 * i;
     w->cls = ci;
     w->style = style;
+    if(ci==CLASS_MDICLIENT) {
+        u16 po=(u16)AL(0),ps=(u16)(AL(0)>>16);
+        w->result=rd16(ps,po); /* borrowed window-menu handle, never owned/freed here */
+        w->defid=rd16(ps,po+2);
+    }
     if (pw) { w->parent = parent; w->id = hmenu; }
     w->hinst = c->hinst ? c->hinst : hinst;
     w->procoff = c->procoff; w->procseg = c->procseg;
@@ -1272,6 +1291,59 @@ u32 u_DestroyWindow(u16 ss, u16 ap)
         return 0;
     destroy_window(w);
     return 1;
+}
+
+/* Minimal MDI lifecycle. Layout, activation and menu merging remain separate. */
+static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
+{
+    u16 ss=w16_app_ss,save=w16_app_sp,ap,off=(u16)lp,seg=(u16)(lp>>16),id;
+    u32 style,r; int x,y,wd,h,i,tries;
+    struct wnd *child;
+    if(msg==WM_MDIDESTROY) {
+        child=win_get(wp);
+        if(child && !child->ctl && child->parent==w->hwnd)destroy_window(child);
+        return 0;
+    }
+    if(msg==WM_MDICREATE) {
+        if(w->active || !valid_coords(seg,off,26) || save<112)return 0;
+        style=rd32(seg,off+18);
+        /* Minimized/maximized creation needs the activation/layout machinery. */
+        if(style&0x21000000UL)return 0;
+        style=(w->style&1)?(style|WS_CHILD):(WS_CHILD|WS_VISIBLE|0x04cf0000UL);
+        x=(i16)rd16(seg,off+10);y=(i16)rd16(seg,off+12);
+        wd=(i16)rd16(seg,off+14);h=(i16)rd16(seg,off+16);
+        if(x==(i16)0x8000)x=0;
+        if(y==(i16)0x8000)y=0;
+        if(wd==(i16)0x8000)wd=w->cw;
+        if(h==(i16)0x8000)h=w->ch;
+        id=w->defid;
+        for(tries=0;tries<MAXWIN;tries++,id++) {
+            for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==w->hwnd&&wins[i].id==id)break;
+            if(i==MAXWIN)break;
+        }
+        if(tries==MAXWIN)return 0;
+        ap=save-32;fzero(ss,ap,30);
+        wr32(ss,ap,lp);wr16(ss,ap+4,rd16(seg,off+8));
+        wr16(ss,ap+6,id);wr16(ss,ap+8,w->hwnd);
+        wr16(ss,ap+10,h);wr16(ss,ap+12,wd);wr16(ss,ap+14,y);wr16(ss,ap+16,x);
+        wr32(ss,ap+18,style);wr32(ss,ap+22,rd32(seg,off+4));wr32(ss,ap+26,rd32(seg,off));
+        w16_app_sp=ap;r=u_CreateWindow(ss,ap);w16_app_sp=save;
+        return r;
+    }
+    if(save<16)return 0;
+    ap=save-12;wr32(ss,ap,lp);wr16(ss,ap+4,wp);wr16(ss,ap+6,msg);wr16(ss,ap+8,w->hwnd);
+    w16_app_sp=ap;r=u_DefWindowProc(ss,ap);w16_app_sp=save;return r;
+}
+
+/* The default child procedure closes through its MDI client, preserving siblings. */
+u32 u_DefMDIChildProc(u16 ss,u16 ap)
+{
+    struct wnd *w,*parent;
+    if(ap>0xfff6u)return 0;
+    w=win_get(AW(8));parent=w?win_get(w->parent):0;
+    if(!parent || parent->cls!=CLASS_MDICLIENT)return 0;
+    if(AW(6)==WM_CLOSE)return mdi_message(parent,WM_MDIDESTROY,w->hwnd,0);
+    return u_DefWindowProc(ss,ap);
 }
 
 /* DefWindowProc(hwnd, msg, wParam, lParam) */

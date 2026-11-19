@@ -86,6 +86,7 @@ u32 k_GetModuleUsage(u16, u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetClassWord(u16,u16);
+u32 u_DefMDIChildProc(u16,u16);
 u32 u_GetWindowWord(u16,u16),u_SetWindowWord(u16,u16);
 u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
@@ -424,6 +425,7 @@ const struct api api_table[] = {
     { G, 442, "CreateDIBitmap", 20, 0, H(g_CreateDIBitmap) },
     { U, 50, "FindWindow", 8, 0, H(u_FindWindow) },
 
+    { U, 447, "DefMDIChildProc", 10, 0, H(u_DefMDIChildProc) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
