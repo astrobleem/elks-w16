@@ -1,6 +1,7 @@
 #!/bin/sh
 # Isolated native-size CGA build. Default CGA_MODE=mono; CGA_MODE=color selects 320x200x4.
-# CGA_PAN=1 adds a 300-row virtual screen; Alt+I/K pans vertically, Alt+H returns.
+# CGA_PAN=1 adds a 300-row virtual screen; Alt+I/J/K/L pans, Alt+H returns.
+# CGA_VWIDTH/CGA_VHEIGHT optionally select bounded virtual dimensions (requires CGA_PAN=1).
 # TOPDIR=built-elks MWDIR=baseline-patched-microwindows sh scripts/build-nanox-cga.sh
 # NANOX_HEAP=0xfff0 selects ELKS's maximum-heap sentinel; this isolated build defaults to 8 KiB.
 set -eu
@@ -19,6 +20,19 @@ case "${CGA_PAN:-0}" in
     1) CGA_PAN=1; DEFAULT_OUT="$DEFAULT_OUT-pan" ;;
     *) echo 'CGA_PAN must be 0 or 1' >&2; exit 1 ;;
 esac
+case "$CGA_COLOR" in 1) NATIVE_WIDTH=320 ;; *) NATIVE_WIDTH=640 ;; esac
+CGA_VWIDTH=${CGA_VWIDTH:-$NATIVE_WIDTH}
+CGA_VHEIGHT=${CGA_VHEIGHT:-300}
+python3 - "$CGA_PAN" "$CGA_VWIDTH" "$CGA_VHEIGHT" "$NATIVE_WIDTH" <<'PYDIMS'
+import sys
+pan,w,h,native=sys.argv[1:]
+if not w.isdecimal() or not h.isdecimal():raise SystemExit('CGA virtual dimensions must be positive decimal integers')
+w,h,native=int(w),int(h),int(native)
+ppb=4 if native==320 else 8
+if w<native or h<200 or w%(2*ppb) or (w//ppb)*h>65520:
+ raise SystemExit('CGA virtual dimensions exceed the aligned single-segment shadow budget')
+if pan=='0' and (w!=native or h!=300):raise SystemExit('CGA virtual dimensions require CGA_PAN=1')
+PYDIMS
 OUT=${CGA_OUT:-$DEFAULT_OUT}
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
@@ -59,7 +73,7 @@ for name in nanox-readpixel.patch nanox-screenand.patch nanox-capturepixels.patc
 done
 # Adapt only the disposable pinned baseline. Refuse missing integration points.
 cp "$ROOT/drivers/scr_cga.c" "$WORK/src/drivers/scr_cga.c"
-python3 - "$WORK/src" "$CGA_COLOR" "$CGA_PAN" <<'PYCODE'
+python3 - "$WORK/src" "$CGA_COLOR" "$CGA_PAN" "$CGA_VWIDTH" "$CGA_VHEIGHT" <<'PYCODE'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); color=int(sys.argv[2]); pan=int(sys.argv[3])
@@ -69,7 +83,7 @@ def replace(name,old,new):
  f.write_text(s.replace(old,new))
 replace('Makefile.elks',
  'CFLAGS += -DUSE_SMALL_CURSOR=1\nDRIVERS += drivers/scr_cga.o drivers/vgaplan4_cga.o drivers/vgaplan4_mem.o',
- 'CFLAGS += -DUSE_SMALL_CURSOR=1 -DSCREEN_CGA=1 -DCGA_COLOR='+str(color)+' -DCGA_PAN='+str(pan)+'\nDRIVERS += drivers/scr_cga.o')
+ 'CFLAGS += -DUSE_SMALL_CURSOR=1 -DSCREEN_CGA=1 -DCGA_COLOR='+str(color)+' -DCGA_PAN='+str(pan)+' -DCGA_VWIDTH='+sys.argv[4]+' -DCGA_VHEIGHT='+sys.argv[5]+'\nDRIVERS += drivers/scr_cga.o')
 replace('drivers/fb.c','#if SCREEN_TANDY',
  '#if SCREEN_CGA\n\tif (psd->planes != 1 || psd->bpp != '+str(2 if color else 1)+' || psd->data_format != '+('MWIF_PAL2' if color else 'MWIF_MONOBYTEMSB')+') return NULL;\n#endif\n#if SCREEN_TANDY')
 # ELKS normally omits the 2bpp palette case. Use the driver's fixed CGA palette.

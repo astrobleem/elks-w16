@@ -556,11 +556,10 @@ u32 W16_CDECL w16_api_dispatch(u16 idx)
     }
 #endif
 #ifdef W16_TRACE_STRETCH
-    extern u16 w16_stretch_depth,w16_stretch_mode;
     if(opt_trace && a->mod==MOD_GDI && a->ord==35 && sp<=0xffdcu)
-        wlog("w16: stretch dc=%04x src=%04x d=%dx%d s=%dx%d rop=%08lx result=%lu depth=%u mode=%u\n",
-             rd16(ss,sp+34),rd16(ss,sp+24),(i16)rd16(ss,sp+28),(i16)rd16(ss,sp+26),
-             (i16)rd16(ss,sp+18),(i16)rd16(ss,sp+16),(unsigned long)rd32(ss,sp+12),(unsigned long)r,w16_stretch_depth,w16_stretch_mode);
+        wlog("w16: stretch xy=%d,%d d=%dx%d rop=%08lx result=%lu\n",
+             (i16)rd16(ss,sp+32),(i16)rd16(ss,sp+30),(i16)rd16(ss,sp+28),(i16)rd16(ss,sp+26),
+             (unsigned long)rd32(ss,sp+12),(unsigned long)r);
 #endif
     n = a->argbytes;
     if (n) {

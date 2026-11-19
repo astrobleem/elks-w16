@@ -632,9 +632,6 @@ static u8 stretch_index(struct bitmap *s,u16 x,u16 y,int pair)
  u8 c=bitmap_index(s,x,y);
  return pair?(c&bitmap_index(s,x,y+1)):c;
 }
-#ifdef W16_TRACE_STRETCH
-u16 w16_stretch_depth,w16_stretch_mode;
-#endif
 u32 g_StretchBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(22));int m=di(AW(12)),b,x,y,end,limitx,limity,pair;u32 rop=AL(0);
@@ -643,9 +640,6 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  struct bitmap*s;GR_SCREEN_INFO si;GR_GC_INFO old;
  int ax,ay,bx,by;
  if(!d||m<0||(b=bi(memory[m].bitmap))<0)return 0;
-#ifdef W16_TRACE_STRETCH
- w16_stretch_depth=bitmaps[b].bpp;w16_stretch_mode=d->stretchmode;
-#endif
  if((rop!=0x00cc0020UL&&rop!=0x008800c6UL)||dw<=0||dh<=0||sw<=0||sh<=0)return 0;
  pair=d->stretchmode==1;
  if(d->stretchmode!=3&&!pair)return 0;
