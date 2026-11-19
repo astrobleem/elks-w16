@@ -293,6 +293,29 @@ w16_dos3call:
 w16_debugstring:
     lret $4
 
+// KERNEL.157 selector 5, the real-mode no-EMS path. BX is the selector,
+// not a page count; CX/DX remain the caller's values. The tagged-BP epilogue
+// matches the reference's arithmetic flags, including clear carry.
+    .global w16_getcurpid, w16_getcurpid_index
+w16_getcurpid_index:
+    .word 0                         // api_target installs the fallback dispatcher index
+w16_getcurpid:
+    inc %bp
+    push %bp
+    mov %sp, %bp
+    cmpw $5, 8(%bp)
+    jne 1f
+    mov $5, %bx
+    xor %ax, %ax
+    pop %bp
+    dec %bp
+    lret $4
+1:
+    pop %bp
+    dec %bp
+    mov %cs:w16_getcurpid_index, %ax
+    jmp api_common                  // unsupported selectors terminate explicitly
+
 // ---------------------------------------------------------------- calls into the program
 // u32 w16_call16(u16 off, u16 seg, u16 ds, u16 nwords, const u16 *words)
 // Pushes words[0..n-1] on the program stack (Pascal order), sets AX = DS = ds, far-calls.

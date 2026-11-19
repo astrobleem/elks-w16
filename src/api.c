@@ -83,6 +83,7 @@ u32 g_SetROP2(u16, u16), g_CreateDC(u16, u16), g_CreateFontIndirect(u16, u16), g
 u32 g_GetDeviceCaps(u16, u16), g_GetTextMetrics(u16, u16), g_AddFontResource(u16, u16), g_RemoveFontResource(u16, u16);
 u32 g_GetNearestColor(u16, u16), g_SetTextAlign(u16, u16), g_ExtTextOut(u16, u16);
 u32 k_GetModuleUsage(u16, u16);
+u32 k_GetCurPID(u16,u16);
 u32 u_PeekMessage(u16, u16), u_PostMessage(u16, u16), u_SetCapture(u16, u16), u_ReleaseCapture(u16, u16);
 u32 u_ScreenToClient(u16,u16), u_GetWindowRect(u16,u16);
 u32 u_SetClassWord(u16,u16);
@@ -426,6 +427,7 @@ const struct api api_table[] = {
     { U, 50, "FindWindow", 8, 0, H(u_FindWindow) },
 
     { U, 447, "DefMDIChildProc", 10, 0, H(u_DefMDIChildProc) },
+    { K, 157, "GetCurPID", 4, API_RAW, H(k_GetCurPID) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
@@ -515,6 +517,10 @@ int api_target(int idx, u16 *seg, u16 *off)
     if (idx < 0 || idx >= api_count || (api_table[idx].flags & API_CONST))
         return -1;
     *seg = FSEG(w16_stubs);                 /* the stubs' own code segment */
+    if(api_table[idx].mod==MOD_KERNEL && api_table[idx].ord==157) {
+        wr16(*seg,FOFF(w16_getcurpid_index),idx);
+        *off=FOFF(w16_getcurpid);return 0;
+    }
     *off = (api_table[idx].flags & API_RAW) ?
         (api_table[idx].mod == MOD_KERNEL && api_table[idx].ord == 115 ? FOFF(w16_debugstring) : FOFF(w16_dos3call)) :
         (u16)(FOFF(w16_stubs) + 8 * idx);

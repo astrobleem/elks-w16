@@ -130,6 +130,16 @@ u32 k_GetWinFlags(u16 ss, u16 ap)
     return 0x0040ul;            /* WF_CPU086 */
 }
 
+/* Selector 5's no-EMS result uses a raw entry to retain caller registers.
+ * No Windows EMS page frame is exposed by this runtime (see GetWinFlags).
+ * Other private selectors require behavior we do not provide. */
+u32 k_GetCurPID(u16 ss,u16 ap)
+{
+    wlog("w16: unsupported GetCurPID selector %u\n", rd16(ss,ap+2));
+    w16_exit16(W16_EIMPORT);
+    return W16_EIMPORT;
+}
+
 /* GetModuleUsage(hModule): one instance of everything */
 u32 k_GetModuleUsage(u16 ss, u16 ap)
 {

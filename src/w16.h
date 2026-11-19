@@ -284,6 +284,7 @@ extern void W16_CDECL w16_stubs(void);
 extern void W16_CDECL w16_int21(void);
 extern void W16_CDECL w16_dos3call(void);
 extern void W16_CDECL w16_debugstring(void);
+extern void W16_CDECL w16_getcurpid(void), w16_getcurpid_index(void);
 int  W16_CDECL w16_thunk_init(void);                  /* 0 ok, -1 another instance shares our text */
 
 /* argument access inside API handlers */
