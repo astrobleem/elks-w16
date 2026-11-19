@@ -11,12 +11,13 @@
 
 int opt_missing; /* explicit diagnostic mode; never returns success for missing APIs */
 
-const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SOUND", "SHELL" };
+const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SOUND", "SHELL", "KEYBOARD" };
 
 #ifdef W16_HOST
 #define H(f) 0
 #else
 #define H(f) f
+u32 k_AnsiToOem(u16,u16),k_OemToAnsi(u16,u16);
 u32 u_GetWindowText(u16,u16),u_GetWindowTextLength(u16,u16);
 u32 u_CreateCaret(u16,u16),u_DestroyCaret(u16,u16),u_SetCaretPos(u16,u16),u_HideCaret(u16,u16),u_ShowCaret(u16,u16);
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
@@ -106,7 +107,10 @@ u32 g_UnrealizeObject(u16, u16);
 #define P MOD_PBRUSH
 #define S MOD_SOUND
 #define L MOD_SHELL
+#define B MOD_KEYBOARD
 const struct api api_table[] = {
+    { B,5,"AnsiToOem",8,0,H(k_AnsiToOem) },
+    { B,6,"OemToAnsi",8,0,H(k_OemToAnsi) },
     { U,36,"GetWindowText",8,0,H(u_GetWindowText) },
     { U,38,"GetWindowTextLength",2,0,H(u_GetWindowTextLength) },
     { U,15,"GetCurrentTime",0,0,H(u_GetCurrentTime) },
