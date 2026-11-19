@@ -246,6 +246,19 @@ static void stretch_tests(void){
 }
 /* Force the unchanged run fallback through the pixel-value guard, then compare
  * every destination pixel and count API requests on identical synthetic input. */
+static void stretch_row_tests(void){
+ u16 b;int x,y,start,w;u8 out[640];struct bitmap*s;
+ setup(639,100,4);b=load();s=&bitmaps[bi(b)];
+ for(y=0;y<100;y++)for(x=0;x<639;x++)bitmap_put(s,x,y,(x+3*y)&15);
+ /* stride 320: source row 51 crosses byte 16384, and only one of the two
+  * rows crosses for some spans. Test both sides of that boundary. */
+ for(y=49;y<=52;y++)for(start=0;start<4;start++)for(w=1;w<=639-start;w+=17){
+  memset(out,0xa5,sizeof out);stretch_color_row(s,start,y,out,w);
+  for(x=0;x<w;x++)assert(out[x]==(bitmap_index(s,start+x,y)&bitmap_index(s,start+x,y+1)));
+  assert(out[w]==0xa5);
+ }
+ bitmap_shutdown();clean();puts("Packed row-pair decode: odd starts, widths, far-bank crossings and output guard passed");
+}
 static void stretch_batch_tests(void){
  static u32 reference[10000];u16 b,d;int x,y,i,k,oldcalls,clipped,depth,mono;
  const int widths[]={1,15,16,17,71};
@@ -644,8 +657,8 @@ static void memory_mask_test(void){
  puts("Memory E2 mono expansion, pattern phase, clipping and unsupported-brush refusal passed");
 }
 int main(int argc,char**argv){
- if(getenv("BITMAP_STRETCH_ONLY")){stretch_tests();stretch_batch_tests();return 0;}
- stretch_batch_tests();
+ if(getenv("BITMAP_STRETCH_ONLY")){stretch_tests();stretch_row_tests();stretch_batch_tests();return 0;}
+ stretch_row_tests();stretch_batch_tests();
  memory_rop_truth_test();memory_mask_test();
  stock_gray_mask_test();
  lowmemory_flood_test();

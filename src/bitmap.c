@@ -651,6 +651,24 @@ static u8 stretch_index(struct bitmap *s,u16 x,u16 y,int pair)
  u8 c=bitmap_index(s,x,y);
  return pair?(c&bitmap_index(s,x,y+1)):c;
 }
+/* Expand a 4bpp row pair from packed bytes, including odd source starts
+ * and independently crossed far-bank boundaries. Each packed byte is fetched
+ * once per source row; the two nibbles share that address calculation. */
+static void stretch_color_row(struct bitmap*s,u16 x,u16 y,u8*out,int w)
+{
+ u32 at=(u32)y*s->stride+x/2,next=at+s->stride;
+ u16 bank=at/BITMAP_BANK_BYTES,off=at%BITMAP_BANK_BYTES;
+ u16 bank2=next/BITMAP_BANK_BYTES,off2=next%BITMAP_BANK_BYTES;
+ int low=x&1;
+ while(w){
+  u8 c=rd8(s->bank[bank],off)&rd8(s->bank[bank2],off2);
+  if(!low){*out++=c>>4;w--;}
+  if(w){*out++=c&15;w--;}
+  low=0;
+  if(++off==BITMAP_BANK_BYTES){off=0;bank++;}
+  if(++off2==BITMAP_BANK_BYTES){off2=0;bank2++;}
+ }
+}
 /* Cache one bounded tile of reduced indices, then send transparent COPY
  * masks for its present palette entries. Each destination pixel belongs to one
  * mask; neither the DC clip nor palette lookup is approximated. */
@@ -665,9 +683,10 @@ static int stretch_color_pair(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
  GrSetGCUseBackground(d->gc,0);
  for(base=0;base<h;base+=rows){
   rows=h-base;if(rows>batch)rows=batch;present=0;
-  for(y=0;y<rows;y++)for(x=0;x<w;x++){
-   u8 c=stretch_index(s,sx+x,sy+2*(base+y),1);
-   indices[y*w+x]=c;present|=(u16)(1u<<c);
+  for(y=0;y<rows;y++){
+   u8 *row=indices+y*w;
+   stretch_color_row(s,sx,sy+2*(base+y),row,w);
+   for(x=0;x<w;x++)present|=(u16)(1u<<row[x]);
   }
   for(i=0;i<16;i++)if(present&(u16)(1u<<i)){
    memset(bits,0,2*wpr*rows);
