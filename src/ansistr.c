@@ -41,6 +41,55 @@ u32 u_AnsiPrev(u16 ss,u16 ap)
     return ((u32)s<<16)|o;
 }
 
+/* Win3.0's built-in English ANSI rules precede the later CP1252 case
+ * additions: the alphabet is ASCII plus Latin-1, excluding multiply/divide. */
+static int alpha30(u8 c)
+{ return (c>='A'&&c<='Z') || (c>='a'&&c<='z') || (c>=0xc0&&c!=0xd7&&c!=0xf7); }
+static u8 case30(u8 c,int upper)
+{
+ if(upper) {
+  if((c>='a'&&c<='z') || (c>=0xe0&&c<=0xfe&&c!=0xf7))return c-32;
+ } else if((c>='A'&&c<='Z') || (c>=0xc0&&c<=0xde&&c!=0xd7))return c+32;
+ return c;
+}
+u32 u_IsCharAlpha(u16 ss,u16 ap)
+{ return ap<=0xfffeu && alpha30((u8)AW(0)); }
+u32 u_IsCharAlphaNumeric(u16 ss,u16 ap)
+{
+ u8 c;if(ap>0xfffeu)return 0;c=(u8)AW(0);
+ return alpha30(c) || (c>='0'&&c<='9');
+}
+static u32 case_string30(u16 ss,u16 ap,int upper)
+{
+ u16 seg,off,end;u32 value;
+ if(ap>0xfffcu)return 0;
+ value=AL(0);off=(u16)value;seg=(u16)(value>>16);
+ if(!seg)return (value&0xff00UL)|case30((u8)off,upper);
+ end=off;
+ for(;;) {
+  if(!readable(seg,end))return 0;
+  if(!rd8(seg,end))break;
+  if(end==0xffffu)return 0;
+  end++;
+ }
+ while(off!=end){wr8(seg,off,case30(rd8(seg,off),upper));off++;}
+ return value;
+}
+u32 u_AnsiLower(u16 ss,u16 ap){return case_string30(ss,ap,0);}
+u32 u_AnsiUpper(u16 ss,u16 ap){return case_string30(ss,ap,1);}
+u32 u_AnsiUpperBuff(u16 ss,u16 ap)
+{
+ u16 off,seg;u32 n,i;
+ if(ap>0xfffau)return 0;
+ n=AW(0);off=AW(2);seg=AW(4);
+ /* The original 16-bit LOOP processes a whole segment when count is zero.
+  * Preserve that case only when the full span does not wrap either address. */
+ if(!n)n=65536UL;
+ if(!readable(seg,off) || (u32)off+n>65536UL || ((u32)seg<<4)+off+n>0x100000UL)return 0;
+ for(i=0;i<n;i++)wr8(seg,(u16)(off+i),case30(rd8(seg,(u16)(off+i)),1));
+ return (u16)n;
+}
+
 /* Fixed Western ANSI (1252) / US OEM (437), matching this runtime's
  * single-byte English task model. Unrepresentable characters become '?'.
  * Validate both far spans before writing; exact in-place conversion is safe. */

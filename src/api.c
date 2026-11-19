@@ -20,6 +20,7 @@ const char *const w16_modnames[NMODS] = { "KERNEL", "USER", "GDI", "PBRUSH", "SO
 u32 k_AnsiToOem(u16,u16),k_OemToAnsi(u16,u16);
 u32 u_GetWindowText(u16,u16),u_GetWindowTextLength(u16,u16);
 u32 u_CreateCaret(u16,u16),u_DestroyCaret(u16,u16),u_SetCaretPos(u16,u16),u_HideCaret(u16,u16),u_ShowCaret(u16,u16);
+u32 u_AnsiLower(u16,u16),u_AnsiUpper(u16,u16),u_AnsiUpperBuff(u16,u16),u_IsCharAlpha(u16,u16),u_IsCharAlphaNumeric(u16,u16);
 u32 u_lstrcmpi(u16,u16),u_lstrcmp(u16,u16),u_AnsiNext(u16,u16),u_AnsiPrev(u16,u16);
 u32 u_InvertRect(u16,u16);
 u32 u_GetMenuString(u16,u16),u_ModifyMenu(u16,u16),u_GetMenuState(u16,u16);
@@ -406,7 +407,7 @@ const struct api api_table[] = {
     { U, 413, "DELETEMENU", 0, API_MISSING, 0 },
     { U, 414, "ModifyMenu", 12, 0, H(u_ModifyMenu) },
     { U, 430, "lstrcmp", 8, 0, H(u_lstrcmp) },
-    { U, 431, "ANSIUPPER", 0, API_MISSING, 0 },
+    { U, 431, "AnsiUpper", 4, 0, H(u_AnsiUpper) },
     { U, 471, "lstrcmpi", 8, 0, H(u_lstrcmpi) },
     { U, 472, "AnsiNext", 4, 0, H(u_AnsiNext) },
     { U, 473, "AnsiPrev", 8, 0, H(u_AnsiPrev) },
@@ -428,6 +429,10 @@ const struct api api_table[] = {
 
     { U, 447, "DefMDIChildProc", 10, 0, H(u_DefMDIChildProc) },
     { K, 157, "GetCurPID", 4, API_RAW, H(k_GetCurPID) },
+    { U, 432, "AnsiLower", 4, 0, H(u_AnsiLower) },
+    { U, 433, "IsCharAlpha", 2, 0, H(u_IsCharAlpha) },
+    { U, 434, "IsCharAlphaNumeric", 2, 0, H(u_IsCharAlphaNumeric) },
+    { U, 437, "AnsiUpperBuff", 6, 0, H(u_AnsiUpperBuff) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];
