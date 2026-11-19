@@ -31,7 +31,11 @@ static struct gobj stock[NSTOCK];
 static struct gobj objs[MAXOBJ];
 static struct dc dcs[MAXDC];
 #define DC_SAVE_DEPTH 4
+#ifdef W16_LAZY_UI
+static struct dc *dc_saved[MAXDC];
+#else
 static struct dc dc_saved[MAXDC][DC_SAVE_DEPTH];
+#endif
 static u8 dc_saved_count[MAXDC];
 GR_GC_ID gdi_gc;
 
@@ -233,6 +237,9 @@ void gdi_shutdown(void)
     for (i = 0; i < MAXDC; i++) {
         dcs[i].used = 0;
         dc_saved_count[i] = 0;
+#ifdef W16_LAZY_UI
+        free(dc_saved[i]); dc_saved[i] = 0;
+#endif
         if (gcs[i].gc)
             GrDestroyGC(gcs[i].gc);
         gcs[i].gc = 0;
@@ -290,6 +297,9 @@ void dc_release(u16 hdc)
         GrDestroyGC(d->gc);
         GS(d)->gc = 0;
     }
+#ifdef W16_LAZY_UI
+    free(dc_saved[(hdc-HDC_BASE)>>1]); dc_saved[(hdc-HDC_BASE)>>1] = 0;
+#endif
     dc_saved_count[(hdc-HDC_BASE)>>1] = 0;
     d->used = 0;
 }
@@ -309,6 +319,9 @@ u32 g_SaveDC(u16 ss,u16 ap)
     if(!d)return bitmap_savedc(AW(0));
     i=(AW(0)-HDC_BASE)>>1;n=dc_saved_count[i];
     if(n==DC_SAVE_DEPTH)return 0;
+#ifdef W16_LAZY_UI
+    if(!dc_saved[i] && !(dc_saved[i]=calloc(DC_SAVE_DEPTH,sizeof(*dc_saved[i]))))return 0;
+#endif
     dc_saved[i][n]=*d;dc_saved_count[i]++;return n+1;
 }
 u32 g_RestoreDC(u16 ss,u16 ap)
@@ -319,6 +332,9 @@ u32 g_RestoreDC(u16 ss,u16 ap)
     target=level<0?(long)n+level:(long)level-1;
     if(!level||target<0||target>=n)return 0;
     *d=dc_saved[i][target];dc_saved_count[i]=target;
+#ifdef W16_LAZY_UI
+    if(!target){free(dc_saved[i]);dc_saved[i]=0;}
+#endif
     GS(d)->known=0; /* force the next draw to reapply restored server state */
     return 1;
 }
