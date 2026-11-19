@@ -49,7 +49,7 @@ w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h wapi.h
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
-	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp
+	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp w16-ne.ld w16-ne.ld.tmp w16-ne.elf w16.ne
 
 .PHONY: all host clean
 
@@ -58,3 +58,19 @@ rasterfont.o: rasterfont-data.h
 rasterfont-data.h: $(MWDIR)/src/fonts/compiled/winFreeSansSerif11x13.c ../scripts/pack-rasterfont.py
 	python3 ../scripts/pack-rasterfont.py $< > $@.tmp
 	mv $@.tmp $@
+
+# Optional native NE output; the normal a.out target and layout stay independent.
+w16-ne.ld: w16-medium.ld ../scripts/w16-ne-layout.py
+	python3 ../scripts/w16-ne-layout.py $< > $@.tmp
+	mv $@.tmp $@
+
+w16-ne.elf: $(OBJS) $(NANOX_LIB) w16-ne.ld
+	mkdir -p ../build
+	@ne_crt=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-file-name=crt0.o); \
+	ne_libc=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-file-name=libc.a); \
+	ne_gcc=$$($(CC) -mcmodel=medium -mregparmcall -melks-libc -print-libgcc-file-name); \
+	ia16-elf-ld.gold -m i386elks --gc-sections --defsym=_heap=0x2800 --defsym=_stack=0x1800 \
+	-T w16-ne.ld -Map ../build/w16-ne.map -o $@ "$$ne_crt" $(OBJS) $(NANOX_LIB) "$$ne_gcc" "$$ne_libc" "$$ne_gcc"
+
+w16.ne: w16-ne.elf ../scripts/elf2w16ne.py
+	python3 ../scripts/elf2w16ne.py $< $@

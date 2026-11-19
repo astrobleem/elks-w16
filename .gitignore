@@ -20,3 +20,8 @@ __pycache__/
 
 /src/rasterfont-data.h
 /src/rasterfont-data.h.tmp
+
+/src/w16-ne.ld
+/src/w16-ne.ld.tmp
+/src/w16-ne.elf
+/src/w16.ne
