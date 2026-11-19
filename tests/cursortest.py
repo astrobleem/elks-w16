@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise actual cursor loading with bounded synthetic Win16 resources."""
 import os
+import re
 import pathlib
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ icon_loader=user[start:end]
 kernel=(root/'src/kernel.c').read_text()
 resource_table=kernel[kernel.index('#define MAXRSRC'):kernel.index('/* FindResource(hInstance')]
 resource_view=kernel[kernel.index('int resource_view('):kernel.index('/* GlobalLock(hMem)')]
+drag_types=re.search(r'struct drag_cursor \{.*?\};',(root/'src/wapi.h').read_text(),re.S)[0]
 setup = r'''
 #include <assert.h>
 #include <stdarg.h>
@@ -50,11 +52,15 @@ static u32 global_size(u16 h){return h==0xf000?guest_length:0;}
 static int global_pointer(u16 h,u32 *p){if(h!=0xf000)return 0;guest_locks++;*p=2UL<<16;return 1;}
 static u32 global_unlock(u16 h){if(h==0xf000){assert(guest_locks);guest_locks--;}return 0;}
 static void fcopy_in(void *p,u16 seg,u16 off,u16 n){assert((seg==2||seg==3)&&(unsigned)off+n<=guest_length);memcpy(p,guest_resource+off,n);}
-static int global_image(u16 h,int set){(void)h;(void)set;return 0;}
+static int native_cursor_image;
+static int global_image(u16 h,int set){(void)set;return native_cursor_image&&h==0xf000;}
 static u16 image_copy(u16 h){(void)h;return 0;}
 static u16 image_destroy(u16 h){(void)h;return 0;}
-static u8 *image_snapshot(u16 h,u16 *len){(void)h;(void)len;return NULL;}
+static u8 *image_snapshot(u16 h,u16 *len){u8*p;if(!native_cursor_image||h!=0xf000)return NULL;*len=176;p=malloc(*len);memcpy(p,icon_resource,*len);return p;}
 static u16 image_from_dib(u16 h,const u8 *p,u16 len){(void)h;(void)p;(void)len;return 0;}
+static u16 rd16(u16 seg,u16 off){u8 p[2];fcopy_in(p,seg,off,2);return p[0]|((u16)p[1]<<8);}
+static int destroyed_cursors;
+static void GrDestroyCursor(unsigned id){assert(id);destroyed_cursors++;}
 static struct { int used, ctl; unsigned frame, client; } wins[MAXWIN];
 static int new_calls, fail_new, short_data, missing, resource_reads, group_reads,bad_hot,bad_header,odd_height;
 static unsigned last_cursor;
@@ -258,13 +264,26 @@ int main(void) {
      assert(!u_GetIconId(0,0xffff));
      icon_shutdown();
     }
+    {struct drag_cursor state;u16 old=cur_hcur;int count=cur_show,freed=destroyed_cursors;
+     assert(cursor_drag_start(&state,arrow));cursor_drag_choose(&state,1);cursor_drag_choose(&state,0);cursor_drag_end(&state);
+     assert(cur_hcur==old&&cur_show==count&&destroyed_cursors==freed+1);
+     fail_new=1;assert(!cursor_drag_start(&state,arrow)&&cur_show==count);fail_new=0;
+     memset(icon_resource,0,sizeof(icon_resource));icon_resource[0]=40;icon_resource[4]=16;icon_resource[8]=32;icon_resource[12]=1;icon_resource[14]=1;
+     icon_resource[44]=icon_resource[45]=icon_resource[46]=255;
+     guest_length=32;memset(guest_resource,0,32);guest_resource[0]=4;guest_resource[2]=5;native_cursor_image=1;
+     assert(cursor_drag_start(&state,0xf000)&&!guest_locks);cursor_drag_choose(&state,1);cursor_drag_end(&state);
+     assert(cur_hcur==old&&cur_show==count&&!guest_locks);
+     /* Do not silently turn unsupported XOR-only native cursor pixels black. */
+     icon_resource[48+15*4]=0x80;icon_resource[112+15*4]=0x80;
+     assert(!cursor_drag_start(&state,0xf000)&&!guest_locks);native_cursor_image=0;
+    }
     puts("Shared icon/cursor DIB decoding, masked drawing, cursor reuse and failure checks passed");
     return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
     c=pathlib.Path(tmp)/'cursor.c'; exe=pathlib.Path(tmp)/'cursor'
-    c.write_text(setup+resource_table+resource_view+dib_header+dib_source+source+icon_objects+icon_loader+render+icon_source+checks)
+    c.write_text(setup+drag_types+"\n"+resource_table+resource_view+dib_header+dib_source+source+icon_objects+icon_loader+render+icon_source+checks)
     subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Wno-unused-parameter',
                     '-fsanitize=address,undefined','-fno-pie','-no-pie',str(c),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=0'})

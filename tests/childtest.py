@@ -14,7 +14,7 @@ pre='''#include "w16.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-typedef unsigned GR_WINDOW_ID, GR_COLOR;
+typedef unsigned GR_WINDOW_ID, GR_COLOR, GR_CURSOR_ID;
 typedef struct {unsigned wid,parent,child,sibling;} GR_WINDOW_INFO;
 static GR_WINDOW_INFO native_info[700];
 static void GrGetWindowInfo(unsigned id,GR_WINDOW_INFO *i){assert(id<700);*i=native_info[id];}
@@ -49,6 +49,8 @@ pre+='\n'.join(l for l in h.splitlines() if l.startswith('#define ICON_') or l.s
 for name in ('wclass','wnd'):
     pre+=re.search(r'struct '+name+r' \{.*?\n\};',h,re.S)[0]+'\n'
 pre+=re.search(r'struct placement \{.*?\n\};',u,re.S)[0]+'\n'
+pre+=re.search(r'struct drag_event \{.*?\};',h,re.S)[0]+'\n'+re.search(r'struct drag_cursor \{.*?\};',h,re.S)[0]+'\n'
+pre+=re.search(r'struct qmsg \{.*?\};',u,re.S)[0]+'\n'
 pre+='''static struct placement *placements;
 static struct placement *placement_get(struct wnd*,int);
 static void placement_moved(struct wnd*);
@@ -115,11 +117,15 @@ static u16 activation_serial;
 static u16 reenter_on,reenter_to;static unsigned activation_events;
 u32 u_SetActiveWindow(u16,u16);
 static int modal_block;
-static int blocked(struct wnd*w){(void)w;return modal_block;}
+static u16 sysmodal_hwnd,modal_hwnd,modal_owner;
+static int actual_blocked(struct wnd*);
+static int blocked(struct wnd*w){return modal_block||actual_blocked(w);}
 static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair,mdi_syslp;
 static u16 mdi_deactivated,mdi_activated,mdi_reenter_on,mdi_reenter_to;
+static u32 drag_message(struct wnd*,u16,u16,u32);
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
+if(m>=0x22a&&m<=0x22f)return drag_message(w,m,p,l);
 if(m==WM_QUERYOPEN)return query_open;
 if(m==WM_SIZE&&w->hwnd==destroy_on_size){destroy_on_size=0;destroy_window(w);return 0;}
 if(m==WM_SYSCOMMAND)mdi_syslp=l;
@@ -142,11 +148,98 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+pre+='''
+u8 w16_scratch[W16_SCRATCH];
+static u16 allocation_next=0x4000;static int allocation_live,fail_global;
+int seg_alloc(u16 n,u16*s){if(fail_global)return -1;*s=allocation_next;allocation_next+=n+1;allocation_live++;return 0;}
+void seg_free(u16 s){(void)s;assert(allocation_live>0);allocation_live--;}
+void fcopy_in(void*p,u16 s,u16 o,u16 n){memcpy(p,host_ptr(s,o,n),n);}
+void fcopy_out(u16 s,u16 o,const void*p,u16 n){memcpy(host_ptr(s,o,n),p,n);}
+static struct qmsg input_messages[12];static int input_n,input_at,dispatched;
+static int quit_pending;static u16 quit_code;
+static int next_msg(struct qmsg*m,int block){assert(block&&input_at<input_n);*m=input_messages[input_at++];return 1;}
+static u32 dispatch(u16 h,u16 m,u16 p,u32 l){(void)h;(void)m;(void)p;(void)l;dispatched++;return 0;}
+static int cursor_active,cursor_failed,cursor_choices,bells;
+int cursor_drag_start(struct drag_cursor*c,u16 h){(void)c;(void)h;if(cursor_failed)return 0;assert(!cursor_active);cursor_active=1;return 1;}
+void cursor_drag_choose(struct drag_cursor*c,u16 reply){(void)c;(void)reply;assert(cursor_active);cursor_choices++;}
+void cursor_drag_end(struct drag_cursor*c){(void)c;assert(cursor_active);cursor_active=0;}
+static const char *beep_setting;
+const char *prof_path(void){return "win.ini";}
+int prof_get(const char*path,const char*app,const char*key,char*out,int n){assert(!strcmp(path,"win.ini")&&!strcmp(app,"windows")&&!strcmp(key,"Beep"));if(!beep_setting)return -1;snprintf(out,n,"%s",beep_setting);return strlen(out);}
+void GrBell(void){bells++;}
+'''
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','win_client_origin','top_window','win_by_nx','user_input_blocked','user_window_relative','u_SetSysModalWindow','u_GetSysModalWindow','user_drag_capture','user_drag_alive','user_drag_release','user_drag_next','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code+=func('blocked').replace('blocked(', 'actual_blocked(',1)
+code+=(root/'src/drag.c').read_text().replace('#include \"wapi.h\"','')
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
 }
+
+static int drag_mode,queries,selects,deselects,dragmoves,drops,loops;
+static u32 drag_message(struct wnd*w,u16 msg,u16 wp,u32 lp)
+{
+ u16 seg=lp>>16,off=(u16)lp;
+ assert(rd16(seg,off)==HWND_BASE+4&&rd16(seg,off+4)==1);
+ assert(rd16(seg,off+6)==0x1234&&rd16(seg,off+8)==0x5678);
+ if(msg==WM_QUERYDROPOBJECT){
+  queries++;if(drag_mode==1)return 0;
+  if(drag_mode==2){capture_hwnd=0;return 1;}
+  if(drag_mode==3){destroy_window(win_get(HWND_BASE+4));return 1;}
+  if(drag_mode==4)assert(!u_DragObject(0x1000,0));
+  assert(rd16(seg,off+2)==w->hwnd);
+  wr32(seg,off+14,w->hwnd);return 1;
+ }
+ if(msg==WM_DRAGLOOP){assert(w->hwnd==HWND_BASE+4&&cursor_active);loops++;return 0;}
+ if(msg==WM_DRAGSELECT){assert(rd16(seg,off+2)==w->hwnd);if(wp)selects++;else deselects++;return 0;}
+ if(msg==WM_DRAGMOVE){assert(rd16(seg,off+2)==w->hwnd);dragmoves++;return 0;}
+ assert(msg==WM_DROPOBJECT&&wp==HWND_BASE+4&&!capture_hwnd&&!cursor_active);
+ assert(rd16(seg,off+2)==w->hwnd&&rd32(seg,off+14)==w->hwnd);drops++;return 0x12340002UL;
+}
+static void drag_fixture(void)
+{
+ int i;assert(!placements&&!allocation_live);memset(wins,0,sizeof(wins));memset(native_info,0,sizeof(native_info));
+ sysmodal_hwnd=modal_hwnd=modal_owner=capture_hwnd=0;modal_block=0;
+ queries=selects=deselects=dragmoves=drops=loops=0;drag_mode=0;input_at=0;input_n=5;dispatched=0;quit_pending=0;
+ for(i=0;i<4;i++){
+  struct wnd*w=&wins[i];w->used=w->visible=1;w->hwnd=HWND_BASE+4*i;w->frame=100+10*i;w->client=101+10*i;
+  w->cx=w->cy=1;w->w=80;w->h=60;w->cw=78;w->ch=58;w->x=i==1?5:i==2?100:200;w->y=i==1?5:20;w->parent=i?HWND_BASE:0;
+  native_info[w->frame].wid=w->frame;native_info[w->frame].parent=i?101:1;native_info[w->client].wid=w->client;
+ }
+ wins[0].x=wins[0].y=0;wins[0].w=302;wins[0].h=182;wins[0].cw=300;wins[0].ch=180;
+ native_info[1].wid=1;native_info[1].child=100;native_info[101].child=130;native_info[130].sibling=120;native_info[120].sibling=110;
+ memset(input_messages,0,sizeof(input_messages));input_messages[0].msg=WM_TIMER;
+ for(i=1;i<5;i++){input_messages[i].msg=i==4?0x202:0x200;input_messages[i].x=i<=2?120:220;input_messages[i].y=40;}
+ wr16(0x1000,10,HWND_BASE);wr16(0x1000,8,HWND_BASE+4);wr16(0x1000,6,1);wr16(0x1000,4,0x5678);wr16(0x1000,2,0x1234);wr16(0x1000,0,0x500);
+}
+static void drag_protocol(void)
+{
+ drag_fixture();drag_mode=4;assert(u_DragObject(0x1000,0)==0x12340002UL);
+ assert(queries==4&&loops==4&&selects==2&&deselects==1&&dragmoves==2&&drops==1&&dispatched==1&&!allocation_live&&!cursor_active&&!capture_hwnd);
+ drag_fixture();drag_mode=1;assert(!u_DragObject(0x1000,0)&&!drops&&!selects&&!allocation_live&&!cursor_active);
+ drag_fixture();drag_mode=2;assert(!u_DragObject(0x1000,0)&&!drops&&!allocation_live&&!cursor_active);
+ drag_fixture();drag_mode=3;assert(!u_DragObject(0x1000,0)&&!drops&&!allocation_live&&!cursor_active&&!win_get(HWND_BASE+4));
+ drag_fixture();input_n=1;input_messages[0].msg=WM_QUIT;input_messages[0].wp=17;
+ assert(!u_DragObject(0x1000,0)&&quit_pending&&quit_code==17&&!allocation_live&&!cursor_active);
+ drag_fixture();input_n=2;input_messages[0]=input_messages[1];input_messages[1].msg=WM_KEYDOWN;input_messages[1].wp=27;
+ assert(!u_DragObject(0x1000,0)&&selects==1&&deselects==1&&!drops&&!allocation_live&&!cursor_active);
+ drag_fixture();fail_global=1;assert(!u_DragObject(0x1000,0)&&!allocation_live&&!cursor_active);fail_global=0;
+ cursor_failed=1;assert(!u_DragObject(0x1000,0)&&!allocation_live&&!cursor_active);cursor_failed=0;
+ assert(!u_DragObject(0x1000,0xffff));
+ /* A system-modal target admits its children/owned popups, blocks siblings,
+  * and revokes capture outside its tree. Invalid handles do not replace it. */
+ capture_hwnd=HWND_BASE+4;wr16(0x1000,0,HWND_BASE+8);assert(!u_SetSysModalWindow(0x1000,0));
+ assert(u_GetSysModalWindow(0,0)==HWND_BASE+8&&!capture_hwnd&&blocked(&wins[1])&&!blocked(&wins[2]));
+ wins[4]=wins[2];wins[4].hwnd=HWND_BASE+16;wins[4].parent=HWND_BASE+8;assert(!blocked(&wins[4]));
+ wins[5]=wins[2];wins[5].hwnd=HWND_BASE+20;wins[5].parent=0;wins[5].owner=HWND_BASE+8;assert(!blocked(&wins[5]));
+ wins[2].style|=WS_DISABLED;assert(blocked(&wins[4])&&!blocked(&wins[5]));wins[2].style&=~WS_DISABLED;
+ wr16(0x1000,0,0xffff);assert(!u_SetSysModalWindow(0x1000,0)&&u_GetSysModalWindow(0,0)==HWND_BASE+8);
+ wr16(0x1000,0,0);assert(u_SetSysModalWindow(0x1000,0)==HWND_BASE+8&&!u_GetSysModalWindow(0,0));
+ wr16(0x1000,0,HWND_BASE+8);u_SetSysModalWindow(0x1000,0);wins[4].used=wins[5].used=0;destroy_window(&wins[2]);assert(!u_GetSysModalWindow(0,0));
+ bells=0;beep_setting=0;wr16(0x1000,0,0xffff);u_MessageBeep(0x1000,0);assert(bells==1);
+ beep_setting="No";u_MessageBeep(0x1000,0);assert(bells==1);beep_setting="Yes";u_MessageBeep(0x1000,0);assert(bells==2);
+}
+
 int main(void){u16 id;int x,y;unsigned frame;
  /* Five Paintbrush windows, one 17-control Save As, then a 4-control alert. */
  assert(MAXWIN>=5+1+17+1+4);
@@ -424,9 +517,10 @@ int main(void){u16 id;int x,y;unsigned frame;
   destroy_window(&wins[0]);assert(wins[5].used&&wins[5].ended);destroy_window(&wins[5]);
   assert(!win_get(popup)&&!win_get(owned)&&!win_get(child)&&win_get(other));destroy_window(win_get(other));
  }
- puts("Window tree, native order, ownership, activation and MDI lifecycle checks passed");return 0;}
+ drag_protocol();
+ puts("Window tree, MDI, drag protocol, system modality and bell policy checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
     p=pathlib.Path(td);(p/'test.c').write_text(code)
-    subprocess.run(['cc','-DW16_HOST','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-no-pie','-I'+str(root/'src'),str(p/'test.c'),'-o',str(p/'test')],check=True)
+    subprocess.run(['cc','-DW16_HOST','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-no-pie','-I'+str(root/'src'),str(p/'test.c'),str(root/'src/global.c'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'))

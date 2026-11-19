@@ -101,6 +101,7 @@ u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetCurrentTime(u16,u16),u_GetLastActivePopup(u16,u16),u_LoadMenu(u16,u16),u_SetMenu(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
+u32 u_DragObject(u16,u16),u_MessageBeep(u16,u16),u_SetSysModalWindow(u16,u16),u_GetSysModalWindow(u16,u16);
 u32 u_DefFrameProc(u16,u16),u_GetInternalWindowPos(u16,u16),u_SetInternalWindowPos(u16,u16),u_ArrangeIconicWindows(u16,u16);
 u32 u_ShowScrollBar(u16,u16),u_CalcChildScroll(u16,u16),u_ScrollChildren(u16,u16);
 u32 u_MoveWindow(u16,u16),u_SetWindowPos(u16,u16);
@@ -450,6 +451,10 @@ const struct api api_table[] = {
     { K, 152, "GetNumTasks", 0, 0, H(k_GetNumTasks) },
     { U, 84, "DrawIcon", 8, 0, H(u_DrawIcon) },
     { U, 368, "CopyIcon", 4, 0, H(u_CopyIcon) },
+    { U, 104, "MessageBeep", 2, 0, H(u_MessageBeep) },
+    { U, 188, "SetSysModalWindow", 2, 0, H(u_SetSysModalWindow) },
+    { U, 189, "GetSysModalWindow", 0, 0, H(u_GetSysModalWindow) },
+    { U, 464, "DragObject", 12, 0, H(u_DragObject) },
     { U, 170, "ArrangeIconicWindows", 2, 0, H(u_ArrangeIconicWindows) },
     { U, 460, "GetInternalWindowPos", 10, 0, H(u_GetInternalWindowPos) },
     { U, 461, "SetInternalWindowPos", 12, 0, H(u_SetInternalWindowPos) },

@@ -58,6 +58,7 @@ static int keyup_pending, saw_real_keyup;
 static int npaints;
 int font_h = 13;
 static int scr_w = 320, scr_h = 200;
+static u16 sysmodal_hwnd;
 static u16 modal_owner, modal_hwnd;                  /* the modal dialog running, or 0: other windows get no input */
 char opt_dump[40];
 int  opt_ready;
@@ -598,17 +599,31 @@ static void post_button(struct wnd *w, int down, u16 changed, u16 buttons, int x
              msg == WM_LBUTTONDOWN ? "WM_LBUTTONDOWN" : msg == WM_LBUTTONUP ? "WM_LBUTTONUP" : "right button");
 }
 
-/* a modal dialog is up and w is not part of it (Windows disables the dialog's owner) */
+/* Input to a system-modal window includes its children and owned popups.
+ * Disabled ancestors and a nested application-modal dialog remain effective. */
 static int blocked(struct wnd *w)
 {
-    int n = 0;
-    if (modal_hwnd && top_window(w)->hwnd != modal_hwnd)
-        return 1;
-    for (; w && n++ < MAXWIN; w = win_get(w->parent))
-        if (w->style & WS_DISABLED)
-            return 1;
-    return 0;
+ struct wnd *p;int n=0,inside=!sysmodal_hwnd;
+ if(!w)return 1;
+ if(modal_hwnd&&top_window(w)->hwnd!=modal_hwnd)return 1;
+ for(p=w;p&&n++<MAXWIN;p=win_get(p->parent))if(p->style&WS_DISABLED)return 1;
+ if(inside)return 0;
+ n=0;
+ for(p=w;p&&n++<MAXWIN;p=win_get(p->parent?p->parent:p->owner))if(p->hwnd==sysmodal_hwnd)return 0;
+ return 1;
 }
+int user_input_blocked(struct wnd *w){return blocked(w);}
+u16 user_window_relative(u16 h,u16 cmd){return window_relative(h,cmd);}
+u32 u_SetSysModalWindow(u16 ss,u16 ap)
+{
+ u16 h,old=sysmodal_hwnd;struct wnd *w;
+ if(ap>0xfffeu)return 0;
+ h=AW(0);w=win_get(h);if(h&&!w)return 0;
+ sysmodal_hwnd=h;
+ w=win_get(capture_hwnd);if(w&&blocked(w))capture_hwnd=0;
+ return old;
+}
+u32 u_GetSysModalWindow(u16 ss,u16 ap){(void)ss;(void)ap;return sysmodal_hwnd;}
 
 static void translate_event(GR_EVENT *ev)
 {
@@ -1389,6 +1404,7 @@ static u16 set_focus(struct wnd *w)
 {
     u16 prev=focus_hwnd, target=w?w->hwnd:0,notified;
     struct wnd *old=win_get(prev),*child=mdi_child(w);
+    if(w&&blocked(w))return prev;
     if(child && !(child->style&WS_MINIMIZE)) {
         struct wnd *c=win_get(child->parent);
         if(c->mdi_active!=child->hwnd && !mdi_activate(c,child->hwnd))return prev;
@@ -1646,6 +1662,7 @@ static void destroy_window(struct wnd *w)
     kill_timers(hwnd);
     if (capture_hwnd == hwnd)
         capture_hwnd = 0;
+    if(sysmodal_hwnd==hwnd)sysmodal_hwnd=0;
     if (focus_hwnd == hwnd)
         focus_hwnd = 0;
     if (w->hmenu)
@@ -1960,6 +1977,32 @@ static int next_msg(struct qmsg *m, int block)
     }
 }
 
+int user_drag_capture(u16 h)
+{
+ struct wnd *w=win_get(h);if(!w||blocked(w))return 0;
+ capture_hwnd=h;return 1;
+}
+int user_drag_alive(u16 h,GR_WINDOW_ID frame)
+{struct wnd *w=win_get(h);return w&&w->frame==frame&&capture_hwnd==h&&!blocked(w);}
+void user_drag_release(u16 h){if(capture_hwnd==h)capture_hwnd=0;}
+static u32 dispatch(u16,u16,u16,u32);
+/* Keep timers/paints and ordinary messages live during the modal drag. Quit
+ * is put back for the application's outer loop; it is never swallowed. */
+int user_drag_next(u16 h,GR_WINDOW_ID frame,struct drag_event *out)
+{
+ struct qmsg m;
+ while(user_drag_alive(h,frame)){
+  next_msg(&m,1);
+  if(m.msg==WM_QUIT){quit_pending=1;quit_code=m.wp;return 0;}
+  if(m.msg==0x001f||(m.msg==WM_KEYDOWN&&m.wp==27))return 0;
+  if((m.msg>=0x0200&&m.msg<=0x0209)||(m.msg>=0x00a0&&m.msg<=0x00a9)){
+   out->x=m.x;out->y=m.y;out->released=m.msg==0x0202||m.msg==0x00a2;return 1;
+  }
+  dispatch(m.hwnd,m.msg,m.wp,m.lp);
+ }
+ return 0;
+}
+
 /* deliver one message to its window procedure; WM_TIMER with a callback calls the callback */
 static u32 dispatch(u16 hwnd, u16 msg, u16 wp, u32 lp)
 {
@@ -2080,7 +2123,7 @@ u32 u_PostMessage(u16 ss, u16 ap)
 u32 u_SetCapture(u16 ss, u16 ap)
 {
     u16 prev = capture_hwnd;
-    capture_hwnd = win_get(AW(0)) ? AW(0) : 0;
+    {struct wnd *w=win_get(AW(0));if(w&&!blocked(w))capture_hwnd=AW(0);else if(!AW(0))capture_hwnd=0;}
     return prev;
 }
 
@@ -2131,7 +2174,7 @@ u32 u_SetActiveWindow(u16 ss,u16 ap)
 u32 u_SetFocus(u16 ss, u16 ap)
 {
     struct wnd *w=win_get(AW(0));
-    if(AW(0)&&(!w || (w->style&WS_DISABLED)))return 0;
+    if(AW(0)&&(!w || blocked(w)))return 0;
     return set_focus(w);
 }
 
@@ -3437,6 +3480,7 @@ int user_init(void)
 {
     GR_SCREEN_INFO si;
     GR_SIZE w, h, b;
+    sysmodal_hwnd=0;
     registered_reset();
     if (GrOpen() < 0) {
         wlog("w16: cannot connect to the Nano-X server (start nano-color first)\n");

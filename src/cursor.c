@@ -219,6 +219,80 @@ void cursor_census(u16 *n)
             (*n)++;
 }
 
+/* Drag cursors are temporary server objects, kept on the caller's stack.
+ * A native mono image is snapshotted rather than cached under a recycled
+ * global handle. Nano-X cannot represent XOR-only cursor pixels. */
+static GR_CURSOR_ID drag_native_cursor(u16 h)
+{
+ u8 *d;u16 len,x,y,w,ht,scale,hx,hy;u32 ptr,mask;GR_CURSOR_ID id=0;
+ struct dib_info info;struct dib_memory memory;GR_BITMAP fg[16],bg[16];
+ d=image_snapshot(h,&len);if(!d)return 0;
+ memory.data=d;memory.length=len;
+ if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask)||info.bpp!=1||info.width!=info.height||(info.width!=16&&info.width!=32))goto done;
+ if(!global_pointer(h,&ptr)||!ptr)goto done;
+ hx=rd16(ptr>>16,0);hy=rd16(ptr>>16,2);global_unlock(h);
+ w=info.width;ht=info.height;if(hx>=w||hy>=ht)goto done;
+ scale=w/16;memset(fg,0,sizeof(fg));memset(bg,0,sizeof(bg));
+ for(y=0;y<16;y++)for(x=0;x<16;x++){
+  u16 sx=x*scale,sy=y*scale;
+  const u8 *xr=d+info.pixels+info.stride*(ht-1-sy),*ar=d+mask+((w+31)/32)*4*(ht-1-sy);
+  int a=(ar[sx>>3]>>(7-(sx&7)))&1,v=(xr[sx>>3]>>(7-(sx&7)))&1;
+  if(a&&v)goto done;
+  if(!a){if(v)fg[y]|=(GR_BITMAP)(0x8000u>>x);else bg[y]|=(GR_BITMAP)(0x8000u>>x);}
+ }
+ id=GrNewCursor(16,16,hx/scale,hy/scale,GR_RGB(255,255,255),GR_RGB(0,0,0),fg,bg);
+done:
+ free(d);return id;
+}
+static int drag_cursor_id(u16 h,GR_CURSOR_ID *id,int *owned)
+{
+ u16 i=(u16)(h-HCURSOR_BASE)/2;*owned=0;
+ if(!h){*id=0;return 1;}
+ if(h>=HCURSOR_BASE&&!(h&1)&&i<MAXCUR&&cursors[i].used){*id=cursors[i].id;return 1;}
+ if(!global_image(h,0))return 0;
+ *id=drag_native_cursor(h);*owned=1;return *id!=0;
+}
+int cursor_drag_start(struct drag_cursor *state,u16 h)
+{
+ GR_BITMAP fg[16],bg[16];int x,y,owned;
+ memset(state,0,sizeof(*state));state->old=cur_hcur;
+ if(cur_show==32767||!drag_cursor_id(h,&state->good,&owned))return 0;
+ state->owned=(u8)owned;memset(fg,0,sizeof(fg));memset(bg,0,sizeof(bg));
+ for(y=0;y<16;y++)for(x=0;x<16;x++){
+  int dx=x-7,dy=y-7,r=dx*dx+dy*dy;
+  if(r<=45){if(r>=25||(dx-dy<=1&&dx-dy>=-1))fg[y]|=(GR_BITMAP)(0x8000u>>x);else bg[y]|=(GR_BITMAP)(0x8000u>>x);}
+ }
+ state->bad=GrNewCursor(16,16,7,7,GR_RGB(0,0,0),GR_RGB(255,255,255),fg,bg);
+ if(!state->bad){if(state->owned)GrDestroyCursor(state->good);return 0;}
+ cur_show++;return 1;
+}
+void cursor_drag_choose(struct drag_cursor *state,u16 reply)
+{
+ GR_CURSOR_ID id=reply?state->good:state->bad,retired=0;int i,owned;
+ if(reply>1){
+  if(state->alternate_handle!=reply){
+   GR_CURSOR_ID next;
+   if(drag_cursor_id(reply,&next,&owned)){
+    retired=state->alternate;
+    state->alternate=owned?next:0;state->alternate_handle=owned?reply:0;id=next;
+   }
+  }else id=state->alternate;
+ }
+ if(cur_show<0)id=current_id();
+ if(id!=cur_shown){
+  cur_shown=id;
+  for(i=0;i<MAXWIN;i++)if(wins[i].used&&!wins[i].ctl){GrSetWindowCursor(wins[i].frame,id);GrSetWindowCursor(wins[i].client,id);}
+ }
+ if(retired)GrDestroyCursor(retired);
+}
+void cursor_drag_end(struct drag_cursor *state)
+{
+ cur_hcur=state->old;cur_show--;cur_apply();
+ if(state->owned)GrDestroyCursor(state->good);
+ if(state->alternate)GrDestroyCursor(state->alternate);
+ GrDestroyCursor(state->bad);
+}
+
 /* ---------------------------------------------------------------- accelerators */
 #define MAXACC 2
 struct accel { u8 fl; u16 key, cmd; };          /* FVIRTKEY 1, FNOINVERT 2, FSHIFT 4, FCONTROL 8, FALT 16, last 0x80 */
