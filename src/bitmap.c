@@ -651,6 +651,34 @@ static u8 stretch_index(struct bitmap *s,u16 x,u16 y,int pair)
  u8 c=bitmap_index(s,x,y);
  return pair?(c&bitmap_index(s,x,y+1)):c;
 }
+/* Cache one bounded tile of reduced indices, then send transparent COPY
+ * masks for its present palette entries. Each destination pixel belongs to one
+ * mask; neither the DC clip nor palette lookup is approximated. */
+static int stretch_color_pair(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
+ int sx,int sy,int dx,int dy,int w,int h)
+{
+ GR_BITMAP *bits=(GR_BITMAP*)w16_scratch;u8 *indices;
+ int wpr=(w+15)>>4,batch=480/(2*wpr),base,rows,x,y,i;u16 present;
+ if(batch>W16_SCRATCH/(w+2*wpr))batch=W16_SCRATCH/(w+2*wpr);
+ if(!batch)return 0;
+ indices=(u8*)bits+2*wpr*batch;
+ GrSetGCUseBackground(d->gc,0);
+ for(base=0;base<h;base+=rows){
+  rows=h-base;if(rows>batch)rows=batch;present=0;
+  for(y=0;y<rows;y++)for(x=0;x<w;x++){
+   u8 c=stretch_index(s,sx+x,sy+2*(base+y),1);
+   indices[y*w+x]=c;present|=(u16)(1u<<c);
+  }
+  for(i=0;i<16;i++)if(present&(u16)(1u<<i)){
+   memset(bits,0,2*wpr*rows);
+   for(y=0;y<rows;y++)for(x=0;x<w;x++)
+    if(indices[y*w+x]==i)bits[y*wpr+(x>>4)]|=(GR_BITMAP)(0x8000u>>(x&15));
+   GrSetGCForeground(d->gc,rgb_to_gr(bitmap_rgb(s,i)));
+   GrBitmap(d->wid,d->gc,dx,dy+base,w,rows,bits);
+  }
+ }
+ GrSetGCUseBackground(d->gc,old->usebackground);return 1;
+}
 /* Exact opaque mono/two-index color row-pair copy. Each packet has <=480 bytes of MSB-first
  * words, leaving room for the Nano-X header in its 512-byte request limit.
  * SRCAND deliberately retains the run path: GrBitmap's background prefill and
@@ -668,7 +696,8 @@ static int stretch_pair_bitmap(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
  if(s->bpp!=1){
   if(s->bpp!=4)return 0;
   for(y=0;y<h;y++)for(x=0;x<w;x++)
-   if(stretch_index(s,sx+x,sy+2*y,1)>1)return 0;
+   if(stretch_index(s,sx+x,sy+2*y,1)>1)
+    return stretch_color_pair(s,d,old,sx,sy,dx,dy,w,h);
  }
  fg=s->bpp==1?d->bkcolor:bitmap_rgb(s,1);
  bg=s->bpp==1?d->textcolor:bitmap_rgb(s,0);

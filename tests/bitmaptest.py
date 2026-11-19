@@ -12,9 +12,10 @@ typedef uint8_t u8;typedef uint16_t u16;typedef uint32_t u32;typedef int16_t i16
 typedef int GR_WINDOW_ID;typedef int GR_GC_ID;
 typedef struct{int cols,rows;}GR_SCREEN_INFO;
 typedef struct{int count;struct{u8 r,g,b,pad;}palette[256];}GR_PALETTE;
-static GR_PALETTE native_palette,scratch;
-#define W16_SCRATCH 2048
-#define w16_scratch (&scratch)
+static GR_PALETTE native_palette;
+#define W16_SCRATCH 2049
+static union {u16 align;u8 bytes[W16_SCRATCH];}scratch;
+#define w16_scratch (scratch.bytes)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
 typedef u16 GR_BITMAP;
 typedef struct{int foreground,background,mode,usebackground,fgispixelval,bgispixelval;}GR_GC_INFO;
@@ -246,7 +247,7 @@ static void stretch_tests(void){
 /* Force the unchanged run fallback through the pixel-value guard, then compare
  * every destination pixel and count API requests on identical synthetic input. */
 static void stretch_batch_tests(void){
- static u32 reference[10000];u16 b,d;int x,y,i,k,oldcalls,clipped,depth;
+ static u32 reference[10000];u16 b,d;int x,y,i,k,oldcalls,clipped,depth,mono;
  const int widths[]={1,15,16,17,71};
  for(depth=1;depth<=4;depth+=3)for(k=0;k<5;k++)for(clipped=0;clipped<2;clipped++){
   int w=widths[k],h=48,dx=clipped?-(w>3?3:w-1):2,dy=clipped?-5:3;
@@ -267,16 +268,38 @@ static void stretch_batch_tests(void){
   if(w==71)printf("71x96->71x48 %dbpp %s: fallback %d requests; batch %d, payload %d bytes; identical pixels\n",depth,clipped?"clipped":"full",oldcalls,requests,max_payload);
   bitmap_shutdown();clean();
  }
+ /* Seven indices as observed in the default card resource; compare with
+  * the unchanged run fallback using the pixel-value guard. */
+ for(mono=0;mono<2;mono++)for(clipped=0;clipped<2;clipped++){
+  static const u8 colors[7]={0,1,2,3,6,7,15};int dx=clipped?-3:2,dy=clipped?-5:3;
+  indexed=mono;for(i=0;i<16;i++)native_palette.palette[i].r=native_palette.palette[i].g=native_palette.palette[i].b=i?255:0;
+  setup(71,96,4);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+  for(y=0;y<96;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,colors[(x*((y/2)<38?16:15)/71)%7]);
+  for(i=0;i<16;i++){bitmaps[bi(b)].palette[i].r=i*13;bitmaps[bi(b)].palette[i].g=i*7;bitmaps[bi(b)].palette[i].b=i*17;}
+  for(i=0;i<10000;i++)surface[i]=0xabcdef;
+  foreground=77;background=55;usebackground=clipped;mode=3;pixel_flags=1;requests=bitmap_requests=0;
+  assert(stretch(d,dx,dy,71,48,0,0,71,96,0x00cc0020UL));oldcalls=requests;
+  assert(!bitmap_requests);memcpy(reference,surface,sizeof reference);
+  for(i=0;i<10000;i++)surface[i]=0xabcdef;
+  pixel_flags=0;requests=bitmap_requests=max_payload=0;
+  assert(stretch(d,dx,dy,71,48,0,0,71,96,0x00cc0020UL));
+  assert(!memcmp(reference,surface,sizeof reference));
+  assert(foreground==77&&background==55&&usebackground==clipped&&mode==3);
+  assert(bitmap_requests<=14&&requests<=34&&max_payload<=480);
+  printf("Seven-index card %s %s: %d -> %d requests (%d masks), payload <=%d; identical pixels\n",mono?"mono-native":"RGB",clipped?"clipped":"full",oldcalls,requests,bitmap_requests,max_payload);
+  bitmap_shutdown();clean();
+ }
+ indexed=0;
  /* Two bounded packets rather than asking the client to split an oversized one. */
  setup(71,192,1);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
  requests=bitmap_requests=max_payload=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));
  assert(bitmap_requests==2&&max_payload==480);bitmap_shutdown();clean();
- /* A third color in the final row must refuse batching before any tile
-  * is sent, preserving the full-color fallback and its exact palette. */
+ /* A third color appearing in the final row takes tiled color masks,
+  * preserving the exact palette across tile boundaries. */
  setup(71,192,4);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
  for(y=0;y<192;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y)&1);
  bitmap_put(&bitmaps[bi(b)],70,190,7);bitmap_put(&bitmaps[bi(b)],70,191,7);
- requests=bitmap_requests=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));assert(!bitmap_requests);
+ requests=bitmap_requests=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));assert(bitmap_requests>1);
  for(y=0;y<96;y++)for(x=0;x<71;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],bitmap_index(&bitmaps[bi(b)],x,2*y)&bitmap_index(&bitmaps[bi(b)],x,2*y+1)));
  bitmap_shutdown();clean();
  /* AND retains the exact indexed run path; no bitmap background prefill. */
