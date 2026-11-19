@@ -16,7 +16,8 @@ static GR_PALETTE native_palette,scratch;
 #define W16_SCRATCH 2048
 #define w16_scratch (&scratch)
 static void GrGetSystemPalette(GR_PALETTE*p){*p=native_palette;}
-typedef struct{int foreground,mode;}GR_GC_INFO;
+typedef u16 GR_BITMAP;
+typedef struct{int foreground,background,mode,usebackground,fgispixelval,bgispixelval;}GR_GC_INFO;
 struct win{int cw,ch;};struct dc{struct win*w;int wid,gc;u32 bkcolor,textcolor;u8 stretchmode;u16 mapmode,palette;i16 wx,wy,vx,vy,wex,wey,vex,vey,brushx,brushy;u16 brush;};
 static struct win win={100,100};static struct dc dest={&win,1,2,0xffffff,0x123456};
 struct module{u16 dgroup;}mod={5};static struct module*w16_mod=&mod;
@@ -38,6 +39,7 @@ static void fcopy_out(u16 seg,u16 off,const void*p,u16 n){
 static int failafter=-1,maxallocbytes=16384;
 static int seglive,pixlive,gclive,segfail,pixfail,gcfail,readfail,readcount;
 static u32 surface[640*480],pixdata[640*480],foreground=77;static int mode=3;
+static int background=55,usebackground,pixel_flags,requests,bitmap_requests,max_payload;
 
 #define GR_MODE_HAVE_CAPTUREPIXELS 0x4000
 static int capture_fail_call;
@@ -86,12 +88,25 @@ static int GrNewPixmap(int w,int h,void*p){assert(!"unexpected native allocation
 static void GrDestroyWindow(int p){assert(!"unexpected native destruction");}
 static int GrNewGC(void){assert(!"unexpected GC allocation");return 0;}
 static void GrDestroyGC(int g){assert(!"unexpected GC destruction");}
-static void GrSetGCMode(int g,int m){mode=m&~0x2000;}
-static void GrSetGCForeground(int g,int c){foreground=c;}
-static void GrGetGCInfo(int g,GR_GC_INFO*i){i->foreground=foreground;i->mode=mode|capability;}
+static void GrSetGCMode(int g,int m){requests++;mode=m&~0x2000;}
+static void GrSetGCForeground(int g,int c){requests++;foreground=c;}
+static void GrSetGCBackground(int g,int c){requests++;background=c;}
+static void GrSetGCUseBackground(int g,int v){requests++;usebackground=v;}
+static void GrGetGCInfo(int g,GR_GC_INFO*i){requests++;i->foreground=foreground;i->mode=mode|capability;i->background=background;i->usebackground=usebackground;i->fgispixelval=pixel_flags&1;i->bgispixelval=(pixel_flags>>1)&1;}
 static void GrGetScreenInfo(GR_SCREEN_INFO*i){i->cols=i->rows=100;}
 static void GrPoint(int p,int g,int x,int y){assert(x>=0&&y>=0);if(p==3){assert(pixlive&&x<640&&y<480);pixdata[y*640+x]=foreground;}else{assert(p==1&&x<100&&y<100);surface[y*100+x]=indexed?(mode==GR_MODE_AND?(surface[y*100+x]&nearest(foreground)):nearest(foreground)):foreground;}}
-static void GrFillRect(int p,int g,int x,int y,int w,int h){int a,b;for(b=0;b<h;b++)for(a=0;a<w;a++)GrPoint(p,g,x+a,y+b);}
+static void GrFillRect(int p,int g,int x,int y,int w,int h){int a,b;requests++;for(b=0;b<h;b++)for(a=0;a<w;a++)GrPoint(p,g,x+a,y+b);}
+/* Model the existing server's COPY bitmap words, including opaque zero bits. */
+static void GrBitmap(int p,int g,int x,int y,int w,int h,GR_BITMAP*bits){
+ int xx,yy,fg=foreground,bytes=2*((w+15)/16)*h;
+ assert(mode==GR_MODE_COPY&&bytes<=480&&bytes+16<=512);
+ requests++;bitmap_requests++;if(bytes>max_payload)max_payload=bytes;
+ for(yy=0;yy<h;yy++)for(xx=0;xx<w;xx++){
+  int bit=(bits[yy*((w+15)/16)+xx/16]>>(15-xx%16))&1;
+  if(bit||usebackground){foreground=bit?fg:background;GrPoint(p,g,x+xx,y+yy);}
+ }
+ foreground=fg;
+}
 static void GrCopyArea(int p,int g,int dx,int dy,int w,int h,int s,int sx,int sy,int op){
  int x,y;assert(p==1&&s==3&&pixlive&&op==0&&sx>=0&&sy>=0);
  for(y=0;y<h;y++)for(x=0;x<w;x++){assert(dx+x>=0&&dx+x<100&&dy+y<100);surface[(dy+y)*100+dx+x]=pixdata[(sy+y)*640+sx+x];}
@@ -227,6 +242,52 @@ static void stretch_tests(void){
  for(y=0;y<48;y++)for(x=0;x<71;x++){u32 c=((x&15)&((x+y)&15))*17;assert(surface[y*100+x]==(c|(c<<8)|(c<<16)));}
  bitmap_shutdown();clean();
  puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");
+}
+/* Force the unchanged run fallback through the pixel-value guard, then compare
+ * every destination pixel and count API requests on identical synthetic input. */
+static void stretch_batch_tests(void){
+ static u32 reference[10000];u16 b,d;int x,y,i,k,oldcalls,clipped,depth;
+ const int widths[]={1,15,16,17,71};
+ for(depth=1;depth<=4;depth+=3)for(k=0;k<5;k++)for(clipped=0;clipped<2;clipped++){
+  int w=widths[k],h=48,dx=clipped?-(w>3?3:w-1):2,dy=clipped?-5:3;
+  setup(w,96,depth);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+  if(depth==4){bitmaps[bi(b)].palette[0]=(struct dib_rgb){255,0,0};bitmaps[bi(b)].palette[1]=(struct dib_rgb){255,255,255};}
+  for(y=0;y<96;y++)for(x=0;x<w;x++)bitmap_put(&bitmaps[bi(b)],x,y,((x*7+y*11)%13)<7);
+  dest.textcolor=0x193847;dest.bkcolor=0xaccdef;
+  for(i=0;i<10000;i++)surface[i]=0xabcdef;
+  foreground=77;background=55;usebackground=clipped;mode=3;pixel_flags=1;requests=bitmap_requests=0;
+  assert(stretch(d,dx,dy,w,h,0,0,w,96,0x00cc0020UL));
+  oldcalls=requests;assert(!bitmap_requests);memcpy(reference,surface,sizeof reference);
+  for(i=0;i<10000;i++)surface[i]=0xabcdef;
+  pixel_flags=0;requests=bitmap_requests=max_payload=0;
+  assert(stretch(d,dx,dy,w,h,0,0,w,96,0x00cc0020UL));
+  assert(!memcmp(reference,surface,sizeof reference));
+  assert(foreground==77&&background==55&&usebackground==clipped&&mode==3);
+  assert(bitmap_requests==1&&requests==10);
+  if(w==71)printf("71x96->71x48 %dbpp %s: fallback %d requests; batch %d, payload %d bytes; identical pixels\n",depth,clipped?"clipped":"full",oldcalls,requests,max_payload);
+  bitmap_shutdown();clean();
+ }
+ /* Two bounded packets rather than asking the client to split an oversized one. */
+ setup(71,192,1);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+ requests=bitmap_requests=max_payload=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));
+ assert(bitmap_requests==2&&max_payload==480);bitmap_shutdown();clean();
+ /* A third color in the final row must refuse batching before any tile
+  * is sent, preserving the full-color fallback and its exact palette. */
+ setup(71,192,4);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+ for(y=0;y<192;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,(x+y)&1);
+ bitmap_put(&bitmaps[bi(b)],70,190,7);bitmap_put(&bitmaps[bi(b)],70,191,7);
+ requests=bitmap_requests=0;assert(stretch(d,0,0,71,96,0,0,71,192,0x00cc0020UL));assert(!bitmap_requests);
+ for(y=0;y<96;y++)for(x=0;x<71;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],bitmap_index(&bitmaps[bi(b)],x,2*y)&bitmap_index(&bitmaps[bi(b)],x,2*y+1)));
+ bitmap_shutdown();clean();
+ /* AND retains the exact indexed run path; no bitmap background prefill. */
+ setup(71,96,1);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+ capability=0x2000;indexed=1;dest.textcolor=0;dest.bkcolor=0xffffff;
+ for(i=0;i<16;i++)native_palette.palette[i].r=native_palette.palette[i].g=native_palette.palette[i].b=i*17;
+ for(i=0;i<10000;i++)surface[i]=7;
+ requests=bitmap_requests=0;assert(stretch(d,0,0,71,48,0,0,71,96,0x008800c6UL));assert(!bitmap_requests);
+ for(y=0;y<48;y++)for(x=0;x<71;x++)assert(surface[y*100+x]==((bitmap_index(&bitmaps[bi(b)],x,2*y)&bitmap_index(&bitmaps[bi(b)],x,2*y+1))?7:0));
+ indexed=capability=0;bitmap_shutdown();clean();
+ puts("StretchBlt batching: bit boundaries, clipped phase, opaque colors, GC restore, packet split and AND fallback passed");
 }
 static void origin_tests(void){
  u16 d,e,b,c;int x,y;native_palette.count=16;for(x=0;x<16;x++){native_palette.palette[x].r=x*17;native_palette.palette[x].g=x*7;native_palette.palette[x].b=x*3;}
@@ -560,6 +621,8 @@ static void memory_mask_test(void){
  puts("Memory E2 mono expansion, pattern phase, clipping and unsupported-brush refusal passed");
 }
 int main(int argc,char**argv){
+ if(getenv("BITMAP_STRETCH_ONLY")){stretch_tests();stretch_batch_tests();return 0;}
+ stretch_batch_tests();
  memory_rop_truth_test();memory_mask_test();
  stock_gray_mask_test();
  lowmemory_flood_test();

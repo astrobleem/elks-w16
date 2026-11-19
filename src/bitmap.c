@@ -651,6 +651,42 @@ static u8 stretch_index(struct bitmap *s,u16 x,u16 y,int pair)
  u8 c=bitmap_index(s,x,y);
  return pair?(c&bitmap_index(s,x,y+1)):c;
 }
+/* Exact opaque mono/two-index color row-pair copy. Each packet has <=480 bytes of MSB-first
+ * words, leaving room for the Nano-X header in its 512-byte request limit.
+ * SRCAND deliberately retains the run path: GrBitmap's background prefill and
+ * conversion blitters do not promise equivalent raster operations. */
+static int stretch_pair_bitmap(struct bitmap*s,struct dc*d,GR_GC_INFO*old,
+ int sx,int sy,int dx,int dy,int w,int h)
+{
+ GR_BITMAP *bits=(GR_BITMAP*)w16_scratch;int x,y,base,rows,wpr,batch;u32 fg,bg;
+ if(old->fgispixelval||old->bgispixelval||
+    (s->bpp==1&&((d->textcolor|d->bkcolor)&0xff000000UL))||w>640)return 0;
+ wpr=(w+15)>>4;batch=480/(2*wpr);
+ if(!batch||2*wpr*batch>W16_SCRATCH)return 0;
+ /* A colored one-bit resource lives in a 4bpp DDB. Prove the sampled
+  * output still has only indices 0/1 before changing any destination pixel. */
+ if(s->bpp!=1){
+  if(s->bpp!=4)return 0;
+  for(y=0;y<h;y++)for(x=0;x<w;x++)
+   if(stretch_index(s,sx+x,sy+2*y,1)>1)return 0;
+ }
+ fg=s->bpp==1?d->bkcolor:bitmap_rgb(s,1);
+ bg=s->bpp==1?d->textcolor:bitmap_rgb(s,0);
+ GrSetGCForeground(d->gc,rgb_to_gr(fg));
+ GrSetGCBackground(d->gc,rgb_to_gr(bg));
+ GrSetGCUseBackground(d->gc,1);
+ for(base=0;base<h;base+=rows){
+  rows=h-base;if(rows>batch)rows=batch;
+  memset(bits,0,2*wpr*rows);
+  for(y=0;y<rows;y++)for(x=0;x<w;x++)
+   if(stretch_index(s,sx+x,sy+2*(base+y),1))
+    bits[y*wpr+(x>>4)]|=(GR_BITMAP)(0x8000u>>(x&15));
+  GrBitmap(d->wid,d->gc,dx,dy+base,w,rows,bits);
+ }
+ GrSetGCBackground(d->gc,old->background);
+ GrSetGCUseBackground(d->gc,old->usebackground);
+ return 1;
+}
 u32 g_StretchBlt(u16 ss,u16 ap)
 {
  struct dc*d=dc_get(AW(22));int m=di(AW(12)),b,x,y,end,limitx,limity,pair;u32 rop=AL(0);
@@ -680,6 +716,9 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  GrGetGCInfo(d->gc,&old);
  if(rop==0x008800c6UL&&!(old.mode&0x2000))return 0;
  GrSetGCMode(d->gc,rop==0x008800c6UL?GR_MODE_AND:GR_MODE_COPY);
+ if(pair&&rop==0x00cc0020UL&&
+    stretch_pair_bitmap(s,d,&old,(int)(sx+left-dx),(int)(sy+2*(top-dy)),
+                      (int)left,(int)top,(int)(right-left),(int)(bottom-top)))goto restore;
  for(y=(int)top;y<bottom;y++){
   u16 yy=(u16)(sy+((long)y-dy)*sh/dh);
   for(x=(int)left;x<right;x=end){
@@ -691,6 +730,7 @@ u32 g_StretchBlt(u16 ss,u16 ap)
    GrFillRect(d->wid,d->gc,x,y,end-x,1);
   }
  }
+restore:
  GrSetGCForeground(d->gc,old.foreground);GrSetGCMode(d->gc,old.mode);
  return 1;
 }
