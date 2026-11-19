@@ -200,6 +200,7 @@ int main(int argc, char **argv)
 #else
 /* ---------------------------------------------------------------- ELKS */
 #include "nano-X.h"
+#include "int21.h"
 extern int opt_strict_dos, opt_metrics, opt_quit_s;
 extern u32 w16_t0;
 u32  now_ms(void);
@@ -221,7 +222,6 @@ int main(int argc, char **argv)
     char dllname[9];
     int dllindex=-1;
     int i, e, checkonly = 0, graphics_open = 0;
-    u32 old21;
     u16 regs[13], code;
     const char *path;
 
@@ -345,8 +345,9 @@ int main(int argc, char **argv)
     signal(SIGINT, SIG_IGN);                 /* a handler cannot run while the program owns SS/DS */
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
-    old21 = w16_getvect(0x21);
-    w16_setvect(0x21, FOFF(w16_int21), FSEG(w16_int21));
+    if(int21_router_open(m.dgroup)) {
+        wlog("w16: INT21 failed\n");code=1;goto finished;
+    }
     vlog("w16: starting %s at %04x:%04x, SS:SP %04x:%04x\n", path, regs[1], regs[0], regs[2], regs[3]);
     if (opt_debugport)
         e9puts("@@START\n");
@@ -369,7 +370,7 @@ int main(int argc, char **argv)
     code = w16_start16(regs);
 finished:
 
-    w16_setvect(0x21, (u16)old21, (u16)(old21 >> 16));
+    int21_router_leave();
     user_shutdown();
     kernel_shutdown();
     session_shutdown();
@@ -381,6 +382,10 @@ finished:
         wlog("w16: program exited with code %u; freed %u segments + PSP/environment (%lu bytes)\n", code, nseg,
              (unsigned long)bytes);
     }
+    /* The native root owns the resident router until every attached task
+     * has unregistered. Its guest/windows may already be gone. Never free
+     * code or overwrite a vector after an ownership conflict. */
+    while(int21_router_close())usleep(50000);
     if (opt_debugport) {
         char line[32];
         sprintf(line, "@@EXIT %u\n", code);
