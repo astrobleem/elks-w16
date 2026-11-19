@@ -11,6 +11,13 @@
 #else
 #include <stddef.h>
 #endif
+#if ELKS
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linuxmt/ntty.h>
+#endif
 #include "device.h"
 #include "vgaplan4.h"
 #include "genmem.h"
@@ -136,15 +143,35 @@ static void blit(PSD d,MWCOORD dx,MWCOORD dy,MWCOORD w,MWCOORD h,
 static SUBDRIVER packed={pixel,readpixel,hline,vline,gen_fillrect,blit};
 /* The ELKS memory selector expects this symbol; the build rejects other bpp. */
 PSUBDRIVER memplan4[4]={&packed};
+#ifndef CGA_BIOS_MODE
+#define CGA_BIOS_MODE() (GETBYTE_FP(MK_FP(0x0040,0x0049)) & 0x7f)
+#endif
+static int graphics_active;
+#if ELKS
+static int console_fd=-1;
+#endif
+static void close_screen(PSD p);
 static PSD open_screen(PSD p)
 {
+#if ELKS
+    const char *console;
+    if(console_fd>=0)return NULL;
+    /* The console owns text pages and keyboard routing. Match the other
+     * ELKS screen drivers; stderr may be redirected to a file. */
+    console=getenv("CONSOLE");
+    console_fd=open(console?console:"/dev/tty1",O_WRONLY|O_NONBLOCK);
+    if(console_fd<0)return NULL;
+    if(ioctl(console_fd,DCGET_GRAPH,0)<0){
+        close(console_fd);console_fd=-1;return NULL;
+    }
+#endif
     p->xres=p->xvirtres=CGA_WIDTH;p->yres=p->yvirtres=200;
     p->planes=1;p->bpp=CGA_BPP;p->ncolors=1u<<CGA_BPP;p->pixtype=MWPF_PALETTE;
     p->data_format=CGA_FORMAT;p->flags=PSF_SCREEN;
     p->pitch=80;p->addr=0;p->size=0;
 #if CGA_PAN
     if(_fmemalloc(((unsigned long)(CGA_VWIDTH/CGA_PPB)*CGA_VHEIGHT+15)/16,&shadow_seg)<0){
-        EPRINTF("CGA-PAN cannot allocate %lu shadow bytes\n",(unsigned long)(CGA_VWIDTH/CGA_PPB)*CGA_VHEIGHT);return NULL;
+        EPRINTF("CGA-PAN cannot allocate %lu shadow bytes\n",(unsigned long)(CGA_VWIDTH/CGA_PPB)*CGA_VHEIGHT);close_screen(p);return NULL;
     }
     shadow=MK_FP(shadow_seg,0);
     fmemset((void __far *)shadow,0,(CGA_VWIDTH/CGA_PPB)*CGA_VHEIGHT);
@@ -154,20 +181,34 @@ static PSD open_screen(PSD p)
     EPRINTF("CGA-PAN allocated %lu bytes; virtual=%dx%d physical=%dx200\n",(unsigned long)p->pitch*CGA_VHEIGHT,CGA_VWIDTH,CGA_VHEIGHT,CGA_WIDTH);
 #endif
     set_subdriver(p,&packed);
+    graphics_active=1;
 #if CGA_COLOR
     int10(4,0);
+    if(CGA_BIOS_MODE()!=4){close_screen(p);return NULL;}
     int10(0x0b00,0x0010); /* black background, high-intensity palette bit */
     int10(0x0b00,0x0101); /* palette 1 (cyan/magenta/white) */
 #else
     int10(6,0);
+    if(CGA_BIOS_MODE()!=6){close_screen(p);return NULL;}
     int10(0x0b00,0x000f); /* explicit white foreground in the high-resolution mode */
 #endif
     return p;
 }
 static void close_screen(PSD p){
-    (void)p;int10(3,0);
+    (void)p;
+    /* ELKS restores saved text pages on release, after BIOS mode 3. */
+    if(graphics_active){int10(3,0);graphics_active=0;}
 #if CGA_PAN
     if(shadow_seg){_fmemfree(shadow_seg);shadow_seg=0;shadow=0;}
+#endif
+#if ELKS
+    if(console_fd>=0){
+        if(ioctl(console_fd,DCREL_GRAPH,0)<0){
+            static const char message[]="CGA: console release failed\n";
+            write(2,message,sizeof(message)-1);
+        }
+        close(console_fd);console_fd=-1;
+    }
 #endif
 }
 static void palette(PSD p,int first,int count,MWPALENTRY *pal)

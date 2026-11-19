@@ -4,12 +4,20 @@
 #include <stdio.h>
 static volatile unsigned char vram[16384];
 #define CGA_BASE vram
+static unsigned char current_mode=3;
+#define CGA_BIOS_MODE() current_mode
 #include "../drivers/scr_cga.c"
 int gr_mode;
 MWPIXELVAL gr_background;
 MWCOREFONT gen_fonts[NUMBER_FONTS];
-static int bios_ax[5],bios_bx[5],bios_calls;
-FARADDR int10(int ax,int bx){bios_ax[bios_calls]=ax;bios_bx[bios_calls++]=bx;return 0;}
+static int bios_ax[32],bios_bx[32],bios_calls;
+static int fail_open,fail_acquire,fail_bios,acquires,releases,closes;
+static const char *console_override;static char opened_path[80];
+char *cga_test_getenv(const char *name){assert(!strcmp(name,"CONSOLE"));return (char*)console_override;}
+int cga_test_open(const char *path,int flags,...){assert(flags==(O_WRONLY|O_NONBLOCK));strcpy(opened_path,path);return fail_open?-1:7;}
+int cga_test_close(int fd){assert(fd==7);closes++;return 0;}
+int cga_test_ioctl(int fd,unsigned long request,...){assert(fd==7);if(request==DCGET_GRAPH){acquires++;return fail_acquire?-1:0;}assert(request==DCREL_GRAPH);assert(current_mode==3);releases++;return 0;}
+FARADDR int10(int ax,int bx){assert(bios_calls<32);bios_ax[bios_calls]=ax;bios_bx[bios_calls++]=bx;if(ax==3||((ax==4||ax==6)&&!fail_bios))current_mode=ax;return 0;}
 PSD gen_allocatememgc(PSD p){(void)p;return 0;}
 MWBOOL gen_mapmemgc(PSD p,MWCOORD w,MWCOORD h,int planes,int bpp,
  MWIMGDATFMT format,unsigned int pitch,int size,void *addr)
@@ -27,7 +35,12 @@ int main(void)
 {
  unsigned char saved[32],memory[16]={0};int x,y;
  SCREENDEVICE m;MWSCREENINFO si;
- assert(scrdev.Open(&scrdev)==&scrdev);
+ fail_open=1;assert(!scrdev.Open(&scrdev));assert(!bios_calls&&!acquires&&!closes);fail_open=0;
+ fail_acquire=1;assert(!scrdev.Open(&scrdev));assert(!bios_calls&&acquires==1&&!releases&&closes==1);fail_acquire=0;
+ fail_bios=1;assert(!scrdev.Open(&scrdev));assert(bios_calls==2&&acquires==2&&releases==1&&closes==2&&current_mode==3);fail_bios=0;
+ bios_calls=acquires=releases=closes=0;
+ assert(scrdev.Open(&scrdev)==&scrdev);assert(acquires==1&&!releases&&!strcmp(opened_path,"/dev/tty1"));
+ {int old=bios_calls;assert(!scrdev.Open(&scrdev));assert(bios_calls==old&&acquires==1);}
  assert(scrdev.bpp==CGA_BPP&&scrdev.ncolors==(1u<<CGA_BPP)&&scrdev.pitch==80);
  assert(scrdev.xvirtres==CGA_WIDTH&&scrdev.yvirtres==200);
 #if CGA_COLOR
@@ -76,7 +89,9 @@ int main(void)
  m=scrdev;m.flags=PSF_MEMORY;m.addr=memory;m.pitch=4;m.xres=m.xvirtres=4*CGA_PPB;m.yres=m.yvirtres=4;
  pixel(&m,9,2,1);assert(memory[8+9/CGA_PPB]==(1u<<((CGA_PPB-1-(9&(CGA_PPB-1)))*CGA_BPP)));blit(&scrdev,30,20,4*CGA_PPB,4,&m,0,0,MWROP_COPY);
  assert(readpixel(&scrdev,39,22)==1&&readpixel(&scrdev,38,22)==0);
- scrdev.Close(&scrdev);assert(bios_ax[bios_calls-1]==3);
+ scrdev.Close(&scrdev);assert(bios_ax[bios_calls-1]==3&&releases==1&&closes==1);
+ {int old=bios_calls;scrdev.Close(&scrdev);assert(bios_calls==old&&releases==1&&closes==1);}
+ console_override="/dev/tty2";assert(scrdev.Open(&scrdev));assert(!strcmp(opened_path,"/dev/tty2"));scrdev.Close(&scrdev);assert(releases==2&&closes==2);
  puts("CGA packed host model: real driver types, banks, packed fills, ROPs, overlap, memory copy and BIOS sequence passed");
  return 0;
 }
