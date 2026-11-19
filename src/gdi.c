@@ -794,6 +794,49 @@ u32 u_FillRect(u16 ss, u16 ap)
     return 1;
 }
 
+/* FrameRect uses the supplied brush, independently of the selected brush and
+ * ROP2. Map each one-logical-unit band before clipping: clipping the RECT first
+ * would invent borders along the clip boundary. Nano-X applies the DC region. */
+static int frame_band(struct dc*d,u16 h,struct gobj*brush,int bi,
+                      int l,int t,int r,int b)
+{
+ GR_SCREEN_INFO si;int width,height;
+ if(r<=l||b<=t)return 1;
+ if(!d){
+  if((long)r-l>32767L||(long)b-t>32767L)return 0;
+  return bitmap_patblt(h,l,t,r-l,b-t,0x00f00021UL,
+                       brush->color,brush->style,brush->null);
+ }
+ if(!gdi_map_rect(d,&l,&t,&r,&b))return 0;
+ if(d->w){width=d->w->cw;height=d->w->ch;}
+ else{GrGetScreenInfo(&si);width=si.cols;height=si.rows;}
+ if(l<0)l=0;if(t<0)t=0;if(r>width)r=width;if(b>height)b=height;
+ if(r<=l||b<=t)return 1;
+ if(bi>=0)return pat_fill(d,l,t,r-l,b-t,bi);
+ gs_mode(GS(d),GR_MODE_COPY);gs_fg(GS(d),rgb_to_gr(brush->color));
+ GrFillRect(d->wid,d->gc,l,t,r-l,b-t);return 1;
+}
+u32 u_FrameRect(u16 ss,u16 ap)
+{
+ u16 h,off,seg;int l,t,r,b,bi=-1;struct dc*d;struct gobj*brush;
+ if(ap>0xfff8u)return 0;
+ h=AW(6);off=AW(2);seg=AW(4);d=dc_get(h);brush=obj_get(AW(0));
+ if((!d&&!bitmap_rop2(h,0))||!brush||brush->type!=OBJ_BRUSH||
+    (!seg&&!off)||off>0xfff8u||((u32)seg<<4)+off>0xffff8UL)return 0;
+ l=(i16)rd16(seg,off);t=(i16)rd16(seg,off+2);
+ r=(i16)rd16(seg,off+4);b=(i16)rd16(seg,off+6);
+ if(r<=l||b<=t)return 0;
+ if(brush->null)return 1;
+ if(brush->style){
+  if(!d||brush->style!=BS_PATTERN||brush->width>=MAXBMP||!bmps[brush->width].used)return 0;
+  bi=brush->width;
+ }
+ return frame_band(d,h,brush,bi,l,t,r,t+1)&&
+        ((long)b-t==1||frame_band(d,h,brush,bi,l,b-1,r,b))&&
+        frame_band(d,h,brush,bi,l,t+1,l+1,b-1)&&
+        ((long)r-l==1||frame_band(d,h,brush,bi,r-1,t+1,r,b-1));
+}
+
 /* ---------------------------------------------------------------- bitmaps, pattern brushes, PatBlt */
 /* All DDBs, including small monochrome masks, are selectable memory objects. */
 u32 g_CreateBitmap(u16 ss,u16 ap)

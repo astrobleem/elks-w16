@@ -76,7 +76,7 @@ u32 k_GetPrivateProfileInt(u16,u16), k_GetPrivateProfileString(u16,u16);
 u32 k_GetProfileString(u16, u16), k_WriteProfileString(u16, u16), k_FindResource(u16, u16), k_LoadResource(u16, u16);
 u32 k_FreeResource(u16, u16), k_lstrcpy(u16, u16), k_lstrcat(u16, u16), k_lstrlen(u16, u16);
 u32 u_MessageBox(u16, u16), u_SetTimer(u16, u16), u_KillTimer(u16, u16), u_GetDC(u16, u16), u_ReleaseDC(u16, u16);
-u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_FillRect(u16, u16);
+u32 u_SetRect(u16, u16), u_OffsetRect(u16, u16), u_InflateRect(u16, u16), u_FillRect(u16, u16), u_FrameRect(u16, u16);
 u32 u_CheckMenuItem(u16, u16), u_EnableMenuItem(u16, u16), u_GetMenu(u16, u16), u_GetSubMenu(u16, u16);
 u32 u_DrawMenuBar(u16, u16), u_LoadString(u16, u16), u_GetSysColor(u16, u16);
 u32 g_SetStretchBltMode(u16,u16),g_StretchBlt(u16,u16);
@@ -162,7 +162,7 @@ const struct api W16_RO_FAR api_table[] = {
     { U,76,W16_RO_STRING("PtInRect"),8,0,H(u_PtInRect) },
     { U,79,W16_RO_STRING("IntersectRect"),12,0,H(u_IntersectRect) },
     { U,82,W16_RO_STRING("InvertRect"),6,0,H(u_InvertRect) },
-    { U,83,W16_RO_STRING("FrameRect"),0,API_MISSING,0 },
+    { U,83,W16_RO_STRING("FrameRect"),8,0,H(u_FrameRect) },
     { U,85,W16_RO_STRING("DrawText"),14,0,H(u_DrawText) },
     { U,96,W16_RO_STRING("CheckRadioButton"),8,0,H(u_CheckRadioButton) },
     { U,97,W16_RO_STRING("CheckDlgButton"),6,0,H(u_CheckDlgButton) },
