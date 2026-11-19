@@ -627,7 +627,18 @@ u32 W16_CDECL w16_api_dispatch(u16 idx)
     if (opt_trace && a->mod == MOD_GDI && a->ord == 51)
         wlog("w16: compatible bitmap dc=%04x w=%d h=%d\n", rd16(ss,sp+16), (i16)rd16(ss,sp+14), (i16)rd16(ss,sp+12));
 #endif
+#if defined(W16_SHARED_RODATA) && !defined(W16_HOST)
+    /* IA-16 6.3 may issue lcall through a far object's field with DS still
+     * selecting that object. Materialize the pointer in private stack storage
+     * so the call uses the ordinary native ABI (DS == SS), never the RO bank.
+     * Volatile prevents folding this back into the unsafe far-memory call. */
+    {
+        api_fn volatile fn = a->fn;
+        r = fn(ss, (u16)(sp + 12));
+    }
+#else
     r = a->fn(ss, (u16)(sp + 12));
+#endif
 #ifndef W16_COMPACT_LOG
     if (opt_trace && !r && a->mod == MOD_USER && a->ord == 175 && sp <= 0xffe8u)
         wlog("w16: LoadBitmap failed name=%04x:%04x instance=%04x\n",rd16(ss,sp+14),rd16(ss,sp+12),rd16(ss,sp+16));

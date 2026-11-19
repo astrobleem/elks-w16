@@ -74,3 +74,21 @@ with tempfile.TemporaryDirectory() as tmp:
  subprocess.run(['cc','-fsanitize=address,undefined','-fno-pie','-no-pie',str(source),'-o',str(binary)],check=True)
  subprocess.run([str(binary)],check=True,env=dict(os.environ,ASAN_OPTIONS="detect_leaks=0"))
 print('PASS: far-format adapter preserves varargs, near strings, empty/maximal formats and existing 255-byte output limit (host check)')
+
+# The real IA-16 backend must restore the task DS before invoking a handler.
+# A far-memory indirect call can otherwise leave DS selecting the RO bank.
+disassembly=subprocess.check_output(['ia16-elf-objdump','-d','-Mi8086','--disassemble=w16_api_dispatch','src/w16-ro.elf'],text=True)
+instructions=[]
+for line in disassembly.splitlines():
+ fields=line.split('\t')
+ if len(fields)>=3 and re.match(r'^\s*[0-9a-f]+:',fields[0]):
+  instructions.append(fields[-1].strip())
+indirect=[i for i,text in enumerate(instructions) if re.match(r'lcall\s+\*',text)]
+assert len(indirect)==1,'inspect changed native API call sequence'
+i=indirect[0]
+assert re.fullmatch(r'lcall\s+\*-0x[0-9a-f]+\(%bp\)',instructions[i]),'handler must be fetched from private stack storage'
+writes=[j for j,text in enumerate(instructions[:i]) if re.search(r',%ds$|^pop\s+%ds$',text)]
+j=writes[-1]
+assert re.fullmatch(r'pop\s+%ds',instructions[j]) and re.fullmatch(r'push\s+%ss',instructions[j-1]),'handler entry requires DS == SS'
+assert not any(re.match(r'j\w*\s|(?:l?call)\s',text) for text in instructions[j+1:i]),'inspect branch/call after DS restoration'
+print('PASS: actual native dispatcher calls through private stack pointer after restoring DS from SS')
