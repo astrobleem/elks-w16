@@ -1098,50 +1098,54 @@ u32 g_GetDeviceCaps(u16 ss, u16 ap)
 
 /* ---------------------------------------------------------------- icons */
 /* Draw a Windows 3.x DIB icon image (BITMAPINFOHEADER, palette, XOR bits, AND mask; rows bottom-up)
- * of up to 32x32 at 1 or 4 bits per pixel. Transparent pixels (AND bit set) are left alone.
+ * of up to 32x32 at 1 or 4 bits per pixel, using (destination AND mask) XOR image.
  * One Nano-X GrBitmap per colour present keeps the request count small. */
-int gdi_draw_icon(GR_WINDOW_ID wid, int x0, int y0, const u8 *d, u16 len)
+static int draw_icon_gc(GR_WINDOW_ID wid,struct gcstate *gc,int x0,int y0,const u8 *d,u16 len)
 {
-    static GR_BITMAP bits[32 * 2];
-    struct dib_info info;
-    struct dib_memory memory={d,len};
-    u32 w,h,ncol,xs,ms,xor_off,and_off;
-    u16 bpp,c,x,y;
-    u8 used[16];
-
-    if(!dib_icon_open(&info,dib_read_memory,&memory,len,&and_off))return -1;
-    w=info.width;h=info.height;bpp=info.bpp;ncol=info.colors;
-    xs=info.stride;ms=((w+31)/32)*4;xor_off=info.pixels;
-    memset(used, 0, sizeof(used));
-    for (y = 0; y < h; y++)
-        for (x = 0; x < w; x++) {
-            const u8 *xr = d + xor_off + xs * (h - 1 - y), *mr = d + and_off + ms * (h - 1 - y);
-            if (mr[x >> 3] & (0x80 >> (x & 7)))
-                continue;
-            {u16 index=bpp==4?(xr[x>>1]>>((x&1)?0:4))&15:(xr[x>>3]>>(7-(x&7)))&1;
-             if(index>=ncol)return -1;
-             used[index]=1;}
-        }
-    gdi_usebg(0);
-    for (c = 0; c < ncol; c++) {
-        const struct dib_rgb *pal=&info.palette[c];
-        if (!used[c])
-            continue;
-        memset(bits, 0, sizeof(bits));
-        for (y = 0; y < h; y++)
-            for (x = 0; x < w; x++) {
-                const u8 *xr = d + xor_off + xs * (h - 1 - y), *mr = d + and_off + ms * (h - 1 - y);
-                u16 v;
-                if (mr[x >> 3] & (0x80 >> (x & 7)))
-                    continue;
-                v = bpp == 4 ? (xr[x >> 1] >> ((x & 1) ? 0 : 4)) & 15 : (xr[x >> 3] >> (7 - (x & 7))) & 1;
-                if (v == c)             /* GR_BITMAP rows: (w + 15) / 16 words, MSB first */
-                    bits[y * ((w + 15) / 16) + (x >> 4)] |= (GR_BITMAP)(0x8000u >> (x & 15));
-            }
-        gdi_fg(GR_RGB(pal->r,pal->g,pal->b));
-        GrBitmap(wid, gdi_gc, x0, y0, (GR_SIZE)w, (GR_SIZE)h, bits);
+    GR_BITMAP bits[32*2];struct dib_info info;struct dib_memory memory={d,len};
+    u32 and_off;u16 c,x,y,words,index;u8 used[16];
+    if(!dib_icon_open(&info,dib_read_memory,&memory,len,&and_off) ||
+       (long)x0+info.width>32767L || (long)y0+info.height>32767L)return -1;
+    words=(info.width+15)/16;memset(used,0,sizeof(used));memset(bits,0,sizeof(bits));
+    /* Validate all XOR indices before issuing either compositing pass. */
+    for(y=0;y<info.height;y++)for(x=0;x<info.width;x++) {
+        const u8 *xr=d+info.pixels+info.stride*(info.height-1-y),*ar=d+and_off+((info.width+31)/32)*4*(info.height-1-y);
+        index=info.bpp==4?(xr[x>>1]>>((x&1)?0:4))&15:(xr[x>>3]>>(7-(x&7)))&1;
+        if(index>=info.colors)return -1;
+        used[index]=1;
+        if(!(ar[x>>3]&(0x80>>(x&7))))bits[y*words+(x>>4)]|=(GR_BITMAP)(0x8000u>>(x&15));
     }
-    return 0;
+    /* Clearing exactly the AND-zero pixels implements destination AND mask
+     * using the ordinary COPY primitive, without screen-readback support. */
+    gs_usebg(gc,0);gs_mode(gc,GR_MODE_COPY);gs_fg(gc,GR_RGB(0,0,0));
+    GrBitmap(wid,gc->gc,x0,y0,info.width,info.height,bits);
+    gs_mode(gc,GR_MODE_XOR);
+    for(c=0;c<info.colors;c++)if(used[c]) {
+        memset(bits,0,sizeof(bits));
+        for(y=0;y<info.height;y++)for(x=0;x<info.width;x++) {
+            const u8 *xr=d+info.pixels+info.stride*(info.height-1-y);
+            index=info.bpp==4?(xr[x>>1]>>((x&1)?0:4))&15:(xr[x>>3]>>(7-(x&7)))&1;
+            if(index==c)bits[y*words+(x>>4)]|=(GR_BITMAP)(0x8000u>>(x&15));
+        }
+        gs_fg(gc,GR_RGB(info.palette[c].r,info.palette[c].g,info.palette[c].b));
+        GrBitmap(wid,gc->gc,x0,y0,info.width,info.height,bits);
+    }
+    gs_mode(gc,GR_MODE_COPY);return 0;
+}
+int gdi_draw_icon(GR_WINDOW_ID wid,int x,int y,const u8 *d,u16 len)
+{return draw_icon_gc(wid,&gcs[MAXDC],x,y,d,len);}
+/* Win16 DrawIcon(HDC,short x,short y,HICON), eight Pascal argument bytes.
+ * Clone the display DC's GC to retain its clipping without altering its state. */
+u32 u_DrawIcon(u16 ss,u16 ap)
+{
+ struct dc *d;struct gcstate gc;struct dib_info info;struct dib_memory memory;
+ const u8 *image;u16 len;u32 mask;int x,y,result;
+ if(ap>0xfff8u || !(d=dc_get(AW(6))) || !(image=icon_data(AW(0),&len)))return 0;
+ memory.data=image;memory.length=len;
+ if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask) || info.width!=32 || info.height!=32)return 0;
+ x=(i16)AW(4);y=(i16)AW(2);if(!gdi_map_point(d,&x,&y))return 0;
+ memset(&gc,0,sizeof(gc));gc.gc=GrCopyGC(d->gc);if(!gc.gc)return 0;
+ result=draw_icon_gc(d->wid,&gc,x,y,image,len);GrDestroyGC(gc.gc);return result==0;
 }
 
 /* ---------------------------------------------------------------- text extents

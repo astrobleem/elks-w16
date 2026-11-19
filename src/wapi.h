@@ -190,6 +190,7 @@ void      gdi_fill(GR_WINDOW_ID wid, GR_COLOR c, int x, int y, int w, int h);
 void      gdi_fg(GR_COLOR c);           /* scratch GC colour, sent only when it changes */
 void      gdi_usebg(int on);
 void      gdi_text_size(const char *s, int n, GR_SIZE *w, GR_SIZE *h, GR_SIZE *base);  /* no round trip */
+const u8 *icon_data(u16 h,u16 *len);
 int       gdi_draw_icon(GR_WINDOW_ID wid, int x, int y, const u8 *dib, u16 len);
 void gdi_draw_text(struct dc *d, int x, int y, const char *text, int n);
 extern GR_GC_ID gdi_gc;     /* scratch GC for USER drawing */

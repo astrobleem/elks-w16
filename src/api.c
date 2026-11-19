@@ -47,6 +47,7 @@ u32 u_InitApp(u16, u16), u_PostQuitMessage(u16, u16), u_GetClientRect(u16, u16),
 u32 u_EndPaint(u16, u16), u_CreateWindow(u16, u16), u_ShowWindow(u16, u16), u_DestroyWindow(u16, u16);
 u32 u_RegisterClass(u16, u16), u_DefWindowProc(u16, u16), u_GetMessage(u16, u16), u_TranslateMessage(u16, u16);
 u32 u_DispatchMessage(u16, u16), u_UpdateWindow(u16, u16), u_InvalidateRect(u16, u16), u_LoadCursor(u16, u16);
+u32 u_DrawIcon(u16,u16),u_CopyIcon(u16,u16),u_DestroyIcon(u16,u16);
 u32 u_LoadIcon(u16, u16), u_wsprintf(u16, u16);
 u32 u_LoadBitmap(u16,u16), g_CreateCompatibleDC(u16,u16), g_BitBlt(u16,u16);
 u32 u_SetRectEmpty(u16,u16),u_IsRectEmpty(u16,u16),u_UnionRect(u16,u16);
@@ -441,6 +442,9 @@ const struct api api_table[] = {
     { K, 47, "GetModuleHandle", 4, 0, H(k_GetModuleHandle) },
     { K, 136, "GetDriveType", 2, 0, H(k_GetDriveType) },
     { K, 152, "GetNumTasks", 0, 0, H(k_GetNumTasks) },
+    { U, 84, "DrawIcon", 8, 0, H(u_DrawIcon) },
+    { U, 368, "CopyIcon", 4, 0, H(u_CopyIcon) },
+    { U, 457, "DestroyIcon", 2, 0, H(u_DestroyIcon) },
 };
 const int api_count = sizeof(api_table) / sizeof(api_table[0]);
 typedef char api_stub_capacity[(sizeof(api_table)/sizeof(api_table[0])<=320)?1:-1];

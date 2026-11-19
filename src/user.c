@@ -12,6 +12,7 @@
 #include <sys/time.h>
 #include "wapi.h"
 #include "filelist.h"
+#include "dib.h"
 
 #define CLASS_MDICLIENT (-2)
 #define WM_MDICREATE 0x0220
@@ -1955,26 +1956,50 @@ u32 u_InvalidateRect(u16 ss, u16 ap)
     return 0;
 }
 
-/* LoadIcon: a predefined icon, or the program's own if the resource exists (the icon drawn in the
- * frame stands in for either; LoadCursor is in cursor.c) */
-static u32 load_resource(u16 ss, u16 ap, u16 handle, u16 type, const char *what)
+/* Resource icons are shared until task shutdown. CopyIcon creates a
+ * separately owned image; these opaque WORD handles are not global blocks. */
+#define ICON_BASE 0x05a0
+#define MAXICON 8
+static struct {u8 *data;u16 len,resource;u8 owned;} icons[MAXICON];
+static u8 *load_icon(const char *,u16,u16 *,u16 *);
+static int icon_slot(u16 h)
 {
-    u16 off = AW(0), seg = AW(2), hinst = AW(4), id, len;
-    char name[34];
-    u32 foff;
-    if (!hinst)
-        return handle;                  /* predefined IDC_ / IDI_ */
-    res_name(off, seg, name, &id);
-    if (!ne_res_find(w16_mod, type, name[0] ? name : 0, id, &foff, &len)) {
-        vlog("w16: %s %s%s: the program's resource stands in as the standard one\n", what, name[0] ? name : "#",
-             name[0] ? "" : "(ordinal)");
-        return handle;
-    }
-    wlog("w16: %s: resource %s not found\n", what, name[0] ? name : "(ordinal)");
-    return 0;
+ u16 i=(u16)(h-ICON_BASE)/2;
+ return h>=ICON_BASE && !(h&1) && i<MAXICON && icons[i].data ? (int)i:-1;
 }
-
-u32 u_LoadIcon(u16 ss, u16 ap)   { return load_resource(ss, ap, HICON, RT_GROUP_ICON, "LoadIcon"); }
+const u8 *icon_data(u16 h,u16 *len)
+{int i=icon_slot(h);if(i<0)return 0;*len=icons[i].len;return icons[i].data;}
+static void icon_shutdown(void)
+{int i;for(i=0;i<MAXICON;i++){free(icons[i].data);icons[i].data=0;}}
+u32 u_LoadIcon(u16 ss,u16 ap)
+{
+ char name[34];u16 id,len,resource;u8 *data;struct dib_info info;struct dib_memory memory;u32 mask;int i;
+ if(ap>0xfffau)return 0;
+ if(!AW(4))return 0; /* no predefined backing images yet; never return a placeholder */
+ if(!w16_mod || AW(4)!=w16_mod->dgroup)return 0;
+ res_name(AW(0),AW(2),name,&id);data=load_icon(name[0]?name:0,id,&len,&resource);
+ if(!data)return 0;
+ memory.data=data;memory.length=len;
+ if(!dib_icon_open(&info,dib_read_memory,&memory,len,&mask)){free(data);return 0;}
+ for(i=0;i<MAXICON;i++)if(icons[i].data&&!icons[i].owned&&icons[i].resource==resource){free(data);return ICON_BASE+2*i;}
+ for(i=0;i<MAXICON&&icons[i].data;i++);
+ if(i==MAXICON){free(data);return 0;}
+ icons[i].data=data;icons[i].len=len;icons[i].resource=resource;icons[i].owned=0;return ICON_BASE+2*i;
+}
+u32 u_CopyIcon(u16 ss,u16 ap)
+{
+ int i,j;u8 *copy;
+ if(ap>0xfffcu || (AW(2)&&(!w16_mod||AW(2)!=w16_mod->dgroup)) || (i=icon_slot(AW(0)))<0)return 0;
+ for(j=0;j<MAXICON&&icons[j].data;j++);
+ if(j==MAXICON || !(copy=malloc(icons[i].len)))return 0;
+ memcpy(copy,icons[i].data,icons[i].len);icons[j].data=copy;icons[j].len=icons[i].len;
+ icons[j].resource=0;icons[j].owned=1;return ICON_BASE+2*j;
+}
+u32 u_DestroyIcon(u16 ss,u16 ap)
+{
+ int i;if(ap>0xfffeu || (i=icon_slot(AW(0)))<0 || !icons[i].owned)return 0;
+ free(icons[i].data);icons[i].data=0;return 1;
+}
 
 /* GetDC(hWnd): the client area, or the screen for hWnd 0 */
 u32 u_GetDC(u16 ss, u16 ap)
@@ -2132,7 +2157,7 @@ u8 *res_load(u16 type, const char *name, u16 id, u16 *len)
 }
 
 /* GROUP_ICON -> the image best suited to a 16-colour screen: 32x32 at 4 bits, then 1 bit */
-static u8 *load_icon(const char *name, u16 id, u16 *len)
+static u8 *load_icon(const char *name,u16 id,u16 *len,u16 *image_id)
 {
     u16 glen, n, k, best = 0;
     int bestscore = -1;
@@ -2140,6 +2165,7 @@ static u8 *load_icon(const char *name, u16 id, u16 *len)
     if (!g)
         return 0;
     n = glen >= 6 ? (u16)(g[4] | (g[5] << 8)) : 0;
+    if(glen<6 || g[0] || g[1] || g[2]!=1 || g[3] || !n || n>(glen-6)/14){free(g);return 0;}
     for (k = 0; k < n && 6 + 14u * k + 14 <= glen; k++) {
         const u8 *e = g + 6 + 14 * k;
         int w = e[0] ? e[0] : 256, h = e[1] ? e[1] : 256, bits = e[6] | (e[7] << 8);
@@ -2152,6 +2178,7 @@ static u8 *load_icon(const char *name, u16 id, u16 *len)
     free(g);
     if (!best || bestscore < 0)
         return 0;
+    if(image_id)*image_id=best;
     img = res_load(RT_ICON, 0, best, len);
     return img;
 }
@@ -2382,7 +2409,7 @@ static struct wnd *ctl_create(struct wnd *d, const struct dlg_item *it, const ch
             id = (u16)atoi(nm + 1);
             nm = "";
         }
-        w->icon = load_icon(nm, id, &w->iconlen);
+        w->icon = load_icon(nm, id, &w->iconlen,0);
         if (!w->icon)
             wlog("w16: dialog icon \"%s\" not found in the program's resources\n", it->text);
         else {
@@ -3082,6 +3109,7 @@ void user_shutdown(void)
 {
     int i, n = 0;
     registered_reset();
+    icon_shutdown();
     w16_census("exit");
     for (i = 0; i < MAXTIMER; i++)
         timers[i].used = 0;
