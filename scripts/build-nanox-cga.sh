@@ -86,6 +86,10 @@ if pan:
   '\t\t\tGdRestrictMouse(cga_viewx,cga_viewy,cga_viewx+(CGA_COLOR?320:640)-1,cga_viewy+199);\n'
   '\t\t\tGrMoveCursor(cursorx+dx,cursory+dy);return TRUE;\n'
   '\t\t}\n\t}\n#endif\n\t/* handle special keys*/')
+# Native four-color CGA AND has been verified on the interpreted 8088 fixture.
+if color:
+ replace('nanox/srvfunc.c','#if ELKS && defined(USE_VGA_XOR_CURSOR)',
+  '#if ELKS && (defined(USE_VGA_XOR_CURSOR) || (SCREEN_CGA && CGA_COLOR))')
 # Bounded readback and packed capture support native low-color indices.
 for name in ['nanox/srvnet.c','nanox/srvfunc.c']:
  f=p/name;s=f.read_text();old=s

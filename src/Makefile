@@ -17,6 +17,9 @@ LDFLAGS = -mregparmcall -mcmodel=medium -melks-libc -maout-heap=0x2800 -maout-st
 OBJS    = shell.o legacy.o main.o ne.o api.o mem.o kernel.o files.o filelist.o palette.o global.o clipboard.o caret.o user.o scrollbar.o menu.o cursor.o pointer.o gdi.o mapping.o polygon.o oval.o bitmap.o rasterfont.o dib.o rect.o registered.o textlayout.o linedda.o enumobj.o enumfont.o displayic.o ansistr.o dlgtmpl.o profile.o thunk.o
 
 
+# Keep USER/menu helpers out of line within the two code-group budget.
+user.o menu.o: CFLAGS += -fno-inline
+
 all: w16
 
 w16: $(OBJS) $(NANOX_LIB) w16-medium.ld ../scripts/check-near-budget.py

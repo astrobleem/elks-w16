@@ -622,18 +622,33 @@ u32 g_SetStretchBltMode(u16 ss,u16 ap)
  return old;
 }
 
-/* Bounded COLORONCOLOR memory-to-display nearest-neighbour scaling. Destination
- * clipping never resets sampling phase. Reject unsupported paths before drawing;
- * in particular do not silently approximate BLACKONWHITE/WHITEONBLACK shrink. */
+/* Bounded memory-to-display scaling. COLORONCOLOR uses nearest-neighbour
+ * sampling; BLACKONWHITE supports the exact vertical row pair below. Destination
+ * clipping preserves the sampling phase. Other stretch paths fail before drawing. */
+/* BLACKONWHITE for the observed 2:1 vertical reduction combines both rows.
+ * The source is an owned 1/4bpp DDB: combine its stored pixel bits before RGB expansion. */
+static u8 stretch_index(struct bitmap *s,u16 x,u16 y,int pair)
+{
+ u8 c=bitmap_index(s,x,y);
+ return pair?(c&bitmap_index(s,x,y+1)):c;
+}
+#ifdef W16_TRACE_STRETCH
+u16 w16_stretch_depth,w16_stretch_mode;
+#endif
 u32 g_StretchBlt(u16 ss,u16 ap)
 {
- struct dc*d=dc_get(AW(22));int m=di(AW(12)),b,x,y,end,limitx,limity;
+ struct dc*d=dc_get(AW(22));int m=di(AW(12)),b,x,y,end,limitx,limity,pair;u32 rop=AL(0);
  long dx=(i16)AW(20),dy=(i16)AW(18),dw=(i16)AW(16),dh=(i16)AW(14);
  long sx=(i16)AW(10),sy=(i16)AW(8),sw=(i16)AW(6),sh=(i16)AW(4),left,top,right,bottom;
  struct bitmap*s;GR_SCREEN_INFO si;GR_GC_INFO old;
  int ax,ay,bx,by;
- if(!d||m<0||AL(0)!=0x00cc0020UL||d->stretchmode!=3||
-    dw<=0||dh<=0||sw<=0||sh<=0||(b=bi(memory[m].bitmap))<0)return 0;
+ if(!d||m<0||(b=bi(memory[m].bitmap))<0)return 0;
+#ifdef W16_TRACE_STRETCH
+ w16_stretch_depth=bitmaps[b].bpp;w16_stretch_mode=d->stretchmode;
+#endif
+ if((rop!=0x00cc0020UL&&rop!=0x008800c6UL)||dw<=0||dh<=0||sw<=0||sh<=0)return 0;
+ pair=d->stretchmode==1;
+ if(d->stretchmode!=3&&!pair)return 0;
  /* Logical destination extents are transformed without losing the source phase.
   * Mirrored destination extents remain explicitly unsupported here. */
  if(dx+dw>32767L||dy+dh>32767L)return 0;
@@ -641,6 +656,7 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  if(!gdi_map_point(d,&ax,&ay)||!gdi_map_point(d,&bx,&by))return 0;
  dx=ax;dy=ay;dw=(long)bx-ax;dh=(long)by-ay;
  if(dw<=0||dh<=0)return 0;
+ if(pair&&(dw!=sw||sh!=2*dh))return 0;
  s=&bitmaps[b];
  if(sx<0||sy<0||sx+sw>s->w||sy+sh>s->h)return 0;
  if(d->w){limitx=d->w->cw;limity=d->w->ch;}
@@ -648,13 +664,15 @@ u32 g_StretchBlt(u16 ss,u16 ap)
  left=dx<0?0:dx;top=dy<0?0:dy;right=dx+dw;bottom=dy+dh;
  if(right>limitx)right=limitx;if(bottom>limity)bottom=limity;
  if(left>=right||top>=bottom)return 1;
- GrGetGCInfo(d->gc,&old);GrSetGCMode(d->gc,GR_MODE_COPY);
+ GrGetGCInfo(d->gc,&old);
+ if(rop==0x008800c6UL&&!(old.mode&0x2000))return 0;
+ GrSetGCMode(d->gc,rop==0x008800c6UL?GR_MODE_AND:GR_MODE_COPY);
  for(y=(int)top;y<bottom;y++){
   u16 yy=(u16)(sy+((long)y-dy)*sh/dh);
   for(x=(int)left;x<right;x=end){
-   u8 index=bitmap_index(s,(u16)(sx+((long)x-dx)*sw/dw),yy);u32 rgb;
+   u8 index=stretch_index(s,(u16)(sx+((long)x-dx)*sw/dw),yy,pair);u32 rgb;
    for(end=x+1;end<right;end++)
-    if(bitmap_index(s,(u16)(sx+((long)end-dx)*sw/dw),yy)!=index)break;
+    if(stretch_index(s,(u16)(sx+((long)end-dx)*sw/dw),yy,pair)!=index)break;
    rgb=s->bpp==1?(index?d->bkcolor:d->textcolor):bitmap_rgb(s,index);
    GrSetGCForeground(d->gc,rgb_to_gr(rgb));
    GrFillRect(d->wid,d->gc,x,y,end-x,1);

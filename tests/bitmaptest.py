@@ -206,6 +206,26 @@ static void stretch_tests(void){
  for(y=0;y<22;y++)for(x=0;x<39;x++)assert(surface[y*100+x]==bitmap_rgb(&bitmaps[bi(b)],(x/3+(y/2)*3)&15));
  bitmap_shutdown();clean();
  gdi_map_init(&dest);
+ /* The CGA path keeps both source rows in the exact 2:1 BLACKONWHITE reduction. */
+ setup(71,96,1);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+ for(y=0;y<96;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,(y&1)?((x+y/2)%5!=0):(x%3!=0));
+ for(x=0;x<10000;x++)surface[x]=0xabcdef;
+ assert(stretch(d,-2,-3,71,48,0,0,71,96,0x00cc0020UL));
+ for(y=0;y<45;y++)for(x=0;x<69;x++)assert(surface[y*100+x]==(((x+2)%3!=0&&(x+2+y+3)%5!=0)?dest.bkcolor:dest.textcolor));
+ dest.textcolor=0;dest.bkcolor=0xffffff;
+ for(x=0;x<16;x++)native_palette.palette[x].r=native_palette.palette[x].g=native_palette.palette[x].b=x*17;
+ for(x=0;x<10000;x++)surface[x]=7;
+ capability=0;assert(!stretch(d,0,0,71,48,0,0,71,96,0x008800c6UL));
+ for(x=0;x<10000;x++)assert(surface[x]==7);
+ capability=0x2000;indexed=1;assert(stretch(d,0,0,71,48,0,0,71,96,0x008800c6UL));
+ for(y=0;y<48;y++)for(x=0;x<71;x++)assert(surface[y*100+x]==((x%3!=0&&(x+y)%5!=0)?7:0));
+ indexed=capability=0;bitmap_shutdown();clean();
+ setup(71,96,4);b=load();d=dcnew();assert(bitmap_select(d,b));gdi_map_init(&dest);dest.stretchmode=1;
+ for(x=0;x<16;x++)bitmaps[bi(b)].palette[x].r=bitmaps[bi(b)].palette[x].g=bitmaps[bi(b)].palette[x].b=x*17;
+ for(y=0;y<96;y++)for(x=0;x<71;x++)bitmap_put(&bitmaps[bi(b)],x,y,(y&1)?((x+y/2)&15):(x&15));
+ assert(stretch(d,0,0,71,48,0,0,71,96,0x00cc0020UL));
+ for(y=0;y<48;y++)for(x=0;x<71;x++){u32 c=((x&15)&((x+y)&15))*17;assert(surface[y*100+x]==(c|(c<<8)|(c<<16)));}
+ bitmap_shutdown();clean();
  puts("StretchBlt mono/color pixels, scaling, clipped phase, state and atomic refusals passed");
 }
 static void origin_tests(void){
