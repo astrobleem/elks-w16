@@ -116,6 +116,7 @@ struct wnd {
     u8   ctl, pressed, isdialog, ended, checked;
     u16  id, result, defid;
     u8 edit_cursor, edit_anchor, edit_limit;
+    u8  *extra;                 /* zeroed class cbWndExtra bytes */
     u8  *icon;                  /* SS_ICON: DIB of the chosen icon image (malloc) */
     u16  iconlen;
     u16  hmenu;                 /* menu bar, or 0 */

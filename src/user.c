@@ -98,6 +98,28 @@ u32 u_SetWindowLong(u16 ss,u16 ap)
     return 0;
 }
 
+/* Window words: nonnegative byte offsets address class-owned extra storage.
+ * Keep the storage alive through WM_NCDESTROY and permit unaligned words. */
+static u32 window_word(u16 ss,u16 ap,int set)
+{
+    struct wnd *w; i16 index; u16 old, value=0; u16 *field=0;
+    if(ap>(set?0xfffau:0xfffcu)) return 0;
+    w=win_get(AW(set?4:2)); index=(i16)AW(set?2:0);
+    if(!w) return 0;
+    if(set) value=AW(0);
+    if(index==-6) field=&w->hinst;
+    else if(index==-12) field=&w->id;
+    else if(index==-8 && !set) return w->parent;
+    if(field) {old=*field; if(set)*field=value; return old;}
+    if(index<0 || !w->extra || w->cls<0 || w->cls>=MAXCLASS ||
+       classes[w->cls].cbwndextra<2 || (u16)index>classes[w->cls].cbwndextra-2) return 0;
+    old=w->extra[index]|((u16)w->extra[index+1]<<8);
+    if(set) {w->extra[index]=(u8)value; w->extra[index+1]=(u8)(value>>8);}
+    return old;
+}
+u32 u_GetWindowWord(u16 ss,u16 ap) {return window_word(ss,ap,0);}
+u32 u_SetWindowWord(u16 ss,u16 ap) {return window_word(ss,ap,1);}
+
 /* Child frame positions are relative to the parent's client, not the screen. */
 static void client_origin(struct wnd *w, int *x, int *y)
 {
@@ -926,6 +948,7 @@ u32 u_RegisterClass(u16 ss, u16 ap)
         wlog("w16: RegisterClass: class table full (%d)\n", MAXCLASS);
         return 0;
     }
+    if ((i16)rd16(seg, off + 8) < 0) return 0;
     c = &classes[i];
     c->used = 1;
     c->style = rd16(seg, off);
@@ -946,8 +969,6 @@ u32 u_RegisterClass(u16 ss, u16 ap)
             c->menu[0] = 0;
     }
     fstrncpy_in(c->name, nseg, noff, sizeof(c->name));
-    if (c->cbwndextra)
-        wlog("w16: RegisterClass %s: %u window extra bytes are not provided\n", c->name, c->cbwndextra);
     vlog("w16: RegisterClass \"%s\" wndproc %04x:%04x background %04x\n", c->name, c->procseg, c->procoff, c->hbrush);
     return 0xC000 + i;
 }
@@ -1032,14 +1053,18 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if(style & WS_HSCROLL) w->ch-=SCROLLBAR_SIZE;
     if (w->cw < 0) w->cw = 0;
     if (w->ch < 0) w->ch = 0;
+    if (c->cbwndextra) {
+        w->extra = calloc(1, c->cbwndextra);
+        if (!w->extra) { if(w->hmenu)menu_free(w->hmenu); w->used=0; return 0; }
+    }
     w->frame = GrNewWindowEx(GR_WM_PROPS_NODECORATE | GR_WM_PROPS_NOMOVE, w->title, pw ? pw->client : GR_ROOT_WINDOW_ID,
                              x < 0 ? 0 : x, y < 0 ? 0 : y, wd ? wd : 1, h ? h : 1, GR_RGB(170, 170, 170));
-    if (!w->frame) { w->used = 0; return 0; }
+    if (!w->frame) { free(w->extra); w->extra=0; w->used = 0; return 0; }
     /* Nano-X creation interprets any negative coordinate as auto-placement.
      * Move the still-unmapped frame to preserve Win16 signed positions. */
     if (x < 0 || y < 0) GrMoveWindow(w->frame, x, y);
     w->client = GrNewWindow(w->frame, w->cx, w->cy, w->cw ? w->cw : 1, w->ch ? w->ch : 1, 0, bg, 0);
-    if (!w->client) { GrDestroyWindow(w->frame); w->used = 0; return 0; }
+    if (!w->client) { GrDestroyWindow(w->frame); free(w->extra); w->extra=0; w->used = 0; return 0; }
     GrSelectEvents(w->frame, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_CLOSE_REQ |
                    GR_EVENT_MASK_KEY_DOWN | GR_EVENT_MASK_KEY_UP | GR_EVENT_MASK_BUTTON_UP | GR_EVENT_MASK_MOUSE_POSITION);
     GrSelectEvents(w->client, GR_EVENT_MASK_EXPOSURE | GR_EVENT_MASK_BUTTON_DOWN | GR_EVENT_MASK_BUTTON_UP |
@@ -1069,6 +1094,7 @@ u32 u_CreateWindow(u16 ss, u16 ap)
     if (r == 0xFFFFFFFFul) {
         vlog("w16: WM_CREATE returned -1; window destroyed\n");
         GrDestroyWindow(w->frame);
+        free(w->extra); w->extra=0;
         w->used = 0;
         return 0;
     }
@@ -1234,6 +1260,7 @@ static void destroy_window(struct wnd *w)
     if (keyup_hwnd == hwnd)
         keyup_pending = 0;
     free_controls(hwnd);
+    free(w->extra); w->extra=0;
     w->used = 0;
 }
 

@@ -48,6 +48,9 @@ static int menu_load(struct wnd*w,const char*n,u16 id){(void)w;(void)n;(void)id;
 static int menu_attach(struct wnd*w,u16 h){(void)w;(void)h;abort();}
 u32 brush_color(u16 h,int *n){(void)h;*n=0;return 0;}
 GR_COLOR rgb_to_gr(u32 c){return c;}
+static int fail_extra;
+static void *extra_alloc(size_t n,size_t sz){return fail_extra?NULL:calloc(n,sz);}
+#define calloc extra_alloc
 static unsigned nextid=100, frame_parent, fail_frame,fail_client,destroyed[64],ndestroy;
 static int createdx,createdy,movex,movey,moves;
 static unsigned maps[400],unmaps[400],sizes[400][2],msgcount;
@@ -66,15 +69,19 @@ static unsigned raised,lowered;
 void GrRaiseWindow(unsigned w){raised=w;}void GrLowerWindow(unsigned w){lowered=w;}
 void GrSetFocus(unsigned w){(void)w;}
 
+static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl;
-u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
+u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){if(w->extra&&m==WM_CREATE){assert(w->extra[0]==0&&w->extra[1]==0);w->extra[0]=0x34;w->extra[1]=0x12;extra_creates++;}
+if(w->extra&&m==WM_NCDESTROY){assert(w->extra[0]);extra_destroys++;}
+if(create_fail&&m==WM_CREATE)return 0xffffffffUL;
+senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
 void scrollbar_forget(u16 w){(void)w;}\nvoid caret_destroy(u16 w){(void)w;} void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_ShowWindow','free_controls','destroy_window'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_MoveWindow','u_SetWindowPos','set_focus','u_ShowWindow','free_controls','destroy_window'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -86,11 +93,22 @@ int main(void){u16 id;int x,y;unsigned frame;
   for(j=23;j<MAXWIN-4;j++)wins[j].used=1;
   assert(!dialog_slots_available(4));memset(wins,0,sizeof(wins));}
  wins[0].used=1;wins[0].hwnd=HWND_BASE;wins[0].client=77;wins[0].frame=76;wins[0].x=10;wins[0].y=20;wins[0].cx=2;wins[0].cy=30;
+ classes[0].cbwndextra=3;
  strcpy(classes[0].menu,"must-not-load");
  setup(0x40800003UL,HWND_BASE,-1,117,284,15);id=u_CreateWindow(0x1000,0);assert(id==HWND_BASE+4);assert(frame_parent==77);assert(createdx==0&&createdy==117&&moves==1&&movex==-1&&movey==117);
  assert(wins[1].parent==HWND_BASE&&wins[1].w==284&&wins[1].h==15);assert(wins[1].cx==1&&wins[1].cy==1&&wins[1].ch==13);
  client_origin(&wins[1],&x,&y);assert(x==12&&y==168);assert(top_window(&wins[1])==&wins[0]);
  setup(WS_CHILD,id,3,4,10,10);assert(u_CreateWindow(0x1000,0)==HWND_BASE+8);client_origin(&wins[2],&x,&y);assert(x==15&&y==172);
+ /* Group state survives WM_CREATE, is private to each child, and permits odd offsets. */
+ wr16(0x1000,2,id);wr16(0x1000,0,0);assert(u_GetWindowWord(0x1000,0)==0x1234);
+ wr16(0x1000,4,id);wr16(0x1000,2,1);wr16(0x1000,0,0xabcd);assert(u_SetWindowWord(0x1000,0)==0x12);
+ wr16(0x1000,2,id);wr16(0x1000,0,1);assert(u_GetWindowWord(0x1000,0)==0xabcd);
+ wr16(0x1000,2,HWND_BASE+8);wr16(0x1000,0,0);assert(u_GetWindowWord(0x1000,0)==0x1234);
+ wr16(0x1000,4,id);wr16(0x1000,2,2);wr16(0x1000,0,0xffff);assert(!u_SetWindowWord(0x1000,0));assert(wins[1].extra[2]==0xab);
+ wr16(0x1000,2,(u16)-12);wr16(0x1000,0,19);assert(!u_SetWindowWord(0x1000,0));assert(wins[1].id==19);
+ wr16(0x1000,2,id);wr16(0x1000,0,(u16)-12);assert(u_GetWindowWord(0x1000,0)==19);
+ wr16(0x1000,0,(u16)-8);assert(u_GetWindowWord(0x1000,0)==HWND_BASE);
+ assert(!u_GetWindowWord(0x1000,0xffff)&&!u_SetWindowWord(0x1000,0xffff));
  wr16(0x1000,8,id);wr16(0x1000,6,0x400);wr16(0x1000,4,0x7192);wr32(0x1000,0,0x12345678);
  assert(u_SendMessage(0x1000,0)==0xface1234UL && senthw==id && sentm==0x400 && sentp==0x7192 && sentl==0x12345678);
  wr16(0x1000,8,0xffff);u_SendMessage(0x1000,0);assert(senthw==HWND_BASE);
@@ -113,9 +131,12 @@ int main(void){u16 id;int x,y;unsigned frame;
  setup(WS_CHILD,999,0,0,10,10);assert(!u_CreateWindow(0x1000,0));
  setup(WS_CHILD|WS_CAPTION,id,0,0,10,10);assert(!u_CreateWindow(0x1000,0));
  setup(WS_CHILD,id,0,0,-1,10);assert(!u_CreateWindow(0x1000,0));
- setup(WS_CHILD,id,0,0,10,10);fail_frame=1;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used);fail_frame=0;
- fail_client=1;frame=nextid;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used&&destroyed[ndestroy-1]==frame);fail_client=0;
- capture_hwnd=wins[2].hwnd;focus_hwnd=wins[1].hwnd;destroy_window(&wins[1]);assert(!wins[1].used&&!wins[2].used&&wins[0].used);assert(!capture_hwnd&&!focus_hwnd);
+ setup(WS_CHILD,id,0,0,10,10);fail_extra=1;frame=nextid;
+ assert(!u_CreateWindow(0x1000,0)&&nextid==frame&&!wins[3].used&&!wins[3].extra);fail_extra=0;
+ setup(WS_CHILD,id,0,0,10,10);fail_frame=1;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used);fail_frame=0;assert(!wins[3].extra);
+ fail_client=1;frame=nextid;assert(!u_CreateWindow(0x1000,0));assert(!wins[3].used&&destroyed[ndestroy-1]==frame);fail_client=0;assert(!wins[3].extra);
+ create_fail=1;setup(WS_CHILD,id,0,0,10,10);assert(!u_CreateWindow(0x1000,0)&&!wins[3].used&&!wins[3].extra);create_fail=0;
+ capture_hwnd=wins[2].hwnd;focus_hwnd=wins[1].hwnd;destroy_window(&wins[1]);assert(!wins[1].used&&!wins[2].used&&wins[0].used);assert(!capture_hwnd&&!focus_hwnd);assert(!wins[1].extra&&!wins[2].extra&&extra_destroys==2);
  classes[0].menu[0]=0;
  setup(0,0,16,12,-32768,0);id=u_CreateWindow(0x1000,0);assert(win_get(id)->w==288&&win_get(id)->h==168);destroy_window(win_get(id));
  scr_w=640;scr_h=480;setup(0,0,16,12,-32768,0);id=u_CreateWindow(0x1000,0);assert(win_get(id)->w==624&&win_get(id)->h==448&&win_get(id)->x==16);destroy_window(win_get(id));
@@ -150,7 +171,7 @@ int main(void){u16 id;int x,y;unsigned frame;
    setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,0,0);id=u_CreateWindow(0x1000,0);
    assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
  }
- puts("Registered child hierarchy, geometry, failure and teardown checks passed");return 0;}
+ puts("Registered child hierarchy, window-extra state, geometry, failure and teardown checks passed");return 0;}
 '''
 with tempfile.TemporaryDirectory() as td:
     p=pathlib.Path(td);(p/'test.c').write_text(code)
