@@ -824,26 +824,27 @@ u32 u_GetScrollRange(u16 ss,u16 ap)
 /* ScrollWindow: redraw the invalidated client from the application's backing
  * store instead of copying obscured screen pixels. This is a genuine Win16
  * invalidation path; no pixel content is synthesized. */
+static int move_children(struct wnd *w,int dx,int dy)
+{
+ int i;u16 hwnd=w->hwnd;
+ for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+  long x=(long)wins[i].x+dx,y=(long)wins[i].y+dy;
+  if(x< -32768L||x>32767L||y< -32768L||y>32767L)return 0;
+ }
+ for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
+  wins[i].x+=dx;wins[i].y+=dy;GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
+ }
+ win_invalidate_all(w,1);return 1;
+}
 u32 u_ScrollWindow(u16 ss,u16 ap)
 {
     u16 hwnd=AW(12),ro=AW(4),rs=AW(6),co=AW(0),cs=AW(2);
-    int dx=(i16)AW(10),dy=(i16)AW(8),i;
+    int dx=(i16)AW(10),dy=(i16)AW(8);
     struct wnd*w=win_get(hwnd);
     if(!w)return 0;
     if((ro||rs) && (!scroll_word(rs,ro)||ro>0xfff8||((u32)rs<<4)+ro>0xffff8UL))return 0;
     if((co||cs) && (!scroll_word(cs,co)||co>0xfff8||((u32)cs<<4)+co>0xffff8UL))return 0;
-    /* A null scroll rectangle moves child windows as well. Preflight every
-     * child before changing any geometry, preserving signed 16-bit positions. */
-    if(!ro&&!rs) {
-        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
-            long x=(long)wins[i].x+dx,y=(long)wins[i].y+dy;
-            if(x< -32768L||x>32767L||y< -32768L||y>32767L)return 0;
-        }
-        for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
-            wins[i].x+=dx;wins[i].y+=dy;
-            GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
-        }
-    }
+    if(!ro&&!rs&&!move_children(w,dx,dy))return 0;
     win_invalidate_all(w,1);
     return 0; /* Win16 void Pascal */
 }
@@ -1218,26 +1219,104 @@ static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
     return 1;
 }
 
-/* ShowScrollBar(hwnd, bar, show): non-client bars change the client extent,
- * retaining their range/position. Standalone scrollbar controls are not
- * implemented by the current control backend, so SB_CTL cannot succeed. */
-u32 u_ShowScrollBar(u16 ss,u16 ap)
+/* Apply both non-client bar changes in one layout pass. */
+static int show_bars(struct wnd *w,u32 mask,u32 wanted)
 {
- struct wnd *w;u16 hwnd,bar;u32 bits,style;int cw,ch;
- if(ap>0xfffau)return 0;
- hwnd=AW(4);bar=AW(2);w=win_get(hwnd);
- if(!w||w->ctl||(bar!=0&&bar!=1&&bar!=3))return 0;
- bits=bar==0?WS_HSCROLL:bar==1?WS_VSCROLL:WS_HSCROLL|WS_VSCROLL;
- style=AW(0)?w->style|bits:w->style&~bits;
+ u16 hwnd=w->hwnd;GR_WINDOW_ID frame=w->frame;int cw=w->cw,ch=w->ch;
+ u32 style=(w->style&~mask)|(wanted&mask);
  if(style==w->style)return 1;
- cw=w->cw;ch=w->ch;w->style=style;scrollbar_forget(hwnd);
+ w->style=style;scrollbar_forget(hwnd);
  if(!move_window(hwnd,w->x,w->y,w->w,w->h,0))return 0;
  if(cw!=w->cw||ch!=w->ch)win_send(w,WM_SIZE,0,((u32)(u16)w->ch<<16)|(u16)w->cw);
- if(win_get(hwnd)!=w)return 1;
+ if(win_get(hwnd)!=w||w->frame!=frame)return 1;
  win_invalidate_all(w,1);
  if(w->visible)GrClearArea(w->frame,0,0,w->w,w->h,1);
  return 1;
 }
+/* ShowScrollBar(hwnd, bar, show). SB_CTL needs a real scrollbar control,
+ * which the current control backend does not yet provide. */
+u32 u_ShowScrollBar(u16 ss,u16 ap)
+{
+ struct wnd *w;u16 bar;u32 bits;
+ if(ap>0xfffau)return 0;
+ bar=AW(2);w=win_get(AW(4));
+ if(!w||w->ctl||(bar!=0&&bar!=1&&bar!=3))return 0;
+ bits=bar==0?WS_HSCROLL:bar==1?WS_VSCROLL:WS_HSCROLL|WS_VSCROLL;
+ return show_bars(w,bits,AW(0)?bits:0);
+}
+/* Win3 child ranges are rebased to the current client origin (position 0).
+ * Negative child coordinates remain reachable. The selected bars are solved
+ * together because adding either one reduces the other client dimension. */
+static void calc_child_scroll(struct wnd *w,u16 axis)
+{
+ long left=0,top=0,right=0,bottom=0,lo[2],hi[2];
+ int i,pass,hbar,vbar,fullw,fullh,cw,ch;u32 mask,wanted=0;
+ u16 hwnd;GR_WINDOW_ID frame;
+ if(!w||w->ctl||(axis!=0&&axis!=1&&axis!=3)||(w->scroll_init&0x80)||w->style&0x20000000UL)return;
+ hwnd=w->hwnd;frame=w->frame;
+ for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd&&wins[i].visible){
+  struct wnd *c=&wins[i];long r=(long)c->x+c->w,b=(long)c->y+c->h;
+  if(c->style&0x01000000UL){left=top=right=bottom=0;break;}
+  if(c->x<left)left=c->x;
+  if(c->y<top)top=c->y;
+  if(r>right)right=r;
+  if(b>bottom)bottom=b;
+ }
+ mask=axis==0?WS_HSCROLL:axis==1?WS_VSCROLL:WS_HSCROLL|WS_VSCROLL;
+ fullw=w->w-w->cx-border_of(w->style);
+ fullh=w->h-w->cy-border_of(w->style);
+ if(fullw<0)fullw=0;
+ if(fullh<0)fullh=0;
+ hbar=!(mask&WS_HSCROLL)&&!!(w->style&WS_HSCROLL);
+ vbar=!(mask&WS_VSCROLL)&&!!(w->style&WS_VSCROLL);
+ for(pass=0;pass<3;pass++){
+  cw=fullw-(vbar?SCROLLBAR_SIZE:0);ch=fullh-(hbar?SCROLLBAR_SIZE:0);
+  if(cw<0)cw=0;
+  if(ch<0)ch=0;
+  if(mask&WS_HSCROLL)hbar=left<0||right>cw;
+  if(mask&WS_VSCROLL)vbar=top<0||bottom>ch;
+ }
+ cw=fullw-(vbar?SCROLLBAR_SIZE:0);ch=fullh-(hbar?SCROLLBAR_SIZE:0);
+ if(cw<0)cw=0;
+ if(ch<0)ch=0;
+ lo[0]=left;lo[1]=top;hi[0]=right>cw?right-cw:0;hi[1]=bottom>ch?bottom-ch:0;
+ for(i=0;i<2;i++)if((axis==3||axis==i)&&(lo[i]<-32768L||hi[i]>32767L||hi[i]-lo[i]>32767L))return;
+ if(hbar)wanted|=WS_HSCROLL;
+ if(vbar)wanted|=WS_VSCROLL;
+ for(i=0;i<2;i++)if(axis==3||axis==i){
+  w->scroll_min[i]=(i16)lo[i];w->scroll_max[i]=(i16)hi[i];w->scroll_pos[i]=0;w->scroll_init|=1u<<i;
+ }
+ w->scroll_init|=0x80;
+ show_bars(w,mask,wanted);
+ if(win_get(hwnd)!=w||w->frame!=frame)return;
+ w->scroll_init&=~0x80;
+ scroll_redraw(w,1);
+}
+u32 u_CalcChildScroll(u16 ss,u16 ap)
+{if(ap<=0xfffcu)calc_child_scroll(win_get(AW(2)),AW(0));return 0;}
+static void scroll_children(struct wnd *w,u16 msg,u16 code,i16 thumb)
+{
+ int bar,length,delta;long pos;u16 old;
+ if(!w||w->ctl||(msg!=WM_HSCROLL&&msg!=WM_VSCROLL))return;
+ bar=msg==WM_VSCROLL;
+ if(code==8){calc_child_scroll(w,bar);return;}
+ if(code==5)return; /* Win3 waits for SB_THUMBPOSITION, not SB_THUMBTRACK. */
+ if(!(w->scroll_init&(1u<<bar)))return;
+ pos=w->scroll_pos[bar];old=(u16)pos;length=(bar?w->ch:w->cw)/2;
+ switch(code){
+ case 0:pos-=SCROLLBAR_SIZE;break;case 1:pos+=SCROLLBAR_SIZE;break;
+ case 2:pos-=length;break;case 3:pos+=length;break;
+ case 4:pos=thumb;break;case 6:pos=w->scroll_min[bar];break;
+ case 7:pos=w->scroll_max[bar];break;default:return;
+ }
+ if(pos<w->scroll_min[bar])pos=w->scroll_min[bar];
+ if(pos>w->scroll_max[bar])pos=w->scroll_max[bar];
+ delta=(i16)old-pos;
+ if(!move_children(w,bar?0:delta,bar?delta:0))return;
+ w->scroll_pos[bar]=(i16)pos;scroll_redraw(w,1);
+}
+u32 u_ScrollChildren(u16 ss,u16 ap)
+{if(ap<=0xfff6u)scroll_children(win_get(AW(8)),AW(6),AW(4),(i16)AW(0));return 0;}
 
 u32 u_MoveWindow(u16 ss,u16 ap)
 {
@@ -1449,6 +1528,8 @@ static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
     u16 ss=w16_app_ss,save=w16_app_sp,ap,off=(u16)lp,seg=(u16)(lp>>16),id;
     u32 style,r; int x,y,wd,h,i,tries;
     struct wnd *child;
+    if(msg==0x0086){child=win_get(w->mdi_active);if(mdi_eligible(w,child))win_send(child,msg,wp,lp);}
+    if(msg==WM_HSCROLL||msg==WM_VSCROLL){scroll_children(w,msg,wp,(i16)lp);return 0;}
     if(msg==WM_MDIGETACTIVE)return w->mdi_active; /* no maximized children in this runtime */
     if(msg==WM_MDIACTIVATE){mdi_activate(w,wp);return 0;}
     if(msg==WM_MDINEXT) {
@@ -1522,6 +1603,41 @@ u32 u_TranslateMDISysAccel(u16 ss,u16 ap)
  return 1;
 }
 
+/* Win3 DefFrameProc(frame, client, msg, wParam, lParam), 12 Pascal bytes.
+ * A frame owns the client extent; the client owns active-child selection.
+ * Maximized-child menu merging remains tied to future maximize support. */
+u32 u_DefFrameProc(u16 ss,u16 ap)
+{
+ struct wnd *frame,*client,*child;u16 msg,wp,hwnd,save,dp,i;u32 lp,result;GR_WINDOW_ID native;
+ if(ap>0xfff4u)return 0;
+ hwnd=AW(10);frame=win_get(hwnd);client=win_get(AW(8));msg=AW(6);wp=AW(4);lp=AL(0);
+ if(!frame)return 0;
+ native=frame->frame;
+ if(AW(8)&&(!client||client->cls!=CLASS_MDICLIENT||client->parent!=hwnd))return 0;
+ if(client){
+  if(msg==WM_SIZE&&wp!=1){
+   move_window(client->hwnd,0,0,(u16)lp,(u16)(lp>>16),1);
+   frame=win_get(hwnd);if(!frame||frame->frame!=native)return 0;
+  }
+  else if(msg==WM_SETFOCUS){set_focus(client);return 0;}
+  else if(msg==0x0086)win_send(client,msg,wp,lp);
+  else if(msg==WM_COMMAND){
+   for(i=0;i<MAXWIN;i++){
+    child=&wins[i];
+    if(child->used&&child->parent==client->hwnd&&child->id==wp&&mdi_eligible(client,child)){
+     mdi_activate(client,child->hwnd);return 0;
+    }
+   }
+  }
+ }
+ frame=win_get(hwnd);if(!frame||frame->frame!=native)return 0;
+ /* Do not rewrite the caller's frame/client arguments to reuse DefWindowProc. */
+ save=w16_app_sp;if(save<16)return 0;dp=save-12;
+ wr32(w16_app_ss,dp,lp);wr16(w16_app_ss,dp+4,wp);wr16(w16_app_ss,dp+6,msg);wr16(w16_app_ss,dp+8,hwnd);
+ w16_app_sp=dp;result=u_DefWindowProc(w16_app_ss,dp);w16_app_sp=save;
+ return msg==0x000c?0:result;
+}
+
 /* The default child procedure closes through its MDI client, preserving siblings. */
 u32 u_DefMDIChildProc(u16 ss,u16 ap)
 {
@@ -1548,6 +1664,24 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
     if (!w)
         return 0;
     switch (msg) {
+    case 0x000c: { /* WM_SETTEXT, including a null pointer for an empty title */
+        char text[sizeof(w->title)];u16 n=0,off=(u16)AL(0),seg=(u16)(AL(0)>>16);
+        if(!off&&!seg)text[0]=0;
+        else {
+            while(n+1u<sizeof(text)){
+                if(!valid_coords(seg,off,1))return 0;
+                text[n]=(char)rd8(seg,off);if(!text[n])break;
+                n++;if(off==0xffffu)return 0;off++;
+            }
+            text[n]=0;
+        }
+        strcpy(w->title,text);
+        if(w->visible)GrClearArea(w->frame,0,0,w->w,w->h,1);
+        return 1;
+    }
+    case 0x0086: /* WM_NCACTIVATE: allow activation and repaint the caption */
+        if(w->visible)GrClearArea(w->frame,0,0,w->w,w->h,1);
+        return 1;
     case 0x000d: case 0x000e: /* WM_GETTEXT / WM_GETTEXTLENGTH */
         return control_message(w,msg,wp,AL(0));
     case WM_CLOSE:

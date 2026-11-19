@@ -60,7 +60,7 @@ void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
 pre+='void scrollbar_draw(struct wnd*w){(void)w;}\n'
-code=pre+''.join(func(n) for n in ('win_get','scroll_window','scroll_redraw','u_SetScrollRange','u_SetScrollPos','u_GetScrollPos','scroll_word','u_GetScrollRange','u_ScrollWindow'))
+code=pre+''.join(func(n) for n in ('win_get','scroll_window','scroll_redraw','u_SetScrollRange','u_SetScrollPos','u_GetScrollPos','scroll_word','u_GetScrollRange','move_children','u_ScrollWindow'))
 code+="""
 static void range(u16 h,u16 bar,i16 min,i16 max){
  wr16(0x1000,0,1);wr16(0x1000,2,max);wr16(0x1000,4,min);wr16(0x1000,6,bar);wr16(0x1000,8,h);u_SetScrollRange(0x1000,0);

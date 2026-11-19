@@ -101,7 +101,8 @@ u32 u_GetWindowLong(u16,u16),u_SetWindowLong(u16,u16);
 u32 u_IsWindow(u16,u16),u_IsWindowVisible(u16,u16);
 u32 u_GetCurrentTime(u16,u16),u_GetLastActivePopup(u16,u16),u_LoadMenu(u16,u16),u_SetMenu(u16,u16);
 u32 u_GetActiveWindow(u16,u16),u_SendMessage(u16,u16);
-u32 u_ShowScrollBar(u16,u16);
+u32 u_DefFrameProc(u16,u16);
+u32 u_ShowScrollBar(u16,u16),u_CalcChildScroll(u16,u16),u_ScrollChildren(u16,u16);
 u32 u_MoveWindow(u16,u16),u_SetWindowPos(u16,u16);
 u32 u_ScrollWindow(u16,u16);
 u32 u_SetScrollRange(u16,u16),u_SetScrollPos(u16,u16),u_GetScrollPos(u16,u16),u_GetScrollRange(u16,u16);
@@ -449,6 +450,9 @@ const struct api api_table[] = {
     { K, 152, "GetNumTasks", 0, 0, H(k_GetNumTasks) },
     { U, 84, "DrawIcon", 8, 0, H(u_DrawIcon) },
     { U, 368, "CopyIcon", 4, 0, H(u_CopyIcon) },
+    { U, 445, "DefFrameProc", 12, 0, H(u_DefFrameProc) },
+    { U, 462, "CalcChildScroll", 4, 0, H(u_CalcChildScroll) },
+    { U, 463, "ScrollChildren", 10, 0, H(u_ScrollChildren) },
     { U, 267, "ShowScrollBar", 6, 0, H(u_ShowScrollBar) },
     { K, 138, "GetHeapSpaces", 2, 0, H(k_GetHeapSpaces) },
     { K, 168, "DirectResAlloc", 6, 0, H(k_DirectResAlloc) },

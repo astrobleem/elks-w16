@@ -126,13 +126,14 @@ if(create_fail&&m==WM_CREATE)return 0xffffffffUL;
 if(mdi_default_commands && (m==WM_CLOSE||m==WM_SYSCOMMAND) && w->parent && wins[(w->parent-HWND_BASE)/4].cls==CLASS_MDICLIENT) {
  wr32(0x1000,0x400,l);wr16(0x1000,0x404,p);wr16(0x1000,0x406,m);wr16(0x1000,0x408,w->hwnd);return u_DefMDIChildProc(0x1000,0x400);}
 senthw=w->hwnd;sentm=lastmsg=m;sentp=p;sentl=lastlp=l;msgcount++;return m==0x400?0xface1234UL:0;}
+static void scrollbar_draw(struct wnd*w){(void)w;}
 void scrollbar_forget(u16 w){(void)w;}\nvoid caret_destroy(u16 w){(void)w;} void menu_close_for(u16 w){(void)w;} void kill_timers(u16 w){(void)w;}
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','u_CreateWindow','move_window','u_ShowScrollBar','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -234,6 +235,26 @@ int main(void){u16 id;int x,y;unsigned frame;
    setup(WS_CHILD|WS_VISIBLE,HWND_BASE,0,0,0,0);id=u_CreateWindow(0x1000,0);
    assert(id);z=win_get(id);assert(!maps[z->client]&&!maps[z->frame]&&!z->invalid);destroy_window(z);
  }
+ /* Automatic child bounds, mutual bar effects, half-page scrolling,
+  * negative reach, thumb release, and physical direct-child movement. */
+ {u16 parent,kid;struct wnd *c,*g;
+  setup(WS_CHILD|WS_VISIBLE|WS_BORDER,HWND_BASE,0,0,202,102);parent=u_CreateWindow(0x1000,0);assert(parent);c=win_get(parent);
+  setup(WS_CHILD|WS_VISIBLE,parent,-10,-5,310,110);kid=u_CreateWindow(0x1000,0);assert(kid);g=win_get(kid);
+  wr16(0x1000,0,3);wr16(0x1000,2,parent);u_CalcChildScroll(0x1000,0);
+  assert(c->cw==184&&c->ch==84&&(c->style&(WS_HSCROLL|WS_VSCROLL))==(WS_HSCROLL|WS_VSCROLL));
+  assert(c->scroll_min[0]==-10&&c->scroll_max[0]==116&&c->scroll_min[1]==-5&&c->scroll_max[1]==21);
+  wr16(0x1000,8,parent);wr16(0x1000,6,WM_HSCROLL);wr16(0x1000,4,3);wr32(0x1000,0,0);
+  u_ScrollChildren(0x1000,0);assert(c->scroll_pos[0]==92&&g->x==-102&&c->invalid);
+  wr16(0x1000,4,5);wr16(0x1000,0,116);u_ScrollChildren(0x1000,0);assert(c->scroll_pos[0]==92&&g->x==-102);
+  wr16(0x1000,4,4);u_ScrollChildren(0x1000,0);assert(c->scroll_pos[0]==116&&g->x==-126);
+  wr16(0x1000,4,6);u_ScrollChildren(0x1000,0);assert(c->scroll_pos[0]==-10&&g->x==0);
+  wr16(0x1000,4,8);u_ScrollChildren(0x1000,0);assert(c->scroll_pos[0]==0&&c->scroll_min[0]==0&&c->scroll_max[0]==126);
+  /* Hiding the oversized child removes both bars and restores the client. */
+  g->visible=0;wr16(0x1000,0,3);wr16(0x1000,2,parent);u_CalcChildScroll(0x1000,0);
+  assert(c->cw==200&&c->ch==100&&!(c->style&(WS_HSCROLL|WS_VSCROLL)));
+  assert(!c->scroll_min[0]&&!c->scroll_max[0]&&!c->scroll_min[1]&&!c->scroll_max[1]);
+  assert(!u_CalcChildScroll(0x1000,0xffff)&&!u_ScrollChildren(0x1000,0xffff));destroy_window(c);
+ }
  /* A real built-in MDI client and a decorated registered group child. */
  {u16 mdi,group,second,third,pane;struct wnd *c,*g,*g2,*g3;
   strcpy((char*)host_ptr(0x2000,0,16),"mDiClIeNt");
@@ -259,6 +280,17 @@ int main(void){u16 id;int x,y;unsigned frame;
   third=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(third);g3=win_get(third);
   native_info[g3->frame].wid=g3->frame;native_info[g3->frame].parent=c->client;
   native_info[g3->frame].sibling=native_info[c->client].child;native_info[c->client].child=g3->frame;
+  /* The frame resizes its actual client, routes Window-menu ids, and
+   * transfers focus to the client's active child without mutating arguments. */
+  wr16(0x1000,10,HWND_BASE);wr16(0x1000,8,mdi);wr16(0x1000,6,WM_SIZE);wr16(0x1000,4,0);wr32(0x1000,0,0x008c0104UL);
+  u_DefFrameProc(0x1000,0);assert(c->w==260&&c->h==140&&c->x==0&&c->y==0);
+  assert(rd16(0x1000,10)==HWND_BASE&&rd16(0x1000,8)==mdi&&w16_app_sp==200);
+  wr16(0x1000,6,WM_COMMAND);wr16(0x1000,4,g->id);u_DefFrameProc(0x1000,0);assert(c->mdi_active==group);
+  wr16(0x1000,6,WM_SETFOCUS);u_DefFrameProc(0x1000,0);assert(nx_focus==g->client);
+  wr16(0x1000,6,0x86);wr16(0x1000,4,1);assert(u_DefFrameProc(0x1000,0)==1&&senthw==group&&sentm==0x86);
+  strcpy((char*)host_ptr(0x2000,160,16),"Program frame");wr16(0x1000,6,0x0c);wr32(0x1000,0,0x200000a0UL);
+  assert(!u_DefFrameProc(0x1000,0)&&!strcmp(wins[0].title,"Program frame"));
+  assert(!u_DefFrameProc(0x1000,0xffff));
   win_send(c,WM_MDIACTIVATE,group,0);
   win_send(c,WM_MDINEXT,group,0);assert(c->mdi_active==third);
   win_send(c,WM_MDINEXT,third,0);assert(c->mdi_active==second);
