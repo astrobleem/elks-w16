@@ -59,6 +59,7 @@ void caret_destroy(u16 w){(void)w;} void menu_close_for(u16 w){(void)w;} void ki
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
+pre+='static void placement_moved(struct wnd*w){(void)w;}\n'
 pre+='void scrollbar_draw(struct wnd*w){(void)w;}\n'
 code=pre+''.join(func(n) for n in ('win_get','scroll_window','scroll_redraw','u_SetScrollRange','u_SetScrollPos','u_GetScrollPos','scroll_word','u_GetScrollRange','move_children','u_ScrollWindow'))
 code+="""

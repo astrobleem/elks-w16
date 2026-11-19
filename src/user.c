@@ -26,6 +26,16 @@ static struct wnd *mdi_child(struct wnd *);
 static int mdi_activate(struct wnd *,u16);
 static void mdi_release(struct wnd *);
 static u16 set_focus(struct wnd *);
+/* Sparse normal/icon geometry: ordinary windows allocate no placement record. */
+struct placement {
+ struct placement *next;u16 hwnd;GR_WINDOW_ID frame;
+ int x,y,w,h,ix,iy;u8 busy,restoremax;u32 click;
+};
+static struct placement *placements;
+static struct placement *placement_get(struct wnd *,int);
+static void placement_moved(struct wnd *);
+static void placement_forget(struct wnd *);
+static int show_window(struct wnd *,u16);
 static u16 mdi_serial;
 u32 u_CreateWindow(u16,u16),u_DefWindowProc(u16,u16);
 struct wnd wins[MAXWIN];
@@ -275,6 +285,22 @@ static void draw_nc(struct wnd *w)
     int b = border_of(w->style), W = w->w, H = w->h, n = strlen(w->title);
     GR_COLOR black = GR_RGB(0, 0, 0), gray = GR_RGB(170, 170, 170), white = GR_RGB(255, 255, 255);
     GR_SIZE tw, th, tb;
+
+    if(w->style&WS_MINIMIZE){
+        u16 len,hicon=w->cls>=0&&w->cls<MAXCLASS?classes[w->cls].hicon:0;
+        const u8 *data=0;u8 *snapshot=0;
+        gdi_fill(f,gray,0,0,W,H);
+        if(hicon){data=icon_data(hicon,&len);if(!data)data=snapshot=image_snapshot(hicon,&len);}
+        if(data)gdi_draw_icon(f,(W-32)/2,0,data,len);
+        else { /* generic window icon when the class supplies none */
+            gdi_fg(black);GrRect(f,gc,(W-28)/2,2,28,28);
+            gdi_fill(f,GR_RGB(0,0,170),(W-26)/2,3,26,6);
+            gdi_fill(f,white,(W-26)/2,9,26,19);
+        }
+        free(snapshot);gdi_text_size(w->title,n,&tw,&th,&tb);gdi_fg(black);gdi_usebg(0);
+        GrText(f,gc,tw<W?(W-tw)/2:0,34,w->title,n,GR_TFASCII|GR_TFTOP);
+        return;
+    }
 
     /* Nano-X does not clip a window's drawing against its own children, so paint only the
      * non-client strips and never the client area (or the controls inside it). */
@@ -678,6 +704,11 @@ static void translate_event(GR_EVENT *ev)
         if(down && mdi_child(w)) {
             u16 hwnd=w->hwnd;set_focus(w);w=win_get(hwnd);if(!w)break;
         }
+        if((w->style&WS_MINIMIZE)&&down&&(ev->button.changebuttons&MWBUTTON_L)){
+            struct placement *p=placement_get(w,0);u32 now=ev->button.time;
+            if(p){if(p->click&&now-p->click<500UL){p->click=0;post(w->hwnd,WM_SYSCOMMAND,0xf120,0,0,0);}else p->click=now;}
+            break;
+        }
         if(w->ctl==CTL_LIST && down && w->list){
             int row=(ev->button.y-2)/12+w->list->top;
             focus_hwnd=w->hwnd;GrSetFocus(w->frame);
@@ -832,7 +863,7 @@ static int move_children(struct wnd *w,int dx,int dy)
   if(x< -32768L||x>32767L||y< -32768L||y>32767L)return 0;
  }
  for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==hwnd){
-  wins[i].x+=dx;wins[i].y+=dy;GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
+  wins[i].x+=dx;wins[i].y+=dy;placement_moved(&wins[i]);GrMoveWindow(wins[i].frame,wins[i].x,wins[i].y);
  }
  win_invalidate_all(w,1);return 1;
 }
@@ -1015,6 +1046,7 @@ u32 u_RegisterClass(u16 ss, u16 ap)
     c->procoff = rd16(seg, off + 2); c->procseg = rd16(seg, off + 4);
     c->cbwndextra = rd16(seg, off + 8);
     c->hinst = rd16(seg, off + 10);
+    c->hicon = rd16(seg, off + 12);
     c->hcursor = rd16(seg, off + 14);
     c->hbrush = rd16(seg, off + 16);
     {
@@ -1186,8 +1218,9 @@ u32 u_CreateWindow(u16 ss, u16 ap)
 static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
 {
     struct wnd *w=win_get(hwnd);
-    int moved, resized, cw, ch;
+    int moved, resized, cw, ch;GR_WINDOW_ID native;
     if(!w || wd<0 || h<0 || wd>32760 || h>32760) return 0;
+    native=w->frame;
     moved=w->x!=x || w->y!=y;
     resized=w->w!=wd || w->h!=h;
     cw=wd-w->cx-(w->ctl?0:border_of(w->style));
@@ -1196,7 +1229,9 @@ static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
     if(w->style & WS_HSCROLL)ch-=SCROLLBAR_SIZE;
     if(cw<0) cw=0;
     if(ch<0) ch=0;
+    if(w->style&WS_MINIMIZE)cw=ch=0;
     w->x=x;w->y=y;w->w=wd;w->h=h;w->cw=cw;w->ch=ch;
+    placement_moved(w);
     GrMoveWindow(w->frame,x,y);
     if(!cw || !ch) GrUnmapWindow(w->client);
     if(!wd || !h) GrUnmapWindow(w->frame);
@@ -1209,9 +1244,9 @@ static u32 move_window(u16 hwnd,int x,int y,int wd,int h,int repaint)
     }
     if(!cw || !ch) w->invalid=0;
     if(moved) win_send(w,WM_MOVE,0,((u32)(u16)(y+w->cy)<<16)|(u16)(x+w->cx));
-    if(win_get(hwnd)!=w) return 1;
-    if(resized) win_send(w,WM_SIZE,0,((u32)(u16)ch<<16)|(u16)cw);
-    if(win_get(hwnd)!=w) return 1;
+    if(win_get(hwnd)!=w||w->frame!=native) return 1;
+    if(resized) win_send(w,WM_SIZE,(w->style&WS_MINIMIZE)?1:(w->style&WS_MAXIMIZE)?2:0,((u32)(u16)ch<<16)|(u16)cw);
+    if(win_get(hwnd)!=w||w->frame!=native) return 1;
     if(repaint) {
         win_invalidate_all(w,1);
         if(w->visible && w->invalid) win_send(w,WM_PAINT,0,0);
@@ -1354,7 +1389,7 @@ static u16 set_focus(struct wnd *w)
 {
     u16 prev=focus_hwnd, target=w?w->hwnd:0,notified;
     struct wnd *old=win_get(prev),*child=mdi_child(w);
-    if(child) {
+    if(child && !(child->style&WS_MINIMIZE)) {
         struct wnd *c=win_get(child->parent);
         if(c->mdi_active!=child->hwnd && !mdi_activate(c,child->hwnd))return prev;
         w=win_get(target);if(!w)return prev;
@@ -1365,7 +1400,7 @@ static u16 set_focus(struct wnd *w)
     if(old)win_send(old,0x0008,target,0); /* WM_KILLFOCUS */
     if(focus_hwnd!=target)return prev;
     w=win_get(target);
-    if(w){GrSetFocus(w->ctl?w->frame:w->client);win_send(w,WM_SETFOCUS,notified,0);}
+    if(w){GrSetFocus(w->ctl||(w->style&WS_MINIMIZE)?w->frame:w->client);win_send(w,WM_SETFOCUS,notified,0);}
     return prev;
 }
 
@@ -1381,7 +1416,7 @@ static struct wnd *mdi_child(struct wnd *w)
  return 0;
 }
 static int mdi_eligible(struct wnd *c,struct wnd *w)
-{ return w && w->parent==c->hwnd && !w->ctl && !w->active && w->visible && !(w->style&WS_DISABLED); }
+{ return w && w->parent==c->hwnd && !w->ctl && !w->active && w->visible && !(w->style&(WS_DISABLED|WS_MINIMIZE)); }
 static u16 mdi_successor(struct wnd *c,u16 exclude,int reverse)
 {
  u16 first=window_relative(c->hwnd,5),h;struct wnd *w=win_get(exclude);
@@ -1428,35 +1463,147 @@ static void mdi_release(struct wnd *w)
  mdi_activate(c,mdi_successor(c,w->hwnd,0));
 }
 
-/* ShowWindow(hwnd, nCmdShow) */
-u32 u_ShowWindow(u16 ss, u16 ap)
+static struct placement *placement_get(struct wnd *w,int create)
 {
-    u16 cmd = AW(0);
-    struct wnd *w = win_get(AW(2));
-    u16 prev;
-    if (!w)
-        return 0;
-    prev = w->visible;
-    if (cmd == 0) {
-        GrUnmapWindow(w->frame);
-        w->visible = 0; w->style &= ~WS_VISIBLE;
-        mdi_release(w);
-        return prev;
-    }
-    if (w->cw && w->ch) GrMapWindow(w->client);
-    if (w->w && w->h) GrMapWindow(w->frame);
-    w->visible = 1; w->style |= WS_VISIBLE;
-    if (!w->shown) {
-        w->shown = 1;
-        win_send(w, WM_SIZE, 0, ((u32)w->ch << 16) | (u16)w->cw);
-    }
-    win_invalidate_all(w, 1);
-    if(cmd!=4 && cmd!=8) {
-        struct wnd *child=mdi_child(w);
-        if(child==w)mdi_activate(win_get(w->parent),w->hwnd);
-        else if(!w->parent)set_focus(w);
-    }
-    return prev;
+ struct placement *p;
+ for(p=placements;p;p=p->next)if(p->hwnd==w->hwnd&&p->frame==w->frame)return p;
+ if(!create)return 0;
+ p=calloc(1,sizeof(*p));if(!p)return 0;
+ p->hwnd=w->hwnd;p->frame=w->frame;p->x=w->x;p->y=w->y;p->w=w->w;p->h=w->h;p->ix=p->iy=-1;
+ p->next=placements;placements=p;return p;
+}
+static void placement_moved(struct wnd *w)
+{
+ struct placement *p=placement_get(w,0);if(!p||p->busy)return;
+ if(w->style&WS_MINIMIZE){p->ix=w->x;p->iy=w->y;}
+ else if(!(w->style&WS_MAXIMIZE)){p->x=w->x;p->y=w->y;p->w=w->w;p->h=w->h;}
+}
+static void placement_forget(struct wnd *w)
+{
+ struct placement **link=&placements,*p;
+ while((p=*link)!=0){
+  if(p->hwnd==w->hwnd&&p->frame==w->frame){*link=p->next;free(p);return;}
+  link=&p->next;
+ }
+}
+static void icon_position(struct wnd *w,struct placement *p)
+{
+ struct wnd *parent=win_get(w->parent);int width=parent?parent->cw:scr_w,height=parent?parent->ch:scr_h;
+ int col,cols=width/ICON_WIDTH,row,i,n,found;
+ if(p->ix!=-1)return;
+ if(cols<1)cols=1;
+ for(n=0;n<MAXWIN;n++){
+  col=n%cols;row=n/cols;p->ix=col*ICON_WIDTH;p->iy=(height>ICON_HEIGHT?height-ICON_HEIGHT:0)-row*ICON_STEP_Y;
+  found=0;
+  for(i=0;i<MAXWIN;i++){
+   struct wnd *other=&wins[i];
+   if(other!=w&&other->used&&other->visible&&other->parent==w->parent&&(other->style&WS_MINIMIZE)&&
+      other->x<p->ix+ICON_WIDTH&&other->x+other->w>p->ix&&other->y<p->iy+ICON_HEIGHT&&other->y+other->h>p->iy){found=1;break;}
+  }
+  if(!found)return;
+ }
+}
+/* Geometry and the minimized flag change together before WM_SIZE. A busy
+ * sparse record protects the saved normal rectangle during that resize. */
+static int show_window(struct wnd *w,u16 cmd)
+{
+ struct placement *p;struct wnd *parent;u16 hwnd=w->hwnd,prev=w->visible;GR_WINDOW_ID frame=w->frame;
+ u32 mode=w->style&(WS_MINIMIZE|WS_MAXIMIZE),target=mode;int x,y,wd,h,resized;
+ p=placement_get(w,0);
+ if(cmd>9||(p&&p->busy))return prev;
+ if(!cmd){GrUnmapWindow(frame);w->visible=0;w->style&=~WS_VISIBLE;mdi_release(w);return prev;}
+ if(cmd==2||cmd==6||cmd==7)target=WS_MINIMIZE;
+ else if(cmd==3)target=WS_MAXIMIZE;
+ else if(cmd==1||cmd==4||cmd==9)target=0;
+ p=placement_get(w,0);
+ if(cmd==9&&mode==WS_MINIMIZE&&p&&p->restoremax)target=WS_MAXIMIZE;
+ if(mode!=target){
+  p=placement_get(w,1);if(!p||p->busy)return prev;
+  p->busy=1;
+  if(mode==WS_MINIMIZE){
+   int allowed=win_send(w,WM_QUERYOPEN,0,0)!=0;
+   if(win_get(hwnd)!=w||w->frame!=frame)return prev;
+   p=placement_get(w,0);if(!p)return prev;
+   if(!allowed){p->busy=0;return prev;}
+  }
+  x=p->x;y=p->y;wd=p->w;h=p->h;
+  if(target==WS_MINIMIZE){p->restoremax=mode==WS_MAXIMIZE;icon_position(w,p);x=p->ix;y=p->iy;wd=ICON_WIDTH;h=ICON_HEIGHT;}
+  else if(target==WS_MAXIMIZE){parent=win_get(w->parent);x=y=0;wd=parent?parent->cw:scr_w;h=parent?parent->ch:scr_h;}
+  if(wd<0||h<0||wd>32760||h>32760){p->busy=0;return prev;}
+  p->busy=1;w->style=(w->style&~(WS_MINIMIZE|WS_MAXIMIZE))|target;
+  resized=w->w!=wd||w->h!=h;
+  move_window(hwnd,x,y,wd,h,0);
+  if(win_get(hwnd)!=w||w->frame!=frame)return prev;
+  p=placement_get(w,0);if(p)p->busy=0;
+  if(!resized)win_send(w,WM_SIZE,target==WS_MINIMIZE?1:target==WS_MAXIMIZE?2:0,((u32)(u16)w->ch<<16)|(u16)w->cw);
+  if(win_get(hwnd)!=w||w->frame!=frame)return prev;
+  w->shown=1;
+  if(target==WS_MINIMIZE){w->invalid=0;mdi_release(w);}
+ }
+ if(win_get(hwnd)!=w||w->frame!=frame)return prev;
+ if(w->cw&&w->ch&&!(w->style&WS_MINIMIZE))GrMapWindow(w->client);
+ if(w->w&&w->h)GrMapWindow(frame);
+ w->visible=1;w->style|=WS_VISIBLE;
+ if(!w->shown){w->shown=1;win_send(w,WM_SIZE,(w->style&WS_MINIMIZE)?1:(w->style&WS_MAXIMIZE)?2:0,((u32)(u16)w->ch<<16)|(u16)w->cw);}
+ if(win_get(hwnd)!=w||w->frame!=frame)return prev;
+ if(w->style&WS_MINIMIZE){w->invalid=0;GrClearArea(frame,0,0,w->w,w->h,1);}
+ else win_invalidate_all(w,1);
+ if(cmd!=4&&cmd!=6&&cmd!=7&&cmd!=8){
+  struct wnd *child=mdi_child(w);
+  if(child==w&&!(w->style&WS_MINIMIZE))mdi_activate(win_get(w->parent),hwnd);
+  else if(!w->parent)set_focus(w);
+ }
+ return prev;
+}
+u32 u_ShowWindow(u16 ss,u16 ap)
+{return ap<=0xfffcu&&win_get(AW(2))?show_window(win_get(AW(2)),AW(0)):0;}
+/* Win3 private placement ABI: hwnd, optional RECT far*, optional POINT far*. */
+u32 u_GetInternalWindowPos(u16 ss,u16 ap)
+{
+ struct wnd *w;struct placement *p;u16 ro,rs,po,ps;
+ if(ap>0xfff6u)return 0;
+ po=AW(0);ps=AW(2);ro=AW(4);rs=AW(6);w=win_get(AW(8));
+ if(!w||w->ctl||((ro||rs)&&!valid_coords(rs,ro,8))||((po||ps)&&!valid_coords(ps,po,4)))return 0;
+ p=placement_get(w,1);if(!p)return 0;
+ if(!(w->style&(WS_MINIMIZE|WS_MAXIMIZE)))placement_moved(w);
+ if(ro||rs){wr16(rs,ro,p->x);wr16(rs,ro+2,p->y);wr16(rs,ro+4,(u16)((long)p->x+p->w));wr16(rs,ro+6,(u16)((long)p->y+p->h));}
+ if(po||ps){wr16(ps,po,p->ix);wr16(ps,po+2,p->iy);}
+ return w->style&WS_MINIMIZE?2:w->style&WS_MAXIMIZE?3:1;
+}
+/* Win3 returns AX=1 on success. Null/-1 icon x resets its saved position. */
+u32 u_SetInternalWindowPos(u16 ss,u16 ap)
+{
+ struct wnd *w;struct placement *p;u16 po,ps,ro,rs,cmd,hwnd;GR_WINDOW_ID frame;int x,y,wd,h;
+ if(ap>0xfff4u)return 0;
+ po=AW(0);ps=AW(2);ro=AW(4);rs=AW(6);cmd=AW(8);hwnd=AW(10);w=win_get(hwnd);
+ if(!w||w->ctl||cmd>9||((ro||rs)&&!valid_coords(rs,ro,8))||((po||ps)&&!valid_coords(ps,po,4)))return 0;
+ x=w->x;y=w->y;wd=w->w;h=w->h;
+ if(ro||rs){long a,b;x=(i16)rd16(rs,ro);y=(i16)rd16(rs,ro+2);a=(long)(i16)rd16(rs,ro+4)-x;b=(long)(i16)rd16(rs,ro+6)-y;if(a<0||a>32760||b<0||b>32760)return 0;wd=(int)a;h=(int)b;}
+ p=placement_get(w,1);if(!p||p->busy)return 0;frame=w->frame;
+ if(ro||rs){p->x=x;p->y=y;p->w=wd;p->h=h;}
+ p->ix=p->iy=-1;
+ if((po||ps)&&(i16)rd16(ps,po)!=-1){p->ix=(i16)rd16(ps,po);p->iy=(i16)rd16(ps,po+2);}
+ p->busy=1;
+ if(w->style&WS_MINIMIZE){if(p->ix!=-1)move_window(hwnd,p->ix,p->iy,w->w,w->h,0);}
+ else if(!(w->style&WS_MAXIMIZE)&&(ro||rs))move_window(hwnd,x,y,wd,h,0);
+ if(win_get(hwnd)!=w||w->frame!=frame)return 1;
+ p=placement_get(w,0);if(p)p->busy=0;
+ show_window(w,cmd);return 1;
+}
+u32 u_ArrangeIconicWindows(u16 ss,u16 ap)
+{
+ struct wnd *parent;int width,height,cols,n=0,i;u16 ph;
+ if(ap>0xfffeu)return 0;
+ ph=AW(0);parent=win_get(ph);if(ph!=0&&ph!=DESKTOP_HWND&&!parent)return 0;
+ if(ph==DESKTOP_HWND)ph=0;
+ width=parent?parent->cw:scr_w;height=parent?parent->ch:scr_h;cols=width/ICON_WIDTH;if(cols<1)cols=1;
+ for(i=0;i<MAXWIN;i++)if(wins[i].used&&wins[i].parent==ph&&wins[i].visible&&(wins[i].style&WS_MINIMIZE)){
+  struct wnd *w=&wins[i];struct placement *p=placement_get(w,1);u16 hwnd=w->hwnd;GR_WINDOW_ID frame=w->frame;int x=(n%cols)*ICON_WIDTH,y=(height>ICON_HEIGHT?height-ICON_HEIGHT:0)-(n/cols)*ICON_STEP_Y;
+  if(!p)return 0;
+  p->ix=x;p->iy=y;n++;move_window(hwnd,x,y,ICON_WIDTH,ICON_HEIGHT,0);
+  if(win_get(hwnd)==w&&w->frame==frame)GrClearArea(frame,0,0,w->w,w->h,1);
+ }
+ return n?ICON_STEP_Y:0;
 }
 
 /* forget the built-in controls of a destroyed dialog (their Nano-X windows go with the parent) */
@@ -1509,6 +1656,7 @@ static void destroy_window(struct wnd *w)
         keyup_pending = 0;
     free_controls(hwnd);
     free(w->extra); w->extra=0;
+    placement_forget(w);
     w->used = 0;
 }
 
@@ -1530,7 +1678,7 @@ static u32 mdi_message(struct wnd *w,u16 msg,u16 wp,u32 lp)
     struct wnd *child;
     if(msg==0x0086){child=win_get(w->mdi_active);if(mdi_eligible(w,child))win_send(child,msg,wp,lp);}
     if(msg==WM_HSCROLL||msg==WM_VSCROLL){scroll_children(w,msg,wp,(i16)lp);return 0;}
-    if(msg==WM_MDIGETACTIVE)return w->mdi_active; /* no maximized children in this runtime */
+    if(msg==WM_MDIGETACTIVE){child=win_get(w->mdi_active);return w->mdi_active|((child&&(child->style&WS_MAXIMIZE))?0x10000UL:0);}
     if(msg==WM_MDIACTIVATE){mdi_activate(w,wp);return 0;}
     if(msg==WM_MDINEXT) {
         u16 current=wp?wp:w->mdi_active;
@@ -1605,7 +1753,7 @@ u32 u_TranslateMDISysAccel(u16 ss,u16 ap)
 
 /* Win3 DefFrameProc(frame, client, msg, wParam, lParam), 12 Pascal bytes.
  * A frame owns the client extent; the client owns active-child selection.
- * Maximized-child menu merging remains tied to future maximize support. */
+ * Maximized-child menu merging is not implemented. */
 u32 u_DefFrameProc(u16 ss,u16 ap)
 {
  struct wnd *frame,*client,*child;u16 msg,wp,hwnd,save,dp,i;u32 lp,result;GR_WINDOW_ID native;
@@ -1624,7 +1772,11 @@ u32 u_DefFrameProc(u16 ss,u16 ap)
   else if(msg==WM_COMMAND){
    for(i=0;i<MAXWIN;i++){
     child=&wins[i];
-    if(child->used&&child->parent==client->hwnd&&child->id==wp&&mdi_eligible(client,child)){
+    if(child->used&&child->parent==client->hwnd&&child->id==wp&&!child->ctl&&child->visible&&!(child->style&WS_DISABLED)){
+     u16 id=child->hwnd,cid=client->hwnd;GR_WINDOW_ID cf=client->frame;
+     if(child->style&WS_MINIMIZE)show_window(child,9);
+     client=win_get(cid);child=win_get(id);
+     if(!client||client->frame!=cf||!mdi_eligible(client,child))return 0;
      mdi_activate(client,child->hwnd);return 0;
     }
    }
@@ -1684,12 +1836,16 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
         return 1;
     case 0x000d: case 0x000e: /* WM_GETTEXT / WM_GETTEXTLENGTH */
         return control_message(w,msg,wp,AL(0));
+    case WM_QUERYOPEN:
+        return 1;
     case WM_CLOSE:
         destroy_window(w);
         return 0;
     case WM_SYSCOMMAND:
-        if ((wp & 0xFFF0) == SC_CLOSE)
-            return win_send(w, WM_CLOSE, 0, 0);
+        if ((wp & 0xFFF0) == SC_CLOSE)return win_send(w, WM_CLOSE, 0, 0);
+        if((wp&0xfff0u)==0xf020u){show_window(w,2);return 0;}
+        if((wp&0xfff0u)==0xf030u){show_window(w,3);return 0;}
+        if((wp&0xfff0u)==0xf120u){show_window(w,9);return 0;}
         return 0;
     case WM_ERASEBKGND: {
         struct dc *dc = dc_get(wp);
@@ -1979,7 +2135,7 @@ u32 u_SetFocus(u16 ss, u16 ap)
     return set_focus(w);
 }
 
-u32 u_IsIconic(u16 ss, u16 ap) { (void)ss; (void)ap; return 0; }   /* windows are never minimised here */
+u32 u_IsIconic(u16 ss,u16 ap) {struct wnd *w=ap<=0xfffeu?win_get(AW(0)):0;return w&&(w->style&WS_MINIMIZE)!=0;}
 
 /* SetWindowText(hWnd, lpString) */
 u32 u_SetWindowText(u16 ss, u16 ap)
@@ -3166,6 +3322,8 @@ u32 u_GetSystemMetrics(u16 ss, u16 ap)
     case 17: return scr_h - CAPH;   /* SM_CYFULLSCREEN */
     case 19: return 1;              /* SM_MOUSEPRESENT */
     case 22: return 0;              /* SM_DEBUG: retail */
+    case 38: return ICON_WIDTH;     /* SM_CXICONSPACING */
+    case 39: return ICON_STEP_Y;    /* SM_CYICONSPACING */
     case 32: case 33: return 3;     /* SM_CXFRAME, SM_CYFRAME */
     }
     return 0;
@@ -3323,6 +3481,7 @@ void user_shutdown(void)
         }
     if (n)
         vlog("w16: destroyed %d window(s) the program left open\n", n);
+    while(placements){struct placement *p=placements;placements=p->next;free(p);}
     gdi_shutdown();
     GrClose();
 }

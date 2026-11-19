@@ -3,7 +3,7 @@ import pathlib,re,subprocess,tempfile,os
 root=pathlib.Path(__file__).resolve().parents[1]
 u=(root/'src/user.c').read_text(); h=(root/'src/wapi.h').read_text()
 def func(name):
-    m=re.search(r'^(?:static )?(?:struct wnd \*|u32 |u16 |void |int )'+name+r'\([^;{}]*\)\s*\{',u,re.M)
+    m=re.search(r'^(?:static )?(?:struct wnd \*|struct placement \*|u32 |u16 |void |int )'+name+r'\([^;{}]*\)\s*\{',u,re.M)
     assert m,name
     start=u.index('{',m.start()); level=1; p=start+1
     while level:
@@ -45,10 +45,16 @@ static void GrGetWindowInfo(unsigned id,GR_WINDOW_INFO *i){assert(id<700);*i=nat
 #define wlog(...) ((void)0)
 #define vlog(...) ((void)0)
 '''
-pre+='\n'.join(l for l in h.splitlines() if l.startswith('#define WS_') or l.startswith('#define WM_') or l.startswith('#define MAXWIN') or l.startswith('#define MAXCLASS') or l.startswith('#define HWND_BASE'))+'\n'
+pre+='\n'.join(l for l in h.splitlines() if l.startswith('#define ICON_') or l.startswith('#define WS_') or l.startswith('#define WM_') or l.startswith('#define MAXWIN') or l.startswith('#define MAXCLASS') or l.startswith('#define HWND_BASE'))+'\n'
 for name in ('wclass','wnd'):
     pre+=re.search(r'struct '+name+r' \{.*?\n\};',h,re.S)[0]+'\n'
-pre+='''struct wnd wins[MAXWIN]; static struct wclass classes[MAXCLASS];
+pre+=re.search(r'struct placement \{.*?\n\};',u,re.S)[0]+'\n'
+pre+='''static struct placement *placements;
+static struct placement *placement_get(struct wnd*,int);
+static void placement_moved(struct wnd*);
+static void placement_forget(struct wnd*);
+static int show_window(struct wnd*,u16);
+struct wnd wins[MAXWIN]; static struct wclass classes[MAXCLASS];
 static GR_WINDOW_ID nx_focus;
 static GR_WINDOW_ID GrGetFocus(void){return nx_focus;}
 static int scr_w=320,scr_h=200;
@@ -97,7 +103,8 @@ struct dc { int paint; struct wnd *w; };
 static struct dc *dc_get(u16 h){(void)h;return NULL;}
 static void gdi_fill(unsigned w,unsigned c,int x,int y,int wd,int ht){(void)w;(void)c;(void)x;(void)y;(void)wd;(void)ht;}
 static u16 key_mods,mdi_serial;
-static int mdi_default_commands=1;
+static int mdi_default_commands=1,query_open=1;
+static u16 destroy_on_size;static void destroy_window(struct wnd*);
 u32 u_DefMDIChildProc(u16,u16);
 static struct wnd *mdi_child(struct wnd*);
 static int mdi_activate(struct wnd*,u16);
@@ -113,6 +120,8 @@ static unsigned create_fail,extra_creates,extra_destroys;
 static u16 senthw,sentm,sentp;static u32 sentl,createarg,mdi_pair,mdi_syslp;
 static u16 mdi_deactivated,mdi_activated,mdi_reenter_on,mdi_reenter_to;
 u32 win_send(struct wnd*w,u16 m,u16 p,u32 l){
+if(m==WM_QUERYOPEN)return query_open;
+if(m==WM_SIZE&&w->hwnd==destroy_on_size){destroy_on_size=0;destroy_window(w);return 0;}
 if(m==WM_SYSCOMMAND)mdi_syslp=l;
 if(m==6||m==0x86)activation_events++;
 if(m==WM_CREATE)createarg=l;
@@ -133,7 +142,7 @@ static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
 static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','u_ShowWindow','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','top_window','win_by_nx','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+='''
 static void setup(u32 style,u16 parent,int x,int y,int w,int h){
  memset(host_ptr(0x1000,0,32),0,32);wr16(0x1000,8,parent);wr16(0x1000,10,h);wr16(0x1000,12,w);wr16(0x1000,14,y);wr16(0x1000,16,x);wr32(0x1000,18,style);
@@ -255,6 +264,38 @@ int main(void){u16 id;int x,y;unsigned frame;
   assert(!c->scroll_min[0]&&!c->scroll_max[0]&&!c->scroll_min[1]&&!c->scroll_max[1]);
   assert(!u_CalcChildScroll(0x1000,0xffff)&&!u_ScrollChildren(0x1000,0xffff));destroy_window(c);
  }
+ /* Sparse placement: normal rectangle survives icon placement, veto,
+  * rearrangement, maximization and restore; ordinary windows allocate none. */
+ {u16 group,second;struct wnd *g,*g2;struct placement *saved;int pcw=wins[0].cw,pch=wins[0].ch;
+  wins[0].cw=320;wins[0].ch=200;assert(!placements);
+  setup(WS_CHILD|WS_VISIBLE|WS_BORDER,HWND_BASE,7,9,180,100);group=u_CreateWindow(0x1000,0);assert(group);g=win_get(group);assert(!placements);
+  fail_extra=1;wr16(0x1000,0,2);wr16(0x1000,2,group);u_ShowWindow(0x1000,0);assert(!(g->style&WS_MINIMIZE)&&!placements);fail_extra=0;
+  wr16(0x2000,180,11);wr16(0x2000,182,13);wr16(0x2000,184,191);wr16(0x2000,186,113);
+  wr16(0x2000,188,45);wr16(0x2000,190,60);
+  wr16(0x1000,10,group);wr16(0x1000,8,2);wr32(0x1000,4,0x200000b4UL);wr32(0x1000,0,0x200000bcUL);
+  assert(u_SetInternalWindowPos(0x1000,0)==1&&g->x==45&&g->y==60&&g->w==ICON_WIDTH&&g->h==ICON_HEIGHT);
+  assert((g->style&WS_MINIMIZE)&&!g->cw&&!g->ch&&unmaps[g->client]&&!g->invalid);saved=placements;assert(saved&&!saved->next);
+  wr16(0x1000,0,group);assert(u_IsIconic(0x1000,0));
+  wr16(0x1000,8,group);wr32(0x1000,4,0x200000c8UL);wr32(0x1000,0,0x200000d0UL);
+  assert(u_GetInternalWindowPos(0x1000,0)==2&&rd16(0x2000,200)==11&&rd16(0x2000,204)==191&&rd16(0x2000,208)==45);
+  query_open=0;wr16(0x1000,0,9);wr16(0x1000,2,group);u_ShowWindow(0x1000,0);assert(g->style&WS_MINIMIZE);query_open=1;
+  u_ShowWindow(0x1000,0);assert(!(g->style&(WS_MINIMIZE|WS_MAXIMIZE))&&g->x==11&&g->y==13&&g->w==180&&g->h==100&&g->cw&&g->ch);
+  assert(placements==saved&&!saved->next);
+  wr16(0x1000,0,3);u_ShowWindow(0x1000,0);assert((g->style&WS_MAXIMIZE)&&g->x==0&&g->y==0&&g->w==wins[0].cw&&g->h==wins[0].ch);
+  wr16(0x1000,0,2);u_ShowWindow(0x1000,0);wr16(0x1000,0,9);u_ShowWindow(0x1000,0);assert(g->style&WS_MAXIMIZE);
+  wr16(0x1000,0,1);u_ShowWindow(0x1000,0);assert(g->x==11&&g->y==13&&g->w==180&&g->h==100&&!(g->style&(WS_MINIMIZE|WS_MAXIMIZE)));
+  wr16(0x1000,10,group);wr16(0x1000,8,2);wr32(0x1000,4,0);wr32(0x1000,0,0);assert(u_SetInternalWindowPos(0x1000,0));
+  setup(WS_CHILD|WS_VISIBLE|WS_BORDER,HWND_BASE,1,2,100,80);second=u_CreateWindow(0x1000,0);assert(second);g2=win_get(second);
+  wr16(0x1000,0,2);wr16(0x1000,2,second);u_ShowWindow(0x1000,0);assert(g2->style&WS_MINIMIZE);
+  wr16(0x1000,0,HWND_BASE);assert(u_ArrangeIconicWindows(0x1000,0)==ICON_STEP_Y&&g->x!=g2->x);
+  wr16(0x1000,8,group);wr32(0x1000,4,0x200000c8UL);wr32(0x1000,0,0x200000d0UL);assert(u_GetInternalWindowPos(0x1000,0)==2&&rd16(0x2000,200)==11&&rd16(0x2000,204)==191);
+  assert(!u_SetInternalWindowPos(0x1000,0xffff)&&!u_GetInternalWindowPos(0x1000,0xffff));
+  destroy_window(g);destroy_window(g2);assert(!placements);
+  setup(WS_CHILD|WS_VISIBLE|WS_BORDER,HWND_BASE,1,2,100,80);group=u_CreateWindow(0x1000,0);assert(group);
+  destroy_on_size=group;wr16(0x1000,0,2);wr16(0x1000,2,group);u_ShowWindow(0x1000,0);
+  assert(!win_get(group)&&!placements); /* WM_SIZE may destroy the sparse owner */
+  wins[0].cw=pcw;wins[0].ch=pch;
+ }
  /* A real built-in MDI client and a decorated registered group child. */
  {u16 mdi,group,second,third,pane;struct wnd *c,*g,*g2,*g3;
   strcpy((char*)host_ptr(0x2000,0,16),"mDiClIeNt");
@@ -277,6 +318,9 @@ int main(void){u16 id;int x,y;unsigned frame;
   native_info[c->client].wid=c->client;native_info[c->client].child=g2->frame;
   native_info[g2->frame].wid=g2->frame;native_info[g2->frame].parent=c->client;native_info[g2->frame].sibling=g->frame;
   native_info[g->frame].wid=g->frame;native_info[g->frame].parent=c->client;
+  wr16(0x1000,0,2);wr16(0x1000,2,second);u_ShowWindow(0x1000,0);
+  assert((g2->style&WS_MINIMIZE)&&c->mdi_active==group);
+  wr16(0x1000,0,9);u_ShowWindow(0x1000,0);assert(!(g2->style&WS_MINIMIZE)&&c->mdi_active==second);
   third=win_send(c,WM_MDICREATE,0,0x20000040UL);assert(third);g3=win_get(third);
   native_info[g3->frame].wid=g3->frame;native_info[g3->frame].parent=c->client;
   native_info[g3->frame].sibling=native_info[c->client].child;native_info[c->client].child=g3->frame;

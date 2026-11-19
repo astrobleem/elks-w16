@@ -32,6 +32,13 @@
 #define WM_RBUTTONUP     0x0205
 #define SC_CLOSE         0xF060
 
+#define WS_MINIMIZE      0x20000000ul
+#define WS_MAXIMIZE      0x01000000ul
+#define WM_QUERYOPEN     0x0013
+#define ICON_WIDTH 80
+#define ICON_HEIGHT (32+CAPH+4)
+#define ICON_STEP_Y 64
+
 #define WS_HSCROLL       0x00100000ul
 #define WS_VSCROLL       0x00200000ul
 #define SCROLLBAR_SIZE 16
@@ -95,7 +102,7 @@
 struct wclass {
     u8   used;
     char name[24];
-    u16  style, procoff, procseg, hinst, hbrush, hcursor, cbwndextra;
+    u16  style, procoff, procseg, hinst, hbrush, hcursor, hicon, cbwndextra;
     char menu[16];              /* lpszMenuName: a name, "#n", or empty */
 };
 
