@@ -341,7 +341,7 @@ u32 u_TranslateAccelerator(u16 ss, u16 ap)
     struct wnd *w = win_get(AW(6));
     if (h < HACCEL_BASE || (h & 1) || i >= MAXACC || !accels[i].used || !w)
         return 0;
-    if (msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYDOWN && msg != WM_CHAR)
+    if (msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYDOWN && msg != WM_SYSKEYUP && msg != WM_CHAR)
         return 0;
     for (k = 0; k < accels[i].n; k++) {
         const struct accel *a = &accels[i].e[k];
@@ -352,7 +352,7 @@ u32 u_TranslateAccelerator(u16 ss, u16 ap)
                      ((a->fl & 8) != 0) != ((mods & MWKMOD_CTRL) != 0) ||
                      ((a->fl & 16) != 0) != ((mods & MWKMOD_ALT) != 0)))
             continue;
-        if (msg != WM_KEYUP) {
+        if (msg != WM_KEYUP && msg != WM_SYSKEYUP) {
             vlog("w16: accelerator key %04x -> WM_COMMAND %u\n", key, a->cmd);
             win_send(w, WM_COMMAND, a->cmd, 0x00010000ul);
         }

@@ -40,6 +40,7 @@ static void GrGetWindowInfo(unsigned id,GR_WINDOW_INFO *i){assert(id<700);*i=nat
 #define MWKMOD_CTRL 1
 #define MWKMOD_SHIFT 2
 #define MWKMOD_ALT 4
+#define MWKEY_F10 309
 #define CAPH 14
 #define DESKTOP_HWND 1
 #define MENUH 16\n#define SCROLLBAR_SIZE 16
@@ -66,6 +67,8 @@ u8 *host_ptr(u16 s,u16 o,u16 n) { assert((u32)o+n<=65536);return host_mem+LIN(s,
 void fzero(u16 s,u16 o,u16 n){memset(host_ptr(s,o,n),0,n);}
 u16 fstrncpy_in(char*d,u16 s,u16 o,u16 n){strncpy(d,(char*)host_ptr(s,o,1),n);d[n-1]=0;return strlen(d);}
 ''' + func('find_class').replace('    if (!seg) {','    if (!seg && !off)return 0;\n    if (!seg) {',1) + '''
+static int menu_key(struct wnd*w,unsigned key,u32 mods){(void)w;(void)key;(void)mods;abort();}
+static int menu_sys_open(struct wnd*w,int select,u32 time){(void)w;(void)select;(void)time;abort();}
 static int menu_load(struct wnd*w,const char*n,u16 id){(void)w;(void)n;(void)id;abort();}
 static int menu_attach(struct wnd*w,u16 h){(void)w;(void)h;abort();}
 u32 brush_color(u16 h,int *n){(void)h;*n=0;return 0;}
@@ -155,7 +158,7 @@ void scrollbar_forget(u16 w){(void)w;}\nvoid caret_destroy(u16 w){(void)w;} void
 void menu_free(u16 w){(void)w;}void purge(u16 w){(void)w;}
 static void filelist_clear(struct filelist*l){(void)l;}
 static u32 control_message(struct wnd*w,u16 m,u16 p,u32 l){return win_send(w,m,p,l);}
-static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending;
+static u16 capture_hwnd,focus_hwnd,keyup_hwnd,keyup_pending,f10_default;
 '''
 pre+='''
 u8 w16_scratch[W16_SCRATCH];
@@ -177,7 +180,7 @@ const char *prof_path(void){return "win.ini";}
 int prof_get(const char*path,const char*app,const char*key,char*out,int n){assert(!strcmp(path,"win.ini")&&!strcmp(app,"windows")&&!strcmp(key,"Beep"));if(!beep_setting)return -1;snprintf(out,n,"%s",beep_setting);return strlen(out);}
 void GrBell(void){bells++;}
 '''
-code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','win_client_origin','top_window','win_by_nx','user_input_blocked','user_window_relative','u_SetSysModalWindow','u_GetSysModalWindow','user_drag_capture','user_drag_alive','user_drag_release','user_drag_next','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','u_ExitWindows','mdi_message','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
+code=pre+''.join(func(n) for n in ('dialog_slots_available','win_get','u_IsWindow','u_IsWindowVisible','u_GetParent','window_relative','u_GetWindow','window_word','u_GetWindowWord','u_SetWindowWord','u_GetWindowLong','u_SetWindowLong','u_SetClassWord','client_origin','win_client_origin','top_window','win_by_nx','user_input_blocked','user_window_relative','u_SetSysModalWindow','u_GetSysModalWindow','user_drag_capture','user_drag_alive','user_drag_release','user_drag_next','window_message','u_SendMessage','u_GetActiveWindow','valid_coords','convert_point','u_ClientToScreen','u_ScreenToClient','u_GetWindowRect','border_of','win_invalidate_all','move_children','scroll_redraw','u_CreateWindow','move_window','show_bars','u_ShowScrollBar','calc_child_scroll','u_CalcChildScroll','scroll_children','u_ScrollChildren','u_MoveWindow','u_SetWindowPos','set_focus','mdi_child','mdi_eligible','mdi_successor','mdi_activate','mdi_release','u_SetFocus','u_SetActiveWindow','placement_get','placement_moved','placement_forget','icon_position','show_window','u_ShowWindow','u_IsIconic','u_GetInternalWindowPos','u_SetInternalWindowPos','u_ArrangeIconicWindows','free_controls','destroy_window','u_ExitWindows','mdi_message','default_system_key','u_DefWindowProc','u_DefFrameProc','u_DefMDIChildProc','u_TranslateMDISysAccel'))
 code+=func('blocked').replace('blocked(', 'actual_blocked(',1)
 code+=(root/'src/drag.c').read_text().replace('#include \"wapi.h\"','')
 code+='''

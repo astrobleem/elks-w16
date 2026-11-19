@@ -53,7 +53,7 @@ static u32 msgclock;
  * the character travels in the queue entry until then, so a burst of keys cannot overwrite it */
 static struct { u32 time; u8 ch; } keychars[8];
 static int kcnext;
-static u16 keyup_hwnd, keyup_vk;
+static u16 keyup_hwnd, keyup_vk, f10_default;
 static u32 keyup_lp;
 static int keyup_pending, saw_real_keyup;
 static int npaints;
@@ -375,7 +375,7 @@ static void dequeue(struct qmsg *m)
     *m = queue[qhead];
     qhead = (qhead + 1) % QSIZE;
     qcount--;
-    if (m->msg == WM_KEYDOWN) {
+    if (m->msg == WM_KEYDOWN || m->msg == WM_SYSKEYDOWN) {
         keychars[kcnext].time = m->time;
         keychars[kcnext].ch = m->ch;
         kcnext = (kcnext + 1) & 7;
@@ -628,7 +628,7 @@ u32 u_GetSysModalWindow(u16 ss,u16 ap){(void)ss;(void)ap;return sysmodal_hwnd;}
 
 static void translate_event(GR_EVENT *ev)
 {
-    struct wnd *w, *top;
+    struct wnd *w;
     int isclient = 0;
 
     if (ev->type == GR_EVENT_TYPE_BUTTON_DOWN)
@@ -660,29 +660,17 @@ static void translate_event(GR_EVENT *ev)
         w = win_by_nx(ev->keystroke.wid, &isclient);
         if (w && blocked(w))
             break;
-        top = top_window(w);
-        if (top && ev->keystroke.ch == ' ' && (ev->keystroke.modifiers & MWKMOD_ALT)) {
-            menu_sys_open(top, 1, 0);      /* Alt+Space: the system menu */
-            break;
-        }
-        if (w && !w->ctl && w->hmenu && menu_key(w, ev->keystroke.ch, ev->keystroke.modifiers))
-            break;
-        if (top && ev->keystroke.ch == MWKEY_F10 && !top->hmenu && menu_sys_open(top, 1, 0))
-            break;                          /* F10 without a menu bar: the system menu, as in Windows */
-        if (w && ev->keystroke.ch == MWKEY_F4 && (ev->keystroke.modifiers & MWKMOD_ALT)) {
-            post(top->hwnd, WM_SYSCOMMAND, SC_CLOSE, 0, 0, 0);
-            break;
-        }
+        if(key_mods&MWKMOD_ALT)lp|=0x20000000UL;
         if (!w || !vk)
             break;
         if (keyup_pending)                 /* previous key never got a real key-up */
-            post(keyup_hwnd, WM_KEYUP, keyup_vk, keyup_lp | 0xC0000000ul, 0, 0);
-        if (post(w->hwnd, WM_KEYDOWN, vk, lp, 0, 0))
+            post(keyup_hwnd, ((keyup_lp&0x20000000UL)||keyup_vk==0x79)?WM_SYSKEYUP:WM_KEYUP, keyup_vk, keyup_lp | 0xC0000000ul, 0, 0);
+        if (post(w->hwnd, ((lp&0x20000000UL)||vk==0x79)?WM_SYSKEYDOWN:WM_KEYDOWN, vk, lp, 0, 0))
             queue[(qhead + qcount - 1) % QSIZE].ch = ascii;
         keyup_pending = !saw_real_keyup;
         keyup_hwnd = w->hwnd; keyup_vk = vk; keyup_lp = lp;
         if (opt_verbose)
-            wlog("w16: key %04x -> WM_KEYDOWN vk %02x\n", ev->keystroke.ch, vk);
+            wlog("w16: key %04x -> msg %04x vk %02x\n", ev->keystroke.ch, ((lp&0x20000000UL)||vk==0x79)?WM_SYSKEYDOWN:WM_KEYDOWN, vk);
         break;
     }
     case GR_EVENT_TYPE_KEY_UP: {
@@ -693,8 +681,11 @@ static void translate_event(GR_EVENT *ev)
             break;
         saw_real_keyup = 1;
         keyup_pending = 0;
-        if (w && vk)
-            post(w->hwnd, WM_KEYUP, vk, 0xC0000001ul | ((u32)(ev->keystroke.scancode & 0xFF) << 16), 0, 0);
+        if (w && vk) {
+            u32 lp=vk==keyup_vk?keyup_lp:(1ul|((u32)(ev->keystroke.scancode&0xff)<<16)|
+                       ((ev->keystroke.modifiers&MWKMOD_ALT)?0x20000000UL:0));
+            post(w->hwnd, ((lp&0x20000000UL)||vk==0x79)?WM_SYSKEYUP:WM_KEYUP, vk, lp|0xC0000000UL, 0, 0);
+        }
         break;
     }
     case GR_EVENT_TYPE_BUTTON_DOWN:
@@ -1630,6 +1621,7 @@ static void free_controls(u16 parent)
     for (i = 0; i < MAXWIN; i++)
         if (wins[i].used && wins[i].ctl && wins[i].parent == parent) {
             purge(wins[i].hwnd);
+            if(f10_default==wins[i].hwnd)f10_default=0;
             if (keyup_hwnd == wins[i].hwnd)
                 keyup_pending = 0;
             if (wins[i].icon)
@@ -1670,6 +1662,7 @@ static void destroy_window(struct wnd *w)
         menu_free(w->hmenu);
     w->hmenu = 0;
     purge(hwnd);
+    if(f10_default==hwnd)f10_default=0;
     if (keyup_hwnd == hwnd)
         keyup_pending = 0;
     free_controls(hwnd);
@@ -1851,6 +1844,27 @@ u32 u_DefMDIChildProc(u16 ss,u16 ap)
     return u_DefWindowProc(ss,ap);
 }
 
+/* System keys remain observable by the application. Its default procedure
+ * forwards through child parents, so a focused MDI child can reach the frame
+ * menu without bypassing either the child's or frame's window procedure. */
+static u32 default_system_key(struct wnd *w,u16 msg,u16 key,u32 lp)
+{
+ struct wnd *parent;
+ if(w->style&WS_CHILD){parent=win_get(w->parent);if(parent)return win_send(parent,msg,key,lp);}
+ if(msg==WM_SYSCHAR && (lp&0x20000000UL)) {
+  if(key==' ')return menu_sys_open(w,1,0);
+  return w->hmenu?menu_key(w,key,MWKMOD_ALT):0;
+ }
+ if(msg==WM_SYSKEYDOWN && key==0x73 && (lp&0x20000000UL))return win_send(w,WM_SYSCOMMAND,SC_CLOSE,0);
+ if(msg==WM_SYSKEYDOWN && key==0x79){f10_default=w->hwnd;return 0;}
+ if(msg==WM_SYSKEYUP && key==0x79) {
+  int open=f10_default==w->hwnd;f10_default=0;if(!open)return 0;
+  if(w->hmenu)return menu_key(w,MWKEY_F10,0);
+  return menu_sys_open(w,1,0);
+ }
+ return 0;
+}
+
 /* DefWindowProc(hwnd, msg, wParam, lParam) */
 u32 u_DefWindowProc(u16 ss, u16 ap)
 {
@@ -1861,6 +1875,8 @@ u32 u_DefWindowProc(u16 ss, u16 ap)
     if (!w)
         return 0;
     switch (msg) {
+    case WM_SYSKEYDOWN:case WM_SYSKEYUP:case WM_SYSCHAR:
+        return default_system_key(w,msg,wp,AL(0));
     case 0x000c: { /* WM_SETTEXT, including a null pointer for an empty title */
         char text[sizeof(w->title)];u16 n=0,off=(u16)AL(0),seg=(u16)(AL(0)>>16);
         if(!off&&!seg)text[0]=0;
@@ -1956,7 +1972,7 @@ static int next_msg(struct qmsg *m, int block)
         }
         if (keyup_pending) {
             keyup_pending = 0;
-            post(keyup_hwnd, WM_KEYUP, keyup_vk, keyup_lp | 0xC0000000ul, 0, 0);
+            post(keyup_hwnd, ((keyup_lp&0x20000000UL)||keyup_vk==0x79)?WM_SYSKEYUP:WM_KEYUP, keyup_vk, keyup_lp | 0xC0000000ul, 0, 0);
             continue;
         }
         for (i = 0; i < MAXWIN; i++)
@@ -2290,17 +2306,17 @@ u32 u_GetKeyState(u16 ss, u16 ap)
 
 u16 user_key_mods(void) { return key_mods; }
 
-/* TranslateMessage(lpMsg): WM_KEYDOWN -> WM_CHAR for keys with a character */
+/* TranslateMessage preserves ordinary/system character class and key context. */
 u32 u_TranslateMessage(u16 ss, u16 ap)
 {
     u16 off = AW(0), seg = AW(2), msg = rd16(seg, off + 2);
     u32 t = rd32(seg, off + 10);
     int i;
-    if (msg != WM_KEYDOWN)
+    if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN)
         return 0;
     for (i = 0; i < 8; i++)
         if (keychars[i].time == t && keychars[i].ch) {
-            post(rd16(seg, off), WM_CHAR, keychars[i].ch, rd32(seg, off + 6), 0, 0);
+            post(rd16(seg, off), msg==WM_SYSKEYDOWN?WM_SYSCHAR:WM_CHAR, keychars[i].ch, rd32(seg, off + 6), 0, 0);
             return 1;
         }
     return 0;
@@ -3133,6 +3149,11 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
         }
         if (w == d || (w->ctl && w->parent == d->hwnd)) {
             switch (m.msg) {
+            case WM_SYSKEYDOWN:
+                if(m.wp==0x73&&(m.lp&0x20000000UL)){dlg_command(d,IDCANCEL);break;}
+                if(m.wp==0x20&&(m.lp&0x20000000UL)){menu_sys_open(d,1,0);break;}
+                /* Alt mnemonics use the existing dialog button path. */
+                /* fall through */
             case WM_KEYDOWN:                    /* the dialog manager's keyboard interface */
                 if(m.wp==9){
                     u16 start=focus_hwnd?((focus_hwnd-HWND_BASE)/4):0,j;
@@ -3158,6 +3179,9 @@ static u16 run_dialog(const char *name, u16 procoff, u16 procseg, u16 hinst, int
                 break;
             case WM_CHAR:
                 {struct wnd *e=win_get(focus_hwnd);if(e&&e->parent==d->hwnd)control_message(e,WM_CHAR,m.wp,0);}
+                break;
+            case WM_SYSKEYUP:
+                default_system_key(d,m.msg,m.wp,m.lp);
                 break;
             case WM_KEYUP:
                 break;

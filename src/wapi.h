@@ -23,6 +23,8 @@
 #define WM_KEYUP         0x0101
 #define WM_CHAR          0x0102
 #define WM_SYSKEYDOWN    0x0104
+#define WM_SYSKEYUP      0x0105
+#define WM_SYSCHAR       0x0106
 #define WM_SYSCOMMAND    0x0112
 #define WM_TIMER         0x0113
 #define WM_INITMENU      0x0116
