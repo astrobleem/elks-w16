@@ -43,6 +43,7 @@ for name in nanox-readpixel.patch nanox-screenand.patch nanox-capturepixels.patc
     fi
     patch --batch --forward -d "$WORK" -p1 < "$patchfile"
 done
+ROOT="$ROOT" MWDIR="$WORK" sh "$ROOT/scripts/nanox-autostart.sh"
 ROOT="$ROOT" MWDIR="$WORK" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
 # Baseline hardcodes 8 KiB; change only our disposable copy to accept an override.
 sed 's/-maout-heap=0x2000/-maout-heap=$(NANOX_HEAP)/g' "$WORK/src/Makefile.elks" > "$WORK/src/Makefile.vga"

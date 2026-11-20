@@ -23,11 +23,8 @@ if ! patch --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >/dev/null
     patch --batch --forward -d "$MWDIR" -p1 < "$patchfile"
 fi
 
-# Optional autostart path and persistence apply only when no server is present.
-patchfile="$ROOT/patches/nanox-autostart-env.patch"
-if ! patch --fuzz=0 --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >/dev/null 2>&1; then
-    patch --fuzz=0 --batch --forward -d "$MWDIR" -p1 < "$patchfile"
-fi
+# Apply cold-autostart options and owned-server handoff together.
+ROOT="$ROOT" MWDIR="$MWDIR" sh "$ROOT/scripts/nanox-autostart.sh"
 
 ROOT="$ROOT" MWDIR="$MWDIR" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
 

@@ -113,6 +113,7 @@ for name in ['nanox/srvnet.c','nanox/srvfunc.c']:
  if s==old:raise SystemExit('Missing low-color readback guard in '+name)
  f.write_text(s)
 PYCODE
+ROOT="$ROOT" MWDIR="$WORK" sh "$ROOT/scripts/nanox-autostart.sh"
 ROOT="$ROOT" MWDIR="$WORK" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
 # Baseline hardcodes 8 KiB; change only our disposable copy to accept an override.
 sed 's/-maout-heap=0x2000/-maout-heap=$(NANOX_HEAP)/g' "$WORK/src/Makefile.elks" > "$WORK/src/Makefile.cga"
