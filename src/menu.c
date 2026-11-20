@@ -23,6 +23,7 @@ struct menu {
     i16  bar_y;                         /* frame row of the bar, set when drawn */
     struct {u8 n;struct menu_item *it;} t;
     u16 capacity;
+    u8 mdi_count;                       /* generated tail only; resource/custom items stay in place */
     i16 *x0,*x1,*tw,*aw,*mx,*mw;
 
 };
@@ -46,6 +47,9 @@ static struct {
     u32  opened;                        /* server time of the click that opened the system menu, 0 by key */
 } pop;
 
+static struct menu *mdi_sync(struct menu *mn);
+static void close_popup(int redraw);
+
 static struct menu *menu_of(u16 h, int *sub)
 {
     u16 k = (u16)(h - HMENU_BASE), mi = k / HMENU_STRIDE, r = k % HMENU_STRIDE;
@@ -54,7 +58,7 @@ static struct menu *menu_of(u16 h, int *sub)
     *sub = r ? r / 2 - 1 : -1;
     if (*sub >= menus[mi]->t.n || (*sub >= 0 && !(menus[mi]->t.it[*sub].flags & MF_POPUP)))
         return 0;
-    return menus[mi];
+    return mdi_sync(menus[mi]);
 }
 
 /* label without '&' and without the accelerator after a tab; *mn: index of the mnemonic, -1 none */
@@ -126,6 +130,92 @@ static void measure(struct menu *mn, int x)
             mn->x1[k] = (i16)x;
         }
     }
+}
+
+/* Enumerate visible MDI children, including minimized groups, for the actual
+ * borrowed Window menu. Slot order is stable across activation/z-order changes. */
+static struct wnd *mdi_menu_child(u16 menu,u16 index,int *checked)
+{
+ int i,j;struct wnd *c,*w;
+ for(i=0;i<MAXWIN;i++) {
+  c=&wins[i];
+  if(!c->used||c->active||c->cls!=CLASS_MDICLIENT||c->result!=menu)continue;
+  for(j=0;j<MAXWIN;j++) {
+   w=&wins[j];
+   if(!w->used||w->active||w->ctl||w->parent!=c->hwnd||!w->visible)continue;
+   if(index--==0){*checked=c->mdi_active==w->hwnd;return w;}
+  }
+  break;
+ }
+ return 0;
+}
+
+/* Build one generated Window-menu row from current window state. No guessed
+ * menu positions or command ids: CLIENTCREATESTRUCT supplies the real handle. */
+static int mdi_entry(struct menu *mn,u16 base,u16 ordinal,struct menu_item *it)
+{
+ u16 k,n,j,h;int checked,separator,number;struct wnd *w;
+ memset(it,0,sizeof(*it));
+ for(k=0;k<base;k++) {
+  if(!(mn->t.it[k].flags&MF_POPUP))continue;
+  h=HMENU_BASE+HMENU_STRIDE*mn->idx+2*(k+1);separator=0;number=0;
+  for(n=0;(w=mdi_menu_child(h,n,&checked))!=0;n++) {
+   /* A custom command with this id must retain its meaning. */
+   for(j=0;j<base;j++)if(!(mn->t.it[j].flags&(MF_POPUP|MF_SEPARATOR))&&mn->t.it[j].id==w->id)break;
+   if(j<base)continue;
+   if(!separator++) {
+    if(!ordinal){it->parent=(u8)k;it->flags=MF_SEPARATOR;return 1;}
+    ordinal--;
+   }
+   number++;
+   if(ordinal--==0) {
+    char *out=it->text;const char *t=w->title;
+    it->parent=(u8)k;it->id=w->id;
+    it->flags=(checked?MF_CHECKED:0)|((w->style&WS_DISABLED)?MF_GRAYED:0);
+    if(number<10){*out++='&';*out++='0'+number;}
+    else {*out++='0'+number/10;*out++='0'+number%10;}
+    *out++=' ';
+    while(*t&&out<it->text+sizeof(it->text)-1) {
+     if(*t=='&'){if(out>=it->text+sizeof(it->text)-2)break;*out++='&';}
+     *out++=*t++;
+    }
+    *out=0;return 1;
+   }
+  }
+ }
+ return 0;
+}
+
+/* Refresh on display/query, rather than duplicating lifecycle state in every
+ * window. Grow transactionally; allocation failure leaves all custom rows and
+ * removes stale generated commands. Existing popup indices are never reused. */
+static struct menu *mdi_sync(struct menu *mn)
+{
+ u16 base=mn->t.n-mn->mdi_count,n=0,count,bytes;int changed=0,x=mn->x0[0];
+ struct menu_item it;struct menu *next;
+ if(mn->idx==SYSMENU)return mn;
+ while(base+n<MENU_MAXITEMS&&mdi_entry(mn,base,n,&it)) {
+  if(n>=mn->mdi_count||memcmp(&it,&mn->t.it[base+n],sizeof(it)))changed=1;
+  n++;
+ }
+ if(n!=mn->mdi_count)changed=1;
+ if(!changed)return mn;
+ if(pop.open&&pop.mi==mn->idx)close_popup(0);
+ count=base+n;
+ if(count>mn->capacity) {
+  bytes=sizeof(*mn)+count*(sizeof(it)+6*sizeof(i16));
+  next=calloc(1,bytes);
+  if(!next){mn->t.n=(u8)base;mn->mdi_count=0;return mn;}
+  *next=*mn;next->capacity=count;next->t.it=(struct menu_item*)(next+1);
+  memcpy(next->t.it,mn->t.it,base*sizeof(it));
+  next->x0=(i16*)(next->t.it+count);next->x1=next->x0+count;
+  next->tw=next->x1+count;next->aw=next->tw+count;
+  next->mx=next->aw+count;next->mw=next->mx+count;
+  menus[mn->idx]=next;free(mn);mn=next;
+ }
+ for(n=0;base+n<count;n++){mdi_entry(mn,base,n,&it);mn->t.it[base+n]=it;}
+ mn->t.n=(u8)count;mn->mdi_count=(u8)(count-base);
+ measure(mn,x);return mn;
 }
 
 /* slot i, allocated on first use (zeroed) */
@@ -401,10 +491,12 @@ static void choose(int r)
     const struct menu_item *it = &menus[pop.mi]->t.it[pop.item[r]];
     u16 hwnd = menus[pop.mi]->hwnd, id = it->id;
     int sys = pop.mi == SYSMENU;
+    char text[sizeof(it->text)];
     if (!usable(r) || (it->flags & MF_POPUP))
         return;
+    strcpy(text,it->text);
     close_popup(1);
-    vlog("w16: %s item %u \"%s\" chosen -> %s\n", sys ? "system menu" : "menu", id, it->text,
+    vlog("w16: %s item %u \"%s\" chosen -> %s\n", sys ? "system menu" : "menu", id, text,
          sys ? "WM_SYSCOMMAND" : "WM_COMMAND");
     w16_post(hwnd, sys ? WM_SYSCOMMAND : WM_COMMAND, id, 0);
 }
@@ -421,6 +513,8 @@ static void open_popup(int mi, int top, int sel_first)
         close_popup(0);
     if (entering)
         win_send(w, WM_INITMENU, (u16)(HMENU_BASE + HMENU_STRIDE * mi), 0);
+    mn=menus[mi];
+    if(!mn||!mn->used||win_get(mn->hwnd)!=w)return;
     {
         int pos = 0;
         for (k = 0; k < top; k++)
@@ -430,8 +524,10 @@ static void open_popup(int mi, int top, int sel_first)
         win_send(w, WM_INITMENUPOPUP, (u16)(HMENU_BASE + HMENU_STRIDE * mi + 2 * (top + 1)),
                  (u32)pos | (mi == SYSMENU ? 0x10000ul : 0));
     }
-    if (!win_get(mn->hwnd) || !mn->used)
+    mn=menus[mi];
+    if (!mn || !win_get(mn->hwnd) || !mn->used)
         return;                             /* the program destroyed its window meanwhile */
+    mn=mdi_sync(mn);
     memset(&pop, 0, sizeof(pop));
     pop.mi = (u8)mi;
     pop.top = (u8)top;
@@ -581,7 +677,8 @@ int menu_event(GR_EVENT *ev)
     int r, k;
     if (!pop.open)
         return 0;
-    mn = menus[pop.mi];
+    mn = mdi_sync(menus[pop.mi]);
+    if(!pop.open)return 0;
     switch (ev->type) {
     case GR_EVENT_TYPE_EXPOSURE:
         if (ev->exposure.wid != pop.wid)

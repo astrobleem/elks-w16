@@ -183,6 +183,46 @@ int main(void)
       check(menu_of(HMENU_BASE+1,&sub)==0,"odd handles rejected");
 
     }
+    /* The real retained Window submenu, custom rows and real child ids. */
+    {
+      struct wnd *c=mkwin(2,0x104),*a=mkwin(3,0x108),*b=mkwin(4,0x10c);
+      struct menu *m;int sub;u16 h=HMENU_BASE+2;
+      menu_free(w->hmenu);m=slot(0,3);m->used=1;m->hwnd=w->hwnd;m->t.n=3;w->hmenu=HMENU_BASE;
+      memset(m->t.it,0,3*sizeof(*m->t.it));
+      m->t.it[0].flags=MF_POPUP;m->t.it[0].parent=255;strcpy(m->t.it[0].text,"&Window");
+      m->t.it[1].parent=0;m->t.it[1].id=301;strcpy(m->t.it[1].text,"&Cascade");
+      m->t.it[2].parent=0;m->t.it[2].id=302;strcpy(m->t.it[2].text,"Custom");
+      measure(m,5);
+      c->cls=CLASS_MDICLIENT;c->parent=w->hwnd;c->result=h;c->mdi_active=a->hwnd;
+      a->parent=b->parent=c->hwnd;a->id=1000;b->id=1001;
+      strcpy(a->title,"Alpha & Beta");strcpy(b->title,"Games");b->style|=WS_MINIMIZE;
+      m=menu_of(h,&sub);
+      check(m&&m->t.n==6&&m->mdi_count==3&&sub==0,"MDI creates separator and visible/minimized children in actual submenu");
+      check(m->t.it[1].id==301&&m->t.it[2].id==302&&m->x0[0]==5,"custom entries, ids and bar origin preserved");
+      check(!strcmp(m->t.it[4].text,"&1 Alpha && Beta")&&m->t.it[4].flags==MF_CHECKED&&m->t.it[5].id==1001,"escaped title, current checkmark and actual child id");
+      check(menu_key(w,'w',MWKMOD_ALT)&&pop.open,"keyboard opens MDI Window menu");
+      nposts=0;key('2',0);
+      check(nposts==1&&post_msg==WM_COMMAND&&post_wp==1001&&post_hwnd==w->hwnd,"numbered child mnemonic posts existing restore/activation command");
+      c->mdi_active=b->hwnd;strcpy(b->title,"Renamed");m=menu_of(h,&sub);
+      check(!m->t.it[4].flags&&m->t.it[5].flags==MF_CHECKED&&!strcmp(m->t.it[5].text,"&2 Renamed"),"activation and title changes refresh without replacing custom rows");
+      a->visible=0;m=menu_of(h,&sub);
+      check(m->mdi_count==2&&m->t.it[4].id==1001&&!strcmp(m->t.it[4].text,"&1 Renamed"),"hidden child removed and remaining child numbered");
+      menu_key(w,'w',MWKMOD_ALT);nposts=0;b->used=0;key('1',0);
+      check(!pop.open&&!nposts,"lifecycle change closes stale popup before a command can target a dead child");
+      m=menu_of(h,&sub);
+      check(m->t.n==3&&!m->mdi_count&&m->t.it[2].id==302,"last child destruction removes generated separator and commands");
+      a->visible=1;a->id=301;m=menu_of(h,&sub);
+      check(m->t.n==3,"conflicting custom command id never duplicated");
+      a->id=1000;b->used=1;allocation_limit=1;
+      /* Force growth beyond the previous two-child allocation. */
+      {struct wnd *d=mkwin(5,0x110);d->parent=c->hwnd;d->id=1002;strcpy(d->title,"Third");}
+      m=menu_of(h,&sub);
+      check(m->t.n==3&&!m->mdi_count&&m->t.it[1].id==301,"failed growth preserves custom rows and leaves no stale child ids");
+      allocation_limit=65535;m=menu_of(h,&sub);
+      check(m->mdi_count==4&&m->t.n==7,"retry after allocation failure populates live children");
+      c->used=0;m=menu_of(h,&sub);
+      check(m->t.n==3&&!m->mdi_count,"client destruction clears only generated rows");
+    }
     printf("== menus: %d passed, %d failed\n", cases - fails, fails);
     return fails != 0;
 }

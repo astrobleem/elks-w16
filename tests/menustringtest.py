@@ -20,6 +20,7 @@ pre=r"""
 """
 pre+=re.search(r'struct menu \{.*?\n\};',source,re.S)[0]
 pre+=r"""
+static struct menu *mdi_sync(struct menu *m){return m;}
 static void measure(struct menu *m,int x){(void)m;(void)x;}
 static void menu_changed(struct menu *m){(void)m;}
 static struct menu *menus[3];

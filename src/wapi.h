@@ -91,6 +91,7 @@
 #define R2_MERGEPEN     15
 #define R2_WHITE        16
 
+#define CLASS_MDICLIENT (-2)
 #define MAXWIN   32
 #define MAXCLASS 8
 #define MAXDC    6

@@ -15,7 +15,6 @@
 #include "filelist.h"
 #include "dib.h"
 
-#define CLASS_MDICLIENT (-2)
 #define WM_MDICREATE 0x0220
 #define WM_MDIDESTROY 0x0221
 #define WM_MDIACTIVATE 0x0222
