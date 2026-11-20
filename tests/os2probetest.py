@@ -190,6 +190,16 @@ if __name__ == '__main__':
         # C harness below inspects all expanded bytes and the relocated pointer.
         (d/'layout.exe').write_bytes(layout)
         (d/'expanded.bin').write_bytes(expanded)
+        # Reproduce the actual CHECKRAM gate from metadata, never its bytes.
+        protected=bytearray(image)
+        struct.pack_into('<H',protected,64+0xc,0x000a)
+        struct.pack_into('<H',protected,64+0x10,2048)
+        struct.pack_into('<H',protected,64+0x12,2048)
+        exe.write_bytes(protected)
+        p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','--deny-setvec','-n',str(exe)],
+                         env=ENV,text=True,capture_output=True)
+        assert p.returncode==12 and 'gate=OS2_PROTECTED flags=000a' in p.stderr,p.stderr
+        assert 'unsupported import ' not in p.stderr and 'live allocations=0' in p.stderr,p.stderr
         for flags in (2, 0x0302, 0x010a, 0x0122, 0x0182, 0x8102):
             bad = bytearray(image); struct.pack_into('<H', bad, 64+0xc, flags)
             check(bad, 12)

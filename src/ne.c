@@ -235,9 +235,16 @@ static int ne_open_image(struct ne_module *m, const char *path, int library)
 #ifdef W16_OS2_PROBE
     /* Opt-in real-mode console ABI only. Never accept PM, DLLs, protected
      * execution, CPU extensions or the native ELKS NE application flags. */
-    if (library || m->target_os != 1 || m->nres || m->rsrc_off != m->resn_off ||
-        (m->flags != 0x0102 && m->flags != 0x0202))
+    if(m->target_os==1 && (m->flags & NEF_PROTMODE)) {
+        wlog("o16: gate=OS2_PROTECTED flags=%04x: protected-mode-only OS/2 NE; real-mode ABI probe cannot execute this image\n",m->flags);
         return W16_EUNSUPP;
+    }
+    if (library || m->target_os != 1 || m->nres || m->rsrc_off != m->resn_off ||
+        (m->flags != 0x0102 && m->flags != 0x0202)) {
+        wlog("o16: gate=OS2_PROFILE os=%u flags=%04x resources=%u rsrc=%04x resnames=%04x library=%u\n",
+             m->target_os,m->flags,m->nres,m->rsrc_off,m->resn_off,library);
+        return W16_EUNSUPP;
+    }
 #else
     if (m->target_os == 1) {
         wlog("w16: %s: OS/2 ABI is not Windows; native ELKS NE support does not provide DOSCALLS\n", path);
@@ -314,8 +321,11 @@ static int ne_open_image(struct ne_module *m, const char *path, int library)
         if (sp->flags & NES_ITERATED) {
 #ifdef W16_OS2_PROBE
             /* Code expansion needs additional entry/export extent handling. */
-            if(!(sp->flags & NES_DATA) || !sp->fileoff || !sp->size || !sp->minalloc)
+            if(!(sp->flags & NES_DATA) || !sp->fileoff || !sp->size || !sp->minalloc) {
+                wlog("o16: gate=OS2_ITERATED segment=%u flags=%04x fileoff=%04x encoded=%u minalloc=%u\n",
+                     i+1,sp->flags,sp->fileoff,sp->size,sp->minalloc);
                 return W16_EUNSUPP;
+            }
 #else
             wlog("w16: %s: segment %u uses iterated (compressed) data, not supported\n", path, i + 1);
             return W16_EUNSUPP;
