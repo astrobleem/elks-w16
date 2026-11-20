@@ -90,6 +90,39 @@ dbcs_operand:
     je 1f
     jmp failed
 1:
+.ifdef CASE_PROBE
+.global casemap_operand
+    movw $0x4e6f,104            /* oN oFf */
+    movw $0x6f20,106
+    movw $0x6646,108
+    movw $6,%ax
+    pushw %ax
+    pushw %ds
+    movw $80,%ax
+    pushw %ax
+    pushw %ds
+    movw $104,%ax
+    pushw %ax
+    .byte 0x9a
+casemap_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    cmpw $0x4e4f,104
+    je 1f
+    jmp failed
+1:
+    cmpw $0x4f20,106
+    je 1f
+    jmp failed
+1:
+    cmpw $0x4646,108
+    je 1f
+    jmp failed
+1:
+.endif
     movw $8192,%ax
     pushw %ax
     pushw %ds

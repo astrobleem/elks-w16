@@ -11,10 +11,11 @@ ENV = dict(os.environ, ASAN_OPTIONS='detect_leaks=0')
 def run(args, **kw):
     return subprocess.run(args, check=True, **kw)
 
-def fixture(folder, arena=False, deny=False):
+def fixture(folder, arena=False, deny=False, case=False):
     obj, raw = folder/'probe.o', folder/'probe.bin'
     run(['as', '--32']+(['--defsym','ARENA_PROBE=1'] if arena else [])+
         (['--defsym','DENY_SETVEC_PROBE=1'] if deny else [])+
+        (['--defsym','CASE_PROBE=1'] if case else [])+
         ['-o', str(obj), str(ROOT/'test/os2vio/probe.S')])
     run(['objcopy', '-O', 'binary', '-j', '.text', str(obj), str(raw)])
     symbols = {}
@@ -48,6 +49,7 @@ def fixture(folder, arena=False, deny=False):
     if arena:records+=(('dbcs_operand',3,4),('dsgrow_operand',1,38),
                        ('avail_operand',1,127),('realloc_operand',1,38),('regrow_operand',1,38))
     if deny:records+=(('setvec_operand',1,89),)
+    if case:records+=(('casemap_operand',3,1),)
     word(pos,len(records));pos+=2
     for operand,mod,ordinal in records:
         struct.pack_into('<BBHHH', b, pos, 3, 1, symbols[operand], mod, ordinal)
@@ -144,7 +146,7 @@ if __name__ == '__main__':
               'VIOCALLS':[3,5,19], 'KBDCALLS':[4,10,11,13,22],
               'MSG':[1,2], 'NLS':[1,4]}
         checkram={'DOSCALLS':[5,34,38,39,49,77,89,92,127,138], 'NLS':[4]}
-        for inventory,missing in ((ansi,11),(checkram,3)):
+        for inventory,missing in ((ansi,10),(checkram,3)):
             exe.write_bytes(import_inventory_fixture(layout,inventory))
             p=subprocess.run([str(ROOT/'src/o16-host'),'-n',str(exe)],
                              env=ENV,text=True,capture_output=True)
@@ -157,7 +159,7 @@ if __name__ == '__main__':
             p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','--deny-setvec','-n',str(exe)],
                              env=ENV,text=True,capture_output=True)
             if inventory is checkram:assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
-            else:assert p.returncode==13 and p.stderr.count('unsupported import ')==9,p.stderr
+            else:assert p.returncode==13 and p.stderr.count('unsupported import ')==8,p.stderr
         # A literal crossing scratch chunks, repeated more than once.
         large=bytearray(layout)
         payload=bytes((i*11+7)%256 for i in range(1500))
@@ -348,6 +350,20 @@ int main(void) {
         wr16(s,6,7);assert(o16_dispatch(14,s,0)==6);
         streams_shutdown();fclose(f);owned=record.next;seg_free(text);
     }
+    {
+        u16 i;wr16(s,30,0);wr16(s,32,0);fcopy_out(s,40,"on off\0az!",10);
+        wr16(s,0,40);wr16(s,2,s);wr16(s,4,30);wr16(s,6,s);wr16(s,8,10);
+        assert(!o16_dispatch(15,s,0) && o16_pop==10);
+        for(i=0;i<10;i++)assert(rd8(s,40+i)==(unsigned char)"ON OFF\0AZ!"[i]);
+        fcopy_out(s,40,"a\200b",3);wr16(s,8,3);
+        assert(o16_dispatch(15,s,0)==401 && rd8(s,40)=='a' && rd8(s,42)=='b');
+        wr16(s,32,932);assert(o16_dispatch(15,s,0)==398);
+        wr16(s,32,850);fcopy_out(s,40,"ascii",5);wr16(s,8,5);
+        assert(!o16_dispatch(15,s,0) && rd8(s,40)=='A');
+        wr16(s,0,62);assert(o16_dispatch(15,s,0)==487);
+        wr16(s,0,40);wr16(s,30,81);assert(o16_dispatch(15,s,0)==398);
+        wr16(s,30,0);wr16(s,8,0);assert(!o16_dispatch(15,s,0));
+    }
     /* Exact SBCS vector, all tail bytes cleared, input and guards preserved. */
     wr16(s,30,0);wr16(s,32,0);fzero(s,40,12);wr8(s,39,123);wr8(s,50,123);
     wr16(s,0,40);wr16(s,2,s);wr16(s,4,30);wr16(s,6,s);wr16(s,8,10);
@@ -443,4 +459,4 @@ int main(void) {
              '-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(harness),
              str(ROOT/'src/ne.c'),str(ROOT/'src/mem.c'),'-o',str(d/'calls')])
         run([str(d/'calls')],env=ENV)
-        print('OS/2 strict inventories (ANSI 11/10, CHECKRAM 3/1/0 missing (direct/arena/explicit denial)), iterated data, bounded APIs, streams and segment lifecycle passed')
+        print('OS/2 strict inventories (ANSI 10/9, CHECKRAM 3/1/0 missing (direct/arena/explicit denial)), iterated data, bounded APIs, streams and segment lifecycle passed')

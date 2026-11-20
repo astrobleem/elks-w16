@@ -20,7 +20,7 @@ const struct api api_table[] = {
     {0,59,"DosClose",2,0,0,0}, {0,77,"DosQHandType",10,0,0,0},
     {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0},
     {5,4,"DosGetDBCSEv",10,0,0,0}, {0,38,"DosReallocSeg",4,0,0,0},
-    {0,127,"DosMemAvail",4,0,0,0}, {0,89,"DosSetVec",10,0,0,0}, {4,1,"DosPutMessage",8,0,0,0}
+    {0,127,"DosMemAvail",4,0,0,0}, {0,89,"DosSetVec",10,0,0,0}, {4,1,"DosPutMessage",8,0,0,0}, {5,1,"DosCaseMap",10,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
@@ -180,7 +180,7 @@ void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
 void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
-void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void),o16_setvec(void),o16_putmessage(void);
+void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void),o16_setvec(void),o16_putmessage(void),o16_casemap(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
@@ -204,7 +204,8 @@ int api_target(int i,u16 *seg,u16 *off)
     case 11:*off=(u16)(unsigned)o16_realloc;break;
     case 12:*off=(u16)(unsigned)o16_memavail;break;
     case 13:*off=(u16)(unsigned)o16_setvec;break;
-    default:*off=(u16)(unsigned)o16_putmessage;break;
+    case 14:*off=(u16)(unsigned)o16_putmessage;break;
+    default:*off=(u16)(unsigned)o16_casemap;break;
     }
 #endif
     return 0;
@@ -348,6 +349,24 @@ static u16 realloc_segment(u16 size,u16 seg,u16 ss,u16 ap)
     if(arena_resize(seg,paras))return 8;
     image.seg[i].paras=paras;return 0;
 }
+/* Exact ASCII subdomain of the explicit US 437/850 NLS profile. This is
+ * not a guessed extended-byte table: reject the complete operation before
+ * mutation if a byte needs COUNTRY.SYS mapping which we do not yet provide.
+ * Counted strings include embedded NULs; no locale-dependent libc toupper.
+ */
+static u16 case_map(u16 count,u16 cseg,u16 coff,u16 seg,u16 off)
+{
+    u16 country,cp,i;
+    if(!span(cseg,coff,4) || !output_span(seg,off,count))return 487;
+    country=rd16(cseg,coff);cp=rd16(cseg,coff+2);
+    if((country && country!=1) || (cp && cp!=437 && cp!=850))return 398;
+    for(i=0;i<count;i++)if(rd8(seg,(u16)(off+i))>=128)return 401;
+    for(i=0;i<count;i++){
+        u8 c=rd8(seg,(u16)(off+i));
+        if(c>='a' && c<='z')wr8(seg,(u16)(off+i),c-'a'+'A');
+    }
+    return 0;
+}
 /* Explicit denial binding, NOT exception-handler support. OS/2 documents
  * ERROR_INVALID_FUNCTION (1) for DosSetVec failure. Validate the supplied
  * memory before returning that non-success; leave the previous-handler output
@@ -444,6 +463,7 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
         o16_done=1;o16_code=W16_EUNSUPP;return 487;
     }
     o16_pop=api_table[idx].argbytes;
+    if(idx==15)return case_map(AW(8),AW(6),AW(4),AW(2),AW(0));
     if(idx==14)return put_message(AW(6),AW(4),AW(2),AW(0));
     if(idx==13){
         if(!deny_setvec)return 1;
