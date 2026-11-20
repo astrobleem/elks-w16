@@ -20,7 +20,7 @@ const struct api api_table[] = {
     {0,59,"DosClose",2,0,0,0}, {0,77,"DosQHandType",10,0,0,0},
     {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0},
     {5,4,"DosGetDBCSEv",10,0,0,0}, {0,38,"DosReallocSeg",4,0,0,0},
-    {0,127,"DosMemAvail",4,0,0,0}, {0,89,"DosSetVec",10,0,0,0}
+    {0,127,"DosMemAvail",4,0,0,0}, {0,89,"DosSetVec",10,0,0,0}, {4,1,"DosPutMessage",8,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
@@ -180,7 +180,7 @@ void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
 void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
-void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void),o16_setvec(void);
+void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void),o16_setvec(void),o16_putmessage(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
@@ -203,7 +203,8 @@ int api_target(int i,u16 *seg,u16 *off)
     case 10:*off=(u16)(unsigned)o16_dbcs;break;
     case 11:*off=(u16)(unsigned)o16_realloc;break;
     case 12:*off=(u16)(unsigned)o16_memavail;break;
-    default:*off=(u16)(unsigned)o16_setvec;break;
+    case 13:*off=(u16)(unsigned)o16_setvec;break;
+    default:*off=(u16)(unsigned)o16_putmessage;break;
     }
 #endif
     return 0;
@@ -364,6 +365,74 @@ static u16 reject_setvec(u16 vector,u16 hseg,u16 hoff,u16 seg,u16 off)
     wlog("o16: DosSetVec vector %u denied (ERROR_INVALID_FUNCTION); no handler registered\n",vector);
     return 1;
 }
+/* SBCS DosPutMessage: 80-column word wrapping, starting in column one.
+ * A dry pass rejects unsupported control bytes and overlong words/indentation
+ * before any output. Tabs and DBCS interpretation require a richer text backend;
+ * report ERROR_MR_UN_PERFORM rather than silently rewriting those forms.
+ */
+static u16 message_line(int fd,const char *line,u16 n,int output)
+{
+    u16 done=0;
+    if(!output)return 0;
+    while(done<n){
+        int r=stream_write(fd,line+done,n-done);
+        if(r<0)return io_error(1);
+        if(!r)return 321;
+        done+=(u16)r;
+    }
+    return 0;
+}
+static u16 message_pass(int fd,u16 seg,u16 off,u16 count,int output)
+{
+    char line[80];u16 used=0,spaces=0;u32 pos=0;
+    while(pos<count){
+        u8 c=rd8(seg,(u16)(off+pos));u16 rc;
+        if(c==' '){if(++spaces>80)return 321;pos++;continue;}
+        if(c=='\r' || c=='\n'){
+            char nl[2];u16 len=1;
+            if(used+spaces>80)return 321;
+            memset(line+used,' ',spaces);used+=spaces;spaces=0;
+            if((rc=message_line(fd,line,used,output)))return rc;
+            nl[0]=c;pos++;
+            if(c=='\r' && pos<count && rd8(seg,(u16)(off+pos))=='\n'){nl[1]='\n';len=2;pos++;}
+            if((rc=message_line(fd,nl,len,output)))return rc;
+            used=0;continue;
+        }
+        {
+            u32 start=pos;u16 len;
+            while(pos<count){
+                c=rd8(seg,(u16)(off+pos));
+                if(c==' ' || c=='\r' || c=='\n')break;
+                if(c<32 || c==127)return 321;
+                if(pos-start==80)return 321;
+                pos++;
+            }
+            len=(u16)(pos-start);
+            if(used+spaces+len>80){
+                if(!used)return 321;
+                if((rc=message_line(fd,line,used,output)))return rc;
+                if((rc=message_line(fd,"\r\n",2,output)))return rc;
+                used=spaces=0;
+            }
+            memset(line+used,' ',spaces);used+=spaces;spaces=0;
+            fcopy_in(line+used,seg,(u16)(off+start),len);used+=len;
+        }
+    }
+    if(used+spaces>80)return 321;
+    memset(line+used,' ',spaces);used+=spaces;
+    return message_line(fd,line,used,output);
+}
+static u16 put_message(u16 h,u16 count,u16 seg,u16 off)
+{
+    int fd,mode;u16 rc;
+    if(count && !span(seg,off,count))return 487;
+    if(h>=3 || (fd=streams[h])<0)return 6;
+    mode=fcntl(fd,F_GETFL,0);
+    if(mode<0)return io_error(1);
+    if((mode&O_ACCMODE)==O_RDONLY)return 5;
+    rc=message_pass(fd,seg,off,count,0);
+    return rc?rc:message_pass(fd,seg,off,count,1);
+}
 /* Explicit compatibility policy, not the ELKS kernel's version. OS/2 1.x
  * encodes major 1 as 10 and minor .30 as 30: high byte major, low byte minor.
  * This does not promise any import beyond this file's strict table. */
@@ -375,6 +444,7 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
         o16_done=1;o16_code=W16_EUNSUPP;return 487;
     }
     o16_pop=api_table[idx].argbytes;
+    if(idx==14)return put_message(AW(6),AW(4),AW(2),AW(0));
     if(idx==13){
         if(!deny_setvec)return 1;
         return reject_setvec(AW(8),AW(6),AW(4),AW(2),AW(0));

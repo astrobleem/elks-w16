@@ -144,7 +144,7 @@ if __name__ == '__main__':
               'VIOCALLS':[3,5,19], 'KBDCALLS':[4,10,11,13,22],
               'MSG':[1,2], 'NLS':[1,4]}
         checkram={'DOSCALLS':[5,34,38,39,49,77,89,92,127,138], 'NLS':[4]}
-        for inventory,missing in ((ansi,12),(checkram,3)):
+        for inventory,missing in ((ansi,11),(checkram,3)):
             exe.write_bytes(import_inventory_fixture(layout,inventory))
             p=subprocess.run([str(ROOT/'src/o16-host'),'-n',str(exe)],
                              env=ENV,text=True,capture_output=True)
@@ -157,7 +157,7 @@ if __name__ == '__main__':
             p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','--deny-setvec','-n',str(exe)],
                              env=ENV,text=True,capture_output=True)
             if inventory is checkram:assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
-            else:assert p.returncode==13 and p.stderr.count('unsupported import ')==10,p.stderr
+            else:assert p.returncode==13 and p.stderr.count('unsupported import ')==9,p.stderr
         # A literal crossing scratch chunks, repeated more than once.
         large=bytearray(layout)
         payload=bytes((i*11+7)%256 for i in range(1500))
@@ -310,6 +310,34 @@ int main(void) {
         assert(rd32(s,40)==0x24681357ul);seg_free(code);image.seg=&seg;image.nseg=1;
         deny_setvec=0;assert(api_find_ord(0,89)==-1);
     }
+    {
+        FILE *f=tmpfile();u16 text,i;char out[256];int n;
+        assert(f && !seg_alloc(32,&text));
+        /* Register a readable owned region without borrowing the native heap. */
+        struct owned_segment record;record.sel=text;record.paras=32;record.next=owned;owned=&record;
+        streams[1]=dup(fileno(f));
+        for(i=0;i<75;i++)wr8(text,i,'a');
+        wr8(text,75,' ');for(i=76;i<86;i++)wr8(text,i,'b');
+        wr16(s,0,0);wr16(s,2,text);wr16(s,4,86);wr16(s,6,1);
+        assert(!o16_dispatch(14,s,0) && o16_pop==8);
+        assert(lseek(fileno(f),0,SEEK_SET)==0);n=read(fileno(f),out,sizeof(out));assert(n==87);
+        for(i=0;i<75;i++)assert(out[i]=='a');assert(out[75]=='\r' && out[76]=='\n');
+        for(i=77;i<87;i++)assert(out[i]=='b');
+        /* Explicit line breaks and whitespace remain exact. */
+        assert(!ftruncate(fileno(f),0));assert(lseek(fileno(f),0,SEEK_SET)==0);
+        fcopy_out(text,0,"one two\r\nthree ",15);wr16(s,4,15);
+        assert(!o16_dispatch(14,s,0));assert(lseek(fileno(f),0,SEEK_SET)==0);
+        assert(read(fileno(f),out,sizeof(out))==15 && !memcmp(out,"one two\r\nthree ",15));
+        /* Reject unsupported forms before producing even a partial prefix. */
+        assert(lseek(fileno(f),0,SEEK_END)==15);
+        fcopy_out(text,0,"valid prefix ",13);for(i=13;i<94;i++)wr8(text,i,'x');wr16(s,4,94);
+        assert(o16_dispatch(14,s,0)==321 && lseek(fileno(f),0,SEEK_END)==15);
+        fcopy_out(text,0,"tab\there",8);wr16(s,4,8);assert(o16_dispatch(14,s,0)==321);
+        wr16(s,0,510);assert(o16_dispatch(14,s,0)==487);
+        wr16(s,0,0);wr16(s,4,0);assert(!o16_dispatch(14,s,0));
+        wr16(s,6,7);assert(o16_dispatch(14,s,0)==6);
+        streams_shutdown();fclose(f);owned=record.next;seg_free(text);
+    }
     /* Exact SBCS vector, all tail bytes cleared, input and guards preserved. */
     wr16(s,30,0);wr16(s,32,0);fzero(s,40,12);wr8(s,39,123);wr8(s,50,123);
     wr16(s,0,40);wr16(s,2,s);wr16(s,4,30);wr16(s,6,s);wr16(s,8,10);
@@ -405,4 +433,4 @@ int main(void) {
              '-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(harness),
              str(ROOT/'src/ne.c'),str(ROOT/'src/mem.c'),'-o',str(d/'calls')])
         run([str(d/'calls')],env=ENV)
-        print('OS/2 strict inventories (ANSI 12/11, CHECKRAM 3/1/0 missing (direct/arena/explicit denial)), iterated data, bounded APIs, streams and segment lifecycle passed')
+        print('OS/2 strict inventories (ANSI 11/10, CHECKRAM 3/1/0 missing (direct/arena/explicit denial)), iterated data, bounded APIs, streams and segment lifecycle passed')
