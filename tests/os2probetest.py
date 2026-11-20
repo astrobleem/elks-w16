@@ -11,9 +11,10 @@ ENV = dict(os.environ, ASAN_OPTIONS='detect_leaks=0')
 def run(args, **kw):
     return subprocess.run(args, check=True, **kw)
 
-def fixture(folder, arena=False):
+def fixture(folder, arena=False, deny=False):
     obj, raw = folder/'probe.o', folder/'probe.bin'
     run(['as', '--32']+(['--defsym','ARENA_PROBE=1'] if arena else [])+
+        (['--defsym','DENY_SETVEC_PROBE=1'] if deny else [])+
         ['-o', str(obj), str(ROOT/'test/os2vio/probe.S')])
     run(['objcopy', '-O', 'binary', '-j', '.text', str(obj), str(raw)])
     symbols = {}
@@ -46,6 +47,7 @@ def fixture(folder, arena=False):
                                   ('write_operand',1,138),('close_operand',1,59))
     if arena:records+=(('dbcs_operand',3,4),('dsgrow_operand',1,38),
                        ('avail_operand',1,127),('realloc_operand',1,38),('regrow_operand',1,38))
+    if deny:records+=(('setvec_operand',1,89),)
     word(pos,len(records));pos+=2
     for operand,mod,ordinal in records:
         struct.pack_into('<BBHHH', b, pos, 3, 1, symbols[operand], mod, ordinal)
@@ -132,6 +134,10 @@ if __name__ == '__main__':
         p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','-n',str(exe)],
                          env=ENV,text=True,capture_output=True)
         assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
+        denied_image=fixture(d,arena=True,deny=True);exe.write_bytes(denied_image)
+        p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','--deny-setvec','-n',str(exe)],
+                         env=ENV,text=True,capture_output=True)
+        assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
         layout, expanded = ibm_layout_fixture(image)
         check(layout, 0)
         ansi={'DOSCALLS':[5,34,38,39,49,59,77,89,92,137,138],
@@ -148,6 +154,10 @@ if __name__ == '__main__':
                              env=ENV,text=True,capture_output=True)
             assert p.returncode==13 and p.stderr.count('unsupported import ')==missing-(1 if inventory is ansi else 2),p.stderr
             assert 'live allocations=0' in p.stderr,p.stderr
+            p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','--deny-setvec','-n',str(exe)],
+                             env=ENV,text=True,capture_output=True)
+            if inventory is checkram:assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
+            else:assert p.returncode==13 and p.stderr.count('unsupported import ')==10,p.stderr
         # A literal crossing scratch chunks, repeated more than once.
         large=bytearray(layout)
         payload=bytes((i*11+7)%256 for i in range(1500))
@@ -282,6 +292,24 @@ int main(void) {
         /* The normal initializer duplicates handles instead of borrowing them. */
         streams_init();assert(streams[1]!=1 && streams[2]!=2);streams_shutdown();
     }
+    {
+        struct ne_seg both[2];u16 code;
+        assert(api_find_ord(0,89)==-1 && api_find_name(0,"DosSetVec")==-1);
+        deny_setvec=1;assert(api_find_ord(0,89)==13);
+        assert(!seg_alloc(2,&code));memset(both,0,sizeof(both));both[0]=seg;
+        both[1].sel=code;both[1].paras=2;both[1].size=16;both[1].fileoff=1;
+        image.seg=both;image.nseg=2;
+        wr32(s,40,0x24681357ul);wr16(s,0,40);wr16(s,2,s);
+        wr16(s,4,0);wr16(s,6,code);wr16(s,8,0);
+        assert(o16_dispatch(13,s,0)==1 && o16_pop==10 && rd32(s,40)==0x24681357ul);
+        assert(o16_dispatch(13,s,0)==1 && rd32(s,40)==0x24681357ul);
+        wr16(s,4,16);assert(o16_dispatch(13,s,0)==487);
+        wr16(s,4,0);wr16(s,6,s);assert(o16_dispatch(13,s,0)==487);
+        wr16(s,6,0);assert(o16_dispatch(13,s,0)==1); /* removal is also denied */
+        wr16(s,0,62);assert(o16_dispatch(13,s,0)==487);
+        assert(rd32(s,40)==0x24681357ul);seg_free(code);image.seg=&seg;image.nseg=1;
+        deny_setvec=0;assert(api_find_ord(0,89)==-1);
+    }
     /* Exact SBCS vector, all tail bytes cleared, input and guards preserved. */
     wr16(s,30,0);wr16(s,32,0);fzero(s,40,12);wr8(s,39,123);wr8(s,50,123);
     wr16(s,0,40);wr16(s,2,s);wr16(s,4,30);wr16(s,6,s);wr16(s,8,10);
@@ -377,4 +405,4 @@ int main(void) {
              '-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(harness),
              str(ROOT/'src/ne.c'),str(ROOT/'src/mem.c'),'-o',str(d/'calls')])
         run([str(d/'calls')],env=ENV)
-        print('OS/2 strict inventories (ANSI 12/11, CHECKRAM 3/1 missing (direct/arena)), iterated data, bounded APIs, streams and segment lifecycle passed')
+        print('OS/2 strict inventories (ANSI 12/11, CHECKRAM 3/1/0 missing (direct/arena/explicit denial)), iterated data, bounded APIs, streams and segment lifecycle passed')

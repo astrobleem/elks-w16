@@ -6,6 +6,34 @@
 .global start, vio_operand, exit_operand, version_operand, mode_operand
 .global alloc_operand, free_operand, write_operand, close_operand
 start:
+.ifdef DENY_SETVEC_PROBE
+.global setvec_operand
+    movw $0x1357,100
+    movw $0x2468,102
+    xorw %ax,%ax
+    pushw %ax
+    pushw %cs
+    movw $deny_handler-start,%ax
+    pushw %ax
+    pushw %ds
+    movw $100,%ax
+    pushw %ax
+    .byte 0x9a
+setvec_operand:
+    .word 0xffff,0xffff
+    cmpw $1,%ax                /* Explicit failure, never fake registration */
+    je 1f
+    jmp failed
+1:
+    cmpw $0x1357,100
+    je 1f
+    jmp failed
+1:
+    cmpw $0x2468,102
+    je 1f
+    jmp failed
+1:
+.endif
     pushw %ds
     movw $64,%ax
     pushw %ax
@@ -200,3 +228,8 @@ exit:
 exit_operand:
     .word 0xffff,0xffff
     jmp .                      /* DosExit must not return */
+
+.ifdef DENY_SETVEC_PROBE
+deny_handler:
+    iret                      /* supplied as code, never invoked or faulted */
+.endif

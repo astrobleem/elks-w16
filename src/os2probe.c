@@ -20,10 +20,11 @@ const struct api api_table[] = {
     {0,59,"DosClose",2,0,0,0}, {0,77,"DosQHandType",10,0,0,0},
     {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0},
     {5,4,"DosGetDBCSEv",10,0,0,0}, {0,38,"DosReallocSeg",4,0,0,0},
-    {0,127,"DosMemAvail",4,0,0,0}
+    {0,127,"DosMemAvail",4,0,0,0}, {0,89,"DosSetVec",10,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
+static int deny_setvec;
 static struct ne_module image;
 static int console_fd = -1;
 /* Guest standard handles are private duplicates. Closing guest stderr must
@@ -133,18 +134,24 @@ static void owned_shutdown(void)
 extern int host_live;
 #endif
 u16 o16_done, o16_code;
+static int api_enabled(int i)
+{
+    if((i==11 || i==12) && !arena_base)return 0;
+    if(i==13 && !deny_setvec)return 0;
+    return 1;
+}
 int api_find_ord(int mod,u16 ord)
 {
     int i; for(i=0;i<api_count;i++)
         if(api_table[i].mod==mod && api_table[i].ord==ord)
-            return i>=11 && !arena_base?-1:i;
+            return api_enabled(i)?i:-1;
     return -1;
 }
 int api_find_name(int mod,const char *name)
 {
     int i;for(i=0;i<api_count;i++)
         if(api_table[i].mod==mod && !strcmp(api_table[i].name,name))
-            return i>=11 && !arena_base?-1:i;
+            return api_enabled(i)?i:-1;
     return -1;
 }
 const char *api_name(int i){return api_table[i].name;}
@@ -173,11 +180,11 @@ void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
 void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
-void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void);
+void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void),o16_setvec(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
-    if(i<0 || i>=api_count)return -1;
+    if(i<0 || i>=api_count || !api_enabled(i))return -1;
 #ifdef W16_HOST
     *seg=0xf000;*off=(u16)(16*i);
 #else
@@ -195,7 +202,8 @@ int api_target(int i,u16 *seg,u16 *off)
     case 9:*off=(u16)(unsigned)o16_write;break;
     case 10:*off=(u16)(unsigned)o16_dbcs;break;
     case 11:*off=(u16)(unsigned)o16_realloc;break;
-    default:*off=(u16)(unsigned)o16_memavail;break;
+    case 12:*off=(u16)(unsigned)o16_memavail;break;
+    default:*off=(u16)(unsigned)o16_setvec;break;
     }
 #endif
     return 0;
@@ -339,6 +347,23 @@ static u16 realloc_segment(u16 size,u16 seg,u16 ss,u16 ap)
     if(arena_resize(seg,paras))return 8;
     image.seg[i].paras=paras;return 0;
 }
+/* Explicit denial binding, NOT exception-handler support. OS/2 documents
+ * ERROR_INVALID_FUNCTION (1) for DosSetVec failure. Validate the supplied
+ * memory before returning that non-success; leave the previous-handler output
+ * untouched because no registration/removal took place. Never access the IVT,
+ * install a native signal handler, or retain a guest callback here.
+ */
+static u16 reject_setvec(u16 vector,u16 hseg,u16 hoff,u16 seg,u16 off)
+{
+    int i,valid=!(hseg|hoff);
+    if(!output_span(seg,off,4))return 487;
+    for(i=0;i<image.nseg && !valid;i++)
+        if(image.seg[i].sel==hseg && !(image.seg[i].flags&1) &&
+           image.seg[i].fileoff && hoff<image.seg[i].size)valid=1;
+    if(!valid)return 487;
+    wlog("o16: DosSetVec vector %u denied (ERROR_INVALID_FUNCTION); no handler registered\n",vector);
+    return 1;
+}
 /* Explicit compatibility policy, not the ELKS kernel's version. OS/2 1.x
  * encodes major 1 as 10 and minor .30 as 30: high byte major, low byte minor.
  * This does not promise any import beyond this file's strict table. */
@@ -350,6 +375,10 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
         o16_done=1;o16_code=W16_EUNSUPP;return 487;
     }
     o16_pop=api_table[idx].argbytes;
+    if(idx==13){
+        if(!deny_setvec)return 1;
+        return reject_setvec(AW(8),AW(6),AW(4),AW(2),AW(0));
+    }
     if(idx==10)return dbcs_vector(AW(8),AW(6),AW(4),AW(2),AW(0));
     if(idx==11)return realloc_segment(AW(2),AW(0),ss,ap);
     if(idx==12){
@@ -397,15 +426,17 @@ int main(int argc,char **argv)
     int rc,noexec=0,ran=0;u16 reserve=0;
     while(argc>1 && argv[1][0]=='-'){
         if(!strcmp(argv[1],"-n")){noexec=1;argv++;argc--;}
+        else if(!strcmp(argv[1],"--deny-setvec")){deny_setvec=1;argv++;argc--;}
         else if(!strcmp(argv[1],"-a") && argc>2){
             char *end;unsigned long kb=strtoul(argv[2],&end,10);
             if(!argv[2][0] || *end || kb<1 || kb>256)return 2;
             reserve=(u16)(kb*64);argv+=2;argc-=2;
         }else break;
     }
-    if(argc!=2){fprintf(stderr,"usage: o16 [-n] [-a arena-KiB (1..256)] OS2-TEXT.EXE\n");return 2;}
+    if(argc!=2){fprintf(stderr,"usage: o16 [-n] [-a arena-KiB (1..256)] [--deny-setvec] OS2-TEXT.EXE\n");return 2;}
     if(reserve && arena_init(reserve))return W16_ENOMEM;
     if(arena_base)fprintf(stderr,"o16: private arena=%u KiB; memory queries cover this domain only\n",reserve/64);
+    if(deny_setvec)fprintf(stderr,"o16: DosSetVec binding returns failure only; exception delivery is unsupported\n");
     rc=ne_open(&image,argv[1]);
     if(!rc)rc=ne_check_imports(&image);
     if(!rc)rc=ne_load(&image);
