@@ -28,3 +28,6 @@ __pycache__/
 
 /src/w16-ro.elf
 /src/w16-ro.ne
+
+/src/o16
+/src/o16-host

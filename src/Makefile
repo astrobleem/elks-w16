@@ -72,7 +72,7 @@ w16host: main.c ne.c api.c mem.c dlgtmpl.c profile.c w16.h wapi.h
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ main.c ne.c api.c mem.c dlgtmpl.c profile.c
 
 clean:
-	rm -f *.o w16 w16host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp w16-ne.ld w16-ne.ld.tmp w16-ne.elf w16.ne w16-ro.elf w16-ro.ne
+	rm -f *.o w16 w16host o16 o16-host w16-medium.ld w16-medium.ld.tmp rasterfont-data.h rasterfont-data.h.tmp w16-ne.ld w16-ne.ld.tmp w16-ne.elf w16.ne w16-ro.elf w16-ro.ne
 	rm -rf .ro
 
 .PHONY: all w16 check-native-kernel host clean
@@ -129,3 +129,14 @@ w16-ro.ne: w16-ro.elf ../scripts/elf2w16ne.py
 .PHONY: check-shared-rodata
 check-shared-rodata: w16-ro.ne
 	cd .. && python3 tests/sharedrodatatest.py
+
+# Opt-in OS/2 console ABI experiment. Independent of W16/Nano-X defaults.
+O16FLAGS = -mcmodel=small -mregparmcall -melks-libc -march=i8086 -Os -Wall -DW16_OS2_PROBE \
+           -I$(TOPDIR)/include -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include
+.PHONY: os2-probe os2-probe-host
+os2-probe: o16
+o16: os2probe.c os2probe.S ne.c w16.h
+	$(CC) $(O16FLAGS) -o $@ os2probe.c os2probe.S ne.c
+os2-probe-host: o16-host
+o16-host: os2probe.c ne.c mem.c w16.h
+	$(HOSTCC) $(HOSTCFLAGS) -DW16_OS2_PROBE -o $@ os2probe.c ne.c mem.c

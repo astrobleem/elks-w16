@@ -195,14 +195,22 @@ static int ne_open_image(struct ne_module *m, const char *path, int library)
           h[2], h[3], m->target_os, m->flags, m->expver >> 8, m->expver & 0xFF);
 
     /* what kind of NE is this? */
+#ifdef W16_OS2_PROBE
+    /* Opt-in real-mode console ABI only. Never accept PM, DLLs, protected
+     * execution, CPU extensions or the native ELKS NE application flags. */
+    if (library || m->target_os != 1 || m->nres || m->rsrc_off != m->resn_off ||
+        (m->flags != 0x0102 && m->flags != 0x0202))
+        return W16_EUNSUPP;
+#else
     if (m->target_os == 1) {
-        wlog("w16: %s: OS/2 1.x executable, not Windows (ELKS can exec some OS/2 programs itself)\n", path);
+        wlog("w16: %s: OS/2 ABI is not Windows; native ELKS NE support does not provide DOSCALLS\n", path);
         return W16_EUNSUPP;
     }
     if (m->target_os != 0 && m->target_os != 2) {
         wlog("w16: %s: target OS %u is not Windows\n", path, m->target_os);
         return W16_EUNSUPP;
     }
+#endif
     if (!library && (m->flags & NEF_LIBRARY)) {
         wlog("w16: %s: is a library (DLL), not an application\n", path);
         return W16_EUNSUPP;
@@ -872,7 +880,9 @@ int ne_load(struct ne_module *m)
     for (i = 0; i < m->nseg; i++)
         if ((e = each_reloc(m, i, apply_one, 0)))
             return e;
+#ifndef W16_OS2_PROBE
     patch_prologues(m);
+#endif
     m->loaded = 1;
     vlog("w16: %s: %u fixups applied, %u prologues patched, %lu bytes of segments\n", m->path, m->nreloc,
           m->npatched, (unsigned long)m->total_bytes);
