@@ -222,6 +222,14 @@ int main(void)
       check(m->mdi_count==4&&m->t.n==7,"retry after allocation failure populates live children");
       c->used=0;m=menu_of(h,&sub);
       check(m->t.n==3&&!m->mdi_count,"client destruction clears only generated rows");
+      c->used=1;m=menu_of(h,&sub);check(m->capacity==7&&m->mdi_count==4,"reuse fixture has a generated tail");
+      {static u8 reload[64];unsigned p=4,j;
+       for(j=0;j<7;j++){reload[p++]=j==6?MF_END:0;reload[p++]=0;reload[p++]=20+j;reload[p++]=0;reload[p++]='X';reload[p++]=0;}
+       menu_free(w->hmenu);active_res=reload;active_len=p;
+       check(menu_load(w,0,1)!=0,"same-capacity menu slot reloads a different resource");
+       m=menu_of(w->hmenu,&sub);
+       check(m->t.n==7&&!m->mdi_count&&m->t.it[6].id==26,"resource reload cannot inherit the old generated-tail ownership");}
+
     }
     printf("== menus: %d passed, %d failed\n", cases - fails, fails);
     return fails != 0;

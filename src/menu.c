@@ -267,6 +267,7 @@ u16 menu_load(struct wnd *w, const char *name, u16 id)
     }
     if(!(mn=slot(i,count)))return 0;
     if(menu_parse_into(buf,len,mn->t.it,count,&mn->t.n))return 0;
+    mn->mdi_count=0;
     GrGetScreenInfo(&si);
     if (si.cols > 0) {
         scr_w = si.cols;
