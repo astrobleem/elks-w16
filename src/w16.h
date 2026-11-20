@@ -128,6 +128,9 @@ void e9puts(const char *s);             /* debug port only */
 struct ne_seg {
     u16 fileoff;        /* sector offset (<< align) */
     u16 size;           /* bytes in file (0 = 64K, rejected) */
+#ifdef W16_OS2_PROBE
+    u16 expanded;       /* initialized data extent; size remains encoded file length */
+#endif
     u16 flags;
     u16 minalloc;       /* bytes to allocate (0 = 64K, rejected) */
     u16 sel;            /* real-mode segment once loaded */

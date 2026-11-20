@@ -3,8 +3,28 @@
 .code16
 .arch i8086, nojumps
 .text
-.global start, vio_operand, exit_operand
+.global start, vio_operand, exit_operand, version_operand, mode_operand
 start:
+    pushw %ds
+    movw $64,%ax
+    pushw %ax
+    .byte 0x9a
+version_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jnz failed
+    cmpw $0x0a1e,64
+    jne failed
+    pushw %ds
+    movw $66,%ax
+    pushw %ax
+    .byte 0x9a
+mode_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jnz failed
+    cmpb $0,66
+    jne failed
     pushw %ds
     xorw %ax,%ax
     pushw %ax                  /* message offset zero in data segment */

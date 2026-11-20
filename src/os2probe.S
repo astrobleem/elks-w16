@@ -3,7 +3,7 @@
 .code16
 .arch i8086, nojumps
 .text
-.global o16_cs, o16_run, o16_vio, o16_exit
+.global o16_cs, o16_run, o16_vio, o16_exit, o16_version, o16_mode
 o16_cs:
     movw %cs,%ax
     ret
@@ -58,6 +58,14 @@ o16_vio:
 o16_exit:
     pushw %bp
     movw $1,%bp
+    jmp dispatch
+o16_version:
+    pushw %bp
+    movw $2,%bp
+    jmp dispatch
+o16_mode:
+    pushw %bp
+    movw $3,%bp
 dispatch:
     cld
     pushw %ds
@@ -89,6 +97,7 @@ dispatch:
     movw guest_ss,%ss
     movw guest_sp,%sp
     sti
+    cmpw $2,%bp
     popw %es
     popw %di
     popw %si
@@ -97,6 +106,9 @@ dispatch:
     popw %bx
     popw %ds
     popw %bp
+    jb pop8
+    lret $4
+pop8:
     lret $8
 finished:
     movw o16_code,%ax

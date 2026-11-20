@@ -96,6 +96,43 @@ static int rd_at(struct ne_module *m, u32 off, void *buf, u16 n, const char *wha
     return 0;
 }
 
+#ifdef W16_OS2_PROBE
+/* NE iterated DATA (not OMF LIDATA or LX): flat WORD repeat, WORD
+ * literal-length, literal bytes. Validate the entire encoded extent before
+ * allocating. At load, repeat the checks while copying through existing scratch.
+ * Keep sp->size encoded: the relocation table follows those bytes in the file.
+ */
+static int iterated_data(struct ne_module *m,struct ne_seg *sp,int copy)
+{
+    u32 base=(u32)sp->fileoff<<m->align, in=0,out=0;
+    while(in<sp->size) {
+        u8 hdr[4]; u16 repeat,len,part;
+        u32 bytes;
+        int e;
+        if((u32)sp->size-in<4)return W16_EFORMAT;
+        if((e=rd_at(m,base+in,hdr,4,"iterated record")))return e;
+        repeat=g16(hdr);len=g16(hdr+2);in+=4;
+        /* Zero runs and zero literals have no supported interpretation here. */
+        if(!repeat || !len || len>(u32)sp->size-in)return W16_EFORMAT;
+        bytes=(u32)repeat*len;
+        if(out+bytes>sp->minalloc || out+bytes>0xfff0ul)return W16_ENOMEM;
+        if(copy) {
+            for(part=0;part<len;) {
+                u16 left=(u16)(len-part),n=left>1024u?1024u:left,r;
+                if((e=rd_at(m,base+in+part,w16_scratch,n,"iterated literal")))return e;
+                for(r=0;r<repeat;r++)
+                    fcopy_out(sp->sel,(u16)(out+(u32)r*len+part),w16_scratch,n);
+                part+=n;
+            }
+        }
+        out+=bytes;in+=len;
+    }
+    if(!out || (copy && out!=sp->expanded))return W16_EFORMAT;
+    if(!copy)sp->expanded=(u16)out;
+    return 0;
+}
+#endif
+
 /* read a Pascal string from the NE header area; returns length or -1 */
 static int rd_pstr(struct ne_module *m, u32 off, char *out, int max, const char *what)
 {
@@ -275,8 +312,14 @@ static int ne_open_image(struct ne_module *m, const char *path, int library)
             return e;
         sp->fileoff = g16(s); sp->size = g16(s + 2); sp->flags = g16(s + 4); sp->minalloc = g16(s + 6);
         if (sp->flags & NES_ITERATED) {
+#ifdef W16_OS2_PROBE
+            /* Code expansion needs additional entry/export extent handling. */
+            if(!(sp->flags & NES_DATA) || !sp->fileoff || !sp->size || !sp->minalloc)
+                return W16_EUNSUPP;
+#else
             wlog("w16: %s: segment %u uses iterated (compressed) data, not supported\n", path, i + 1);
             return W16_EUNSUPP;
+#endif
         }
         if ((sp->fileoff && sp->size == 0) || sp->minalloc == 0) {
             wlog("w16: %s: segment %u is 64 KB; not supported by this layer\n", path, i + 1);
@@ -293,8 +336,17 @@ static int ne_open_image(struct ne_module *m, const char *path, int library)
             wlog("w16: %s: segment %u has relocations but no data\n", path, i + 1);
             return W16_EFORMAT;
         }
+#ifdef W16_OS2_PROBE
+        if(sp->flags & NES_ITERATED) {
+            if((e=iterated_data(m,sp,0)))return e;
+        } else {
+            sp->expanded=sp->fileoff?sp->size:0;
+            if(sp->size>sp->minalloc)sp->minalloc=sp->size;
+        }
+#else
         if (sp->size > sp->minalloc)
             sp->minalloc = sp->size;
+#endif
         if ((i + 1 == m->cs) && (sp->flags & NES_DATA)) {
             wlog("w16: %s: entry segment %u is a data segment\n", path, i + 1);
             return W16_EFORMAT;
@@ -717,6 +769,11 @@ static int apply_one(struct ne_module *m, int segi, struct reloc *r, void *ctx)
 {
     struct ne_seg *sp = &m->seg[segi];
     u16 sel = sp->sel, tseg = 0, toff = 0, src = r->src, width, guard = 0;
+#ifdef W16_OS2_PROBE
+    u16 extent=sp->expanded;
+#else
+    u16 extent=sp->size;
+#endif
     int t = r->fl & 3, isconst = 0;
     char desc[64];
 
@@ -752,9 +809,9 @@ resolved_import:
 
     width = r->st == RS_LOBYTE ? 1 : r->st == RS_FARADDR ? 4 : 2;
     if (r->fl & RF_ADDITIVE) {
-        if ((u32)src + width > sp->size) {
+        if ((u32)src + width > extent) {
             wlog("w16: %s: segment %d: additive fixup at %04x outside the segment data (%u bytes)\n",
-                 m->path, segi + 1, src, sp->size);
+                 m->path, segi + 1, src, extent);
             return W16_ERELOC;
         }
         switch (r->st) {
@@ -768,9 +825,9 @@ resolved_import:
     }
     for (;;) {
         u16 next;
-        if ((u32)src + width > sp->size || (width == 1 && (u32)src + 2 > sp->size)) {
+        if ((u32)src + width > extent || (width == 1 && (u32)src + 2 > extent)) {
             wlog("w16: %s: segment %d: fixup chain reaches %04x, outside the segment data (%u bytes)\n",
-                 m->path, segi + 1, src, sp->size);
+                 m->path, segi + 1, src, extent);
             return W16_ERELOC;
         }
         if (++guard > 8192) {
@@ -808,6 +865,9 @@ static int load_segment_data(struct ne_module *m, int i)
     if (sp->paras >= 0x1000) { fzero(sp->sel, 0, 0x8000); fzero(sp->sel, 0x8000, 0x8000); }
     if (!sp->fileoff)
         return 0;
+#ifdef W16_OS2_PROBE
+    if(sp->flags & NES_ITERATED)return iterated_data(m,sp,1);
+#endif
     while (done < sp->size) {
         n = (u16)(sp->size - done) > 1024u ? 1024u : (u16)(sp->size - done);
         if ((e = rd_at(m, pos + done, buf, n, "segment data")))
@@ -818,6 +878,7 @@ static int load_segment_data(struct ne_module *m, int i)
     return 0;
 }
 
+#ifndef W16_OS2_PROBE
 /* Windows patches the prologue of exported functions in applications:
  * "push ds; pop ax; nop" (1E 58 90) or "mov ax,ds; nop" (8C D8 90) becomes three NOPs, so the
  * caller's AX (the instance data segment) is loaded into DS by the rest of the prologue.
@@ -853,6 +914,8 @@ static void patch_prologues(struct ne_module *m)
         }
     }
 }
+
+#endif
 
 int ne_load(struct ne_module *m)
 {

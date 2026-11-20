@@ -11,7 +11,8 @@ const char *const w16_modnames[NMODS] = {
     "DOSCALLS", "VIOCALLS", "~2", "~3", "~4", "~5", "~6"
 };
 const struct api api_table[] = {
-    {1,19,"VioWrtTTY",8,0,0,0}, {0,5,"DosExit",4,0,0,0}
+    {1,19,"VioWrtTTY",8,0,0,0}, {0,5,"DosExit",4,0,0,0},
+    {0,92,"DosGetVersion",4,0,0,0}, {0,49,"DosGetMachineMode",4,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
@@ -48,7 +49,7 @@ void wlog(const char *fmt,...){va_list a;va_start(a,fmt);vfprintf(stderr,fmt,a);
 void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);vfprintf(stderr,fmt,a);va_end(a);}
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
-void W16_CDECL o16_vio(void),o16_exit(void);
+void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
@@ -56,7 +57,13 @@ int api_target(int i,u16 *seg,u16 *off)
 #ifdef W16_HOST
     *seg=0xf000;*off=(u16)(16*i);
 #else
-    *seg=o16_cs();*off=(u16)(unsigned)(i?o16_exit:o16_vio);
+    *seg=o16_cs();
+    switch(i) {
+    case 0:*off=(u16)(unsigned)o16_vio;break;
+    case 1:*off=(u16)(unsigned)o16_exit;break;
+    case 2:*off=(u16)(unsigned)o16_version;break;
+    default:*off=(u16)(unsigned)o16_mode;break;
+    }
 #endif
     return 0;
 }
@@ -70,6 +77,20 @@ static int span(u16 seg,u16 off,u16 len)
             return (u32)off+len <= ((u32)image.seg[i].paras<<4);
     return 0;
 }
+/* Query outputs must be in a task-owned data allocation, including its stack.
+ * An import operand in code is readable but is not a valid query output. */
+static int output_span(u16 seg,u16 off,u16 len)
+{
+    int i;
+    if(!span(seg,off,len))return 0;
+    for(i=0;i<image.nseg;i++)
+        if(image.seg[i].sel==seg)return !!(image.seg[i].flags&1);
+    return 0;
+}
+/* Explicit compatibility policy, not the ELKS kernel's version. OS/2 1.x
+ * encodes major 1 as 10 and minor .30 as 30: high byte major, low byte minor.
+ * This does not promise any import beyond this file's strict table. */
+#define O16_API_VERSION 0x0a1e
 u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
 {
     u16 n,off,seg,h; char buf[64];
@@ -79,6 +100,15 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
     if(idx==1){
         o16_done=1;
         o16_code=AW(2)==1 ? AW(0) : W16_EUNSUPP;
+        return 0;
+    }
+    if(idx==2 || idx==3) {
+        off=AW(0);seg=AW(2);n=idx==2?2:1;
+        if(!output_span(seg,off,n))return 487;
+        if(idx==2)wr16(seg,off,O16_API_VERSION);
+        /* Our only executable mode is real mode, on both 8088 and later CPUs.
+         * Never report OS/2 protected mode to unlock unsupported calls. */
+        else wr8(seg,off,0);
         return 0;
     }
     h=AW(0);n=AW(2);off=AW(4);seg=AW(6);
