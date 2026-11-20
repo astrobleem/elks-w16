@@ -23,7 +23,7 @@ def fixture(folder):
     data = b'O16 repository VIO probe\r\n'
     assert len(data) == 26
     # Header-relative offsets; paragraph alignment, separate code/data.
-    b = bytearray(1024)
+    b = bytearray(2048)
     def word(off, value): struct.pack_into('<H', b, off, value)
     b[:2] = b'MZ'; word(0x18, 64); word(0x3c, 64)
     b[64:66] = b'NE'
@@ -36,16 +36,18 @@ def fixture(folder):
     word(152, 0); word(154, 9)
     b[156:174] = b'\x08DOSCALLS\x08VIOCALLS'
     struct.pack_into('<4H', b, 128, 16, len(code), 0x100, len(code))
-    struct.pack_into('<4H', b, 136, 32, len(data), 1, len(data))
+    struct.pack_into('<4H', b, 136, 64, len(data), 1, len(data))
     b[256:256+len(code)] = code
     pos = 256+len(code)
-    word(pos, 4); pos += 2
+    word(pos, 8); pos += 2
     for operand, mod, ordinal in (('vio_operand', 2, 19), ('exit_operand', 1, 5),
-                                  ('version_operand', 1, 92), ('mode_operand', 1, 49)):
+                                  ('version_operand', 1, 92), ('mode_operand', 1, 49),
+                                  ('alloc_operand',1,34),('free_operand',1,39),
+                                  ('write_operand',1,138),('close_operand',1,59)):
         struct.pack_into('<BBHHH', b, pos, 3, 1, symbols[operand], mod, ordinal)
         pos += 8
-    assert pos < 512
-    b[512:512+len(data)] = data
+    assert pos < 1024
+    b[1024:1024+len(data)] = data
     return b
 
 def ibm_layout_fixture(original):
@@ -69,15 +71,16 @@ def ibm_layout_fixture(original):
     n=struct.unpack_from('<H',original,130)[0]
     b[0x150:0x150+3559]=bytes([0x90])*3559
     b[0x254:0x254+n]=original[256:256+n]
-    rel=bytearray(original[256+n:256+n+34])
-    for i in range(4):
+    count=struct.unpack_from('<H',original,256+n)[0]
+    rel=bytearray(original[256+n:256+n+2+8*count])
+    for i in range(count):
         off=4+i*8
         struct.pack_into('<H',rel,off,struct.unpack_from('<H',rel,off)[0]+0x104)
     # Reproduce a non-additive startup-import chain headed at 1:0650.
     mode_src=struct.unpack_from('<H',rel,4+3*8)[0]
     struct.pack_into('<H',rel,4+3*8,0x650)
     struct.pack_into('<HH',b,0x150+0x650,mode_src,0xffff)
-    b[0x150+3559:0x150+3559+34]=rel
+    b[0x150+3559:0x150+3559+len(rel)]=rel
     b[0x1000:0x1000+42]=bytes([0x90])*42
     struct.pack_into('<H',b,0x1000+42,0)
     data=bytearray((i*7+3)%256 for i in range(480))
@@ -88,6 +91,26 @@ def ibm_layout_fixture(original):
     # Source offset 2048 is beyond ENCODED size but inside expanded bytes.
     struct.pack_into('<HBBHHH',b,0x1040+489,1,3,0,2048,1,0x104)
     return b,bytes(data)+bytes([255])*1936
+
+def import_inventory_fixture(original, inventory):
+    """Owned pointer records representing the Windows-local import inventory."""
+    b=bytearray(original);ne=128
+    struct.pack_into('<H',b,ne+0x1e,len(inventory))
+    struct.pack_into('<H',b,ne+0x2a,106)
+    nameoff=0;records=[]
+    for mod,(name,ordinals) in enumerate(inventory.items(),1):
+        struct.pack_into('<H',b,ne+96+(mod-1)*2,nameoff)
+        value=bytes([len(name)])+name.encode()
+        b[ne+106+nameoff:ne+106+nameoff+len(value)]=value;nameoff+=len(value)
+        for ordinal in ordinals:
+            src=0x700+8*len(records)
+            struct.pack_into('<HH',b,0x150+src,0xffff,0xffff)
+            records.append(struct.pack('<BBHHH',3,1,src,mod,ordinal))
+    struct.pack_into('<H',b,0x150+3559,len(records))
+    value=b''.join(records)
+    assert 0x150+3559+2+len(value)<0x1000
+    b[0x150+3559+2:0x150+3559+2+len(value)]=value
+    return b
 
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as name:
@@ -103,6 +126,16 @@ if __name__ == '__main__':
         check(image, 0)
         layout, expanded = ibm_layout_fixture(image)
         check(layout, 0)
+        ansi={'DOSCALLS':[5,34,38,39,49,59,77,89,92,137,138],
+              'VIOCALLS':[3,5,19], 'KBDCALLS':[4,10,11,13,22],
+              'MSG':[1,2], 'NLS':[1,4]}
+        checkram={'DOSCALLS':[5,34,38,39,49,77,89,92,127,138], 'NLS':[4]}
+        for inventory,missing in ((ansi,13),(checkram,4)):
+            exe.write_bytes(import_inventory_fixture(layout,inventory))
+            p=subprocess.run([str(ROOT/'src/o16-host'),'-n',str(exe)],
+                             env=ENV,text=True,capture_output=True)
+            assert p.returncode==13 and p.stderr.count('unsupported import ')==missing,p.stderr
+            assert 'live allocations=0' in p.stderr,p.stderr
         # A literal crossing scratch chunks, repeated more than once.
         large=bytearray(layout)
         payload=bytes((i*11+7)%256 for i in range(1500))
@@ -182,6 +215,61 @@ int main(void) {
     assert(o16_done && o16_code==37);
     wr16(s,2,0);o16_dispatch(1,s,0);assert(o16_code==12);
     o16_done=0;o16_dispatch(0,s,60);assert(o16_done && o16_code==12);
+    {
+        FILE *f=tmpfile();u16 allocated,i;int pp[2];char payload[1024];
+        assert(f);wr16(s,0,0);wr16(s,2,20);wr16(s,4,s);wr16(s,6,4096);
+        assert(!o16_dispatch(4,s,0));allocated=rd16(s,20);assert(owned);
+        assert(span(allocated,4095,1) && !span(allocated,4095,2));
+        for(i=0;i<1537;i++)wr8(allocated,i,(unsigned char)(i*7+3));
+        streams[1]=dup(fileno(f));assert(streams[1]>=0);
+        wr16(s,0,22);wr16(s,2,s);wr16(s,4,1537);wr16(s,6,0);
+        wr16(s,8,allocated);wr16(s,10,1);
+        assert(!o16_dispatch(9,s,0) && rd16(s,22)==1537 && o16_pop==12);
+        assert(lseek(fileno(f),0,SEEK_END)==1537);
+        wr16(s,0,26);wr16(s,2,s);wr16(s,4,24);wr16(s,6,s);wr16(s,8,1);
+        assert(!o16_dispatch(7,s,0) && rd16(s,24)==0 && !rd16(s,26));
+        assert(o16_pop==10);
+        streams[0]=dup(fileno(f));assert(streams[0]>=0);assert(lseek(streams[0],0,SEEK_SET)==0);
+        wr16(s,0,22);wr16(s,2,s);wr16(s,4,1537);wr16(s,6,2048);
+        wr16(s,8,allocated);wr16(s,10,0);
+        assert(!o16_dispatch(8,s,0) && rd16(s,22)==1537);
+        for(i=0;i<1537;i++)assert(rd8(allocated,i+2048)==(unsigned char)(i*7+3));
+        assert(!o16_dispatch(8,s,0) && rd16(s,22)==0); /* EOF */
+        assert(!pipe(pp));close(streams[0]);streams[0]=dup(pp[0]);
+        memset(payload,'x',sizeof(payload));assert(write(pp[1],payload,sizeof(payload))==1024);
+        wr16(s,4,2048);wr16(s,6,0);
+        alarm(2);assert(!o16_dispatch(8,s,0));alarm(0); /* no second blocking pipe read */
+        assert(rd16(s,22)==1024);
+        wr16(s,0,26);wr16(s,2,s);wr16(s,4,24);wr16(s,6,s);wr16(s,8,0);
+        assert(!o16_dispatch(7,s,0) && rd16(s,24)==2 && !rd16(s,26));
+        wr16(s,0,22);wr16(s,2,s);wr16(s,4,1);wr16(s,6,0);
+        wr16(s,8,allocated+1);wr16(s,10,0);wr16(s,22,123);
+        assert(o16_dispatch(8,s,0)==487 && rd16(s,22)==123);
+        streams[2]=dup(2);wr16(s,0,2);assert(!o16_dispatch(6,s,0));
+        assert(fcntl(2,F_GETFD)>=0 && o16_dispatch(6,s,0)==6 && o16_pop==2);
+        wr16(s,0,s);assert(o16_dispatch(5,s,0)==5); /* cannot free image */
+        wr16(s,0,allocated);assert(!o16_dispatch(5,s,0));
+        assert(!owned && !span(allocated,0,1) && o16_dispatch(5,s,0)==5);
+        wr16(s,0,1);wr16(s,2,20);wr16(s,4,s);wr16(s,6,16);
+        assert(o16_dispatch(4,s,0)==50 && !owned);
+        wr16(s,0,0);host_fail_after=0;
+        assert(o16_dispatch(4,s,0)==8 && !owned);host_fail_after=-1;
+        wr16(s,6,0);assert(!o16_dispatch(4,s,0));allocated=rd16(s,20);
+        assert(span(allocated,65535,1) && !span(allocated,65535,2));
+        assert(rd8(allocated,65535)==0);owned_shutdown();assert(!owned);
+        streams_shutdown();close(pp[0]);close(pp[1]);fclose(f);
+        streams[1]=open(LARGE,O_RDONLY);assert(streams[1]>=0);
+        wr16(s,0,22);wr16(s,2,s);wr16(s,4,1);wr16(s,6,32);
+        wr16(s,8,s);wr16(s,10,1);
+        assert(o16_dispatch(9,s,0)==5);streams_shutdown();
+        assert(!pipe(pp));close(pp[0]);streams[1]=pp[1];
+        wr16(s,0,22);wr16(s,2,s);wr16(s,4,1);wr16(s,6,32);
+        wr16(s,8,s);wr16(s,10,1);
+        assert(o16_dispatch(9,s,0)==109 && rd16(s,22)==0);
+        assert(signal(SIGPIPE,SIG_DFL)==SIG_DFL);streams_shutdown();
+        /* The normal initializer duplicates handles instead of borrowing them. */
+        streams_init();assert(streams[1]!=1 && streams[2]!=2);streams_shutdown();
+    }
     seg_free(s);close(fds[0]);close(fds[1]);assert(!host_live);
     {
         FILE *f;unsigned char expected[2416];u16 i,ds;
@@ -209,4 +297,4 @@ int main(void) {
              '-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(harness),
              str(ROOT/'src/ne.c'),str(ROOT/'src/mem.c'),'-o',str(d/'calls')])
         run([str(d/'calls')],env=ENV)
-        print('OS/2 iterated bytes/chunks, relocation chains/extents, startup queries, failure cleanup and strict imports passed')
+        print('OS/2 strict inventories (ANSI 13, CHECKRAM 4 missing), iterated data, bounded APIs, streams and segment lifecycle passed')

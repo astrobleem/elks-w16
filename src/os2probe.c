@@ -5,19 +5,43 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <signal.h>
 #include "w16.h"
 
 const char *const w16_modnames[NMODS] = {
-    "DOSCALLS", "VIOCALLS", "~2", "~3", "~4", "~5", "~6"
+    "DOSCALLS", "VIOCALLS", "KBDCALLS", "~3", "MSG", "NLS", "~6"
 };
 const struct api api_table[] = {
     {1,19,"VioWrtTTY",8,0,0,0}, {0,5,"DosExit",4,0,0,0},
-    {0,92,"DosGetVersion",4,0,0,0}, {0,49,"DosGetMachineMode",4,0,0,0}
+    {0,92,"DosGetVersion",4,0,0,0}, {0,49,"DosGetMachineMode",4,0,0,0},
+    {0,34,"DosAllocSeg",8,0,0,0}, {0,39,"DosFreeSeg",2,0,0,0},
+    {0,59,"DosClose",2,0,0,0}, {0,77,"DosQHandType",10,0,0,0},
+    {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
 static struct ne_module image;
 static int console_fd = -1;
+/* Guest standard handles are private duplicates. Closing guest stderr must
+ * not close native diagnostics; VIO remains the selected physical console. */
+static int streams[3]={-1,-1,-1};
+struct owned_segment { struct owned_segment *next; u16 sel,paras; };
+static struct owned_segment *owned;
+u16 o16_pop;
+static void streams_shutdown(void)
+{
+    int i;for(i=0;i<3;i++)if(streams[i]>=0){close(streams[i]);streams[i]=-1;}
+}
+static void streams_init(void)
+{
+    int i;streams_shutdown();for(i=0;i<3;i++)streams[i]=dup(i);
+}
+static void owned_shutdown(void)
+{
+    while(owned){struct owned_segment *n=owned->next;seg_free(owned->sel);free(owned);owned=n;}
+}
 #ifdef W16_HOST
 extern int host_live;
 #endif
@@ -35,7 +59,19 @@ int api_find_name(int mod,const char *name)
     return -1;
 }
 const char *api_name(int i){return api_table[i].name;}
-const char *api_known_name(int mod,u16 ord){(void)mod;(void)ord;return 0;}
+const char *api_known_name(int mod,u16 ord)
+{
+    /* Verified Open Watcom lib286 exports; names aid diagnostics, never bind. */
+    if(mod==0)switch(ord){
+    case 38:return "DosReallocSeg";case 89:return "DosSetVec";
+    case 127:return "DosMemAvail";}
+    if(mod==1)switch(ord){case 3:return "VioGetAnsi";case 5:return "VioSetAnsi";}
+    if(mod==2)switch(ord){case 4:return "KbdCharIn";case 10:return "KbdGetStatus";
+    case 11:return "KbdSetStatus";case 13:return "KbdFlushBuffer";case 22:return "KbdPeek";}
+    if(mod==4)switch(ord){case 1:return "DosPutMessage";case 2:return "DosTrueGetMessage";}
+    if(mod==5)switch(ord){case 1:return "DosCaseMap";case 4:return "DosGetDBCSEv";}
+    return 0;
+}
 #ifndef W16_HOST
 #include <malloc.h>
 int opt_verbose,opt_trace,opt_debugport;
@@ -50,6 +86,7 @@ void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
 void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
+void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
@@ -62,7 +99,13 @@ int api_target(int i,u16 *seg,u16 *off)
     case 0:*off=(u16)(unsigned)o16_vio;break;
     case 1:*off=(u16)(unsigned)o16_exit;break;
     case 2:*off=(u16)(unsigned)o16_version;break;
-    default:*off=(u16)(unsigned)o16_mode;break;
+    case 3:*off=(u16)(unsigned)o16_mode;break;
+    case 4:*off=(u16)(unsigned)o16_alloc;break;
+    case 5:*off=(u16)(unsigned)o16_free;break;
+    case 6:*off=(u16)(unsigned)o16_close;break;
+    case 7:*off=(u16)(unsigned)o16_type;break;
+    case 8:*off=(u16)(unsigned)o16_read;break;
+    default:*off=(u16)(unsigned)o16_write;break;
     }
 #endif
     return 0;
@@ -71,7 +114,9 @@ int api_target(int i,u16 *seg,u16 *off)
  * selector, wrapped offset or paragraph alias can access the native task. */
 static int span(u16 seg,u16 off,u16 len)
 {
-    int i;
+    int i;struct owned_segment *p;
+    for(p=owned;p;p=p->next)
+        if(p->sel==seg)return (u32)off+len<=((u32)p->paras<<4);
     for(i=0;i<image.nseg;i++)
         if(image.seg[i].paras && image.seg[i].sel==seg)
             return (u32)off+len <= ((u32)image.seg[i].paras<<4);
@@ -81,11 +126,93 @@ static int span(u16 seg,u16 off,u16 len)
  * An import operand in code is readable but is not a valid query output. */
 static int output_span(u16 seg,u16 off,u16 len)
 {
-    int i;
+    int i;struct owned_segment *p;
     if(!span(seg,off,len))return 0;
+    for(p=owned;p;p=p->next)if(p->sel==seg)return 1;
     for(i=0;i<image.nseg;i++)
         if(image.seg[i].sel==seg)return !!(image.seg[i].flags&1);
     return 0;
+}
+static u16 io_error(int writing)
+{
+    switch(errno){case EBADF:return 6;case EACCES:return 5;
+    case ENOSPC:return 39;case EPIPE:return 109;case EINTR:return 95;}
+    return writing?29:30;
+}
+/* DOS reports a broken pipe as an API error, not native task termination.
+ * No guest signal handler is installed; ignore only during this synchronous
+ * write, then restore the caller's exact disposition and write errno. */
+static int stream_write(int fd,const void *buf,u16 n)
+{
+    void (*previous)(int);int rc,error;
+    previous=signal(SIGPIPE,SIG_IGN);
+    if(previous==SIG_ERR)return -1;
+    rc=write(fd,buf,n);error=errno;
+    signal(SIGPIPE,previous);errno=error;return rc;
+}
+/* Read/write validate the complete far spans before touching the descriptor.
+ * Disk reads may span scratch chunks; pipe/terminal reads return after one
+ * syscall, rather than blocking again merely to fill a larger guest request. */
+static u16 stream_io(int writing,u16 h,u16 seg,u16 off,u16 count,
+                     u16 outseg,u16 outoff)
+{
+    u16 done=0,rc=0;int fd,r,mode;struct stat st;
+    if(!output_span(outseg,outoff,2) ||
+       (count && !(writing?span(seg,off,count):output_span(seg,off,count))))return 487;
+    if(h>=3 || (fd=streams[h])<0)return 6;
+    if(fstat(fd,&st)<0)return io_error(writing);
+    mode=fcntl(fd,F_GETFL,0);if(mode<0)return io_error(writing);
+    if((writing && (mode&O_ACCMODE)==O_RDONLY) ||
+       (!writing && (mode&O_ACCMODE)==O_WRONLY))return 5;
+    while(done<count){
+        u16 left=count-done,k=left>1024u?1024u:left;
+        if(writing)fcopy_in(w16_scratch,seg,(u16)(off+done),k);
+        r=writing?stream_write(fd,w16_scratch,k):read(fd,w16_scratch,k);
+        if(r<0){rc=io_error(writing);break;}
+        if(!writing && r)fcopy_out(seg,(u16)(off+done),w16_scratch,(u16)r);
+        done+=(u16)r;
+        if(r!=(int)k || (!writing && !S_ISREG(st.st_mode)))break;
+    }
+    wr16(outseg,outoff,done);
+    return rc;
+}
+static u16 handle_type(u16 h,u16 typeseg,u16 typeoff,u16 attrseg,u16 attroff)
+{
+    struct stat st;u16 type,attr=0;int fd,mode;
+    if(!output_span(typeseg,typeoff,2) || !output_span(attrseg,attroff,2))return 487;
+    if(h>=3 || (fd=streams[h])<0)return 6;
+    if(fstat(fd,&st)<0)return io_error(0);
+    if(S_ISREG(st.st_mode))type=0;
+    else if(S_ISFIFO(st.st_mode))type=2;
+    else if(S_ISCHR(st.st_mode) && isatty(fd)){
+        type=1;attr=0x8000; /* character device, no unimplemented IOCTL flags */
+        mode=fcntl(fd,F_GETFL,0);
+        if(mode<0)return io_error(0);
+        /* Console input/output device bits, from the descriptor's real access. */
+        if((mode&O_ACCMODE)!=O_WRONLY)attr|=1;
+        if((mode&O_ACCMODE)!=O_RDONLY)attr|=2;
+    }else return 50; /* unknown device attributes: ERROR_NOT_SUPPORTED */
+    wr16(typeseg,typeoff,type);wr16(attrseg,attroff,attr);return 0;
+}
+static u16 alloc_segment(u16 size,u16 seg,u16 off,u16 flags)
+{
+    struct owned_segment *p;u16 paras;
+    if(!output_span(seg,off,2))return 487;
+    if(flags)return 50; /* sharing/discarding is unsupported; never silently downgrade */
+    p=malloc(sizeof(*p));if(!p)return 8;
+    paras=size?(u16)(((u32)size+15)>>4):0x1000;
+    if(seg_alloc(paras,&p->sel)){free(p);return 8;}
+    p->paras=paras;p->next=owned;owned=p;
+    if(paras==0x1000){fzero(p->sel,0,0x8000);fzero(p->sel,0x8000,0x8000);}
+    else fzero(p->sel,0,(u16)(paras<<4));
+    wr16(seg,off,p->sel);return 0;
+}
+static u16 free_segment(u16 seg)
+{
+    struct owned_segment **p=&owned,*old;
+    while(*p && (*p)->sel!=seg)p=&(*p)->next;
+    if(!*p)return 5; /* never free an image, native, or another task's segment */
+    old=*p;seg_free(seg);*p=old->next;free(old);return 0;
 }
 /* Explicit compatibility policy, not the ELKS kernel's version. OS/2 1.x
  * encodes major 1 as 10 and minor .30 as 30: high byte major, low byte minor.
@@ -97,6 +224,15 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
     if(idx>=api_count || !span(ss,ap,api_table[idx].argbytes)) {
         o16_done=1;o16_code=W16_EUNSUPP;return 487;
     }
+    o16_pop=api_table[idx].argbytes;
+    if(idx==4)return alloc_segment(AW(6),AW(4),AW(2),AW(0));
+    if(idx==5)return free_segment(AW(0));
+    if(idx==6){
+        int fd;h=AW(0);if(h>=3 || (fd=streams[h])<0)return 6;
+        streams[h]=-1;return close(fd)<0?io_error(1):0;
+    }
+    if(idx==7)return handle_type(AW(8),AW(6),AW(4),AW(2),AW(0));
+    if(idx==8 || idx==9)return stream_io(idx==9,AW(10),AW(8),AW(6),AW(4),AW(2),AW(0));
     if(idx==1){
         o16_done=1;
         o16_code=AW(2)==1 ? AW(0) : W16_EUNSUPP;
@@ -126,7 +262,7 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
 #ifndef O16_NO_MAIN
 int main(int argc,char **argv)
 {
-    int rc,noexec=0;
+    int rc,noexec=0,ran=0;
     if(argc==3 && !strcmp(argv[1],"-n")){noexec=1;argv++;argc--;}
     if(argc!=2){fprintf(stderr,"usage: o16 [-n] OS2-TEXT.EXE\n");return 2;}
     rc=ne_open(&image,argv[1]);
@@ -140,13 +276,18 @@ int main(int argc,char **argv)
         const char *tty=getenv("CONSOLE");
         console_fd=open(tty?tty:"/dev/tty1",O_WRONLY);
         if(console_fd<0 || !isatty(console_fd))rc=W16_EIO;
-        else rc=o16_run(image.ip,image.seg[image.cs-1].sel,
+        else {
+            streams_init();ran=1;
+            rc=o16_run(image.ip,image.seg[image.cs-1].sel,
                        image.seg[image.ss-1].sel,image.init_sp,image.dgroup);
+        }
 #endif
     }
+    streams_shutdown();owned_shutdown();
     if(console_fd>=0)close(console_fd);
     ne_free(&image);
-    fprintf(stderr,"o16: result=%d (%s); owned image released\n",rc,ne_errstr(rc));
+    if(ran)fprintf(stderr,"o16: guest exit=%d; owned image released\n",rc);
+    else fprintf(stderr,"o16: result=%d (%s); owned image released\n",rc,ne_errstr(rc));
 #ifdef W16_HOST
     fprintf(stderr,"o16: live allocations=%d\n",host_live);
 #endif
