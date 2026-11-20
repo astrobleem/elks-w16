@@ -140,3 +140,10 @@ o16: os2probe.c os2probe.S ne.c w16.h
 os2-probe-host: o16-host
 o16-host: os2probe.c ne.c mem.c w16.h
 	$(HOSTCC) $(HOSTCFLAGS) -DW16_OS2_PROBE -o $@ os2probe.c ne.c mem.c
+
+# Owned native observation only; this does not advertise OS/2 console APIs.
+.PHONY: os2-console-probe
+os2-console-probe: ../build/os2-console-probe/ocon
+../build/os2-console-probe/ocon: ../tests/elks/os2console.c
+	mkdir -p ../build/os2-console-probe
+	$(CC) $(O16FLAGS) -o $@ $<
