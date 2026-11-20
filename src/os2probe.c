@@ -18,7 +18,9 @@ const struct api api_table[] = {
     {0,92,"DosGetVersion",4,0,0,0}, {0,49,"DosGetMachineMode",4,0,0,0},
     {0,34,"DosAllocSeg",8,0,0,0}, {0,39,"DosFreeSeg",2,0,0,0},
     {0,59,"DosClose",2,0,0,0}, {0,77,"DosQHandType",10,0,0,0},
-    {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0}
+    {0,137,"DosRead",12,0,0,0}, {0,138,"DosWrite",12,0,0,0},
+    {5,4,"DosGetDBCSEv",10,0,0,0}, {0,38,"DosReallocSeg",4,0,0,0},
+    {0,127,"DosMemAvail",4,0,0,0}
 };
 const int api_count = sizeof(api_table)/sizeof(api_table[0]);
 int opt_missing;
@@ -38,6 +40,91 @@ static void streams_init(void)
 {
     int i;streams_shutdown();for(i=0;i<3;i++)streams[i]=dup(i);
 }
+/* Optional fixed, process-owned memory domain (-a KiB). The sorted live
+ * blocks define all free extents; no moving, probing or host free-total estimate.
+ * Every guest segment, including image DS, comes from this same arena.
+ */
+struct arena_block { struct arena_block *next;u16 start,paras; };
+static struct arena_block *arena_blocks;
+static u16 arena_base,arena_paras;
+#ifdef W16_HOST
+int o16_raw_alloc(u16,u16 *);void o16_raw_free(u16);
+#else
+#include <malloc.h>
+static int o16_raw_alloc(u16 paras,u16 *seg){return _fmemalloc(paras,seg)?-1:0;}
+static void o16_raw_free(u16 seg){_fmemfree(seg);}
+#endif
+static int arena_init(u16 paras)
+{
+    if(!paras || paras>0x4000 || arena_base || arena_blocks)return -1;
+    if(o16_raw_alloc(paras,&arena_base))return -1;
+    if((u32)arena_base+paras>0x10000ul){o16_raw_free(arena_base);arena_base=0;return -1;}
+    arena_paras=paras;return 0;
+}
+static void arena_shutdown(void)
+{
+    while(arena_blocks){struct arena_block *n=arena_blocks->next;free(arena_blocks);arena_blocks=n;}
+    if(arena_base)o16_raw_free(arena_base);
+    arena_base=arena_paras=0;
+}
+int seg_alloc(u16 paras,u16 *seg)
+{
+    struct arena_block **link=&arena_blocks,*p;u16 start=0;
+    if(!arena_base)return o16_raw_alloc(paras,seg);
+    if(!paras || paras>0x1000)return -1;
+    while(*link){
+        if((*link)->start-start>=paras)break;
+        start=(*link)->start+(*link)->paras;link=&(*link)->next;
+    }
+    if((u32)start+paras>arena_paras)return -1;
+    p=malloc(sizeof(*p));if(!p)return -1;
+    p->start=start;p->paras=paras;p->next=*link;*link=p;
+    *seg=arena_base+start;return 0;
+}
+void seg_free(u16 seg)
+{
+    struct arena_block **link=&arena_blocks,*p;
+    if(!arena_base){o16_raw_free(seg);return;}
+    while(*link && (u16)(arena_base+(*link)->start)!=seg)link=&(*link)->next;
+    if(!*link)abort(); /* internal ownership invariant, never a guest free */
+    p=*link;*link=p->next;free(p);
+}
+/* Host bounds checks admit only exact live segment bases and their extents;
+ * free arena addresses and paragraph aliases never gain access to the backing. */
+int o16_arena_alias(u16 seg,u16 off,u16 n,u16 *base,u32 *relative)
+{
+    struct arena_block *p;
+    if(!arena_base || seg<arena_base || (u32)seg>=((u32)arena_base+arena_paras))return 0;
+    for(p=arena_blocks;p;p=p->next)if(seg==(u16)(arena_base+p->start)){
+        if((u32)off+n>((u32)p->paras<<4))return -1;
+        *base=arena_base;*relative=((u32)p->start<<4)+off;return 1;
+    }
+    return -1;
+}
+static u32 arena_available(void)
+{
+    struct arena_block *p;u16 end=0,largest=0;
+    for(p=arena_blocks;p;p=p->next){
+        if(p->start-end>largest)largest=p->start-end;
+        end=p->start+p->paras;
+    }
+    if(arena_paras-end>largest)largest=arena_paras-end;
+    return (u32)largest<<4;
+}
+static int arena_resize(u16 seg,u16 paras)
+{
+    struct arena_block *p;u16 limit;
+    for(p=arena_blocks;p;p=p->next)if(seg==(u16)(arena_base+p->start)){
+        limit=p->next?p->next->start:arena_paras;
+        if(!paras || paras>0x1000 || (u32)p->start+paras>limit)return -1;
+        {
+            u16 old=p->paras;p->paras=paras;
+            if(paras>old)fzero(seg,(u16)(old<<4),(u16)((paras-old)<<4));
+        }
+        return 0;
+    }
+    return -1;
+}
 static void owned_shutdown(void)
 {
     while(owned){struct owned_segment *n=owned->next;seg_free(owned->sel);free(owned);owned=n;}
@@ -49,13 +136,15 @@ u16 o16_done, o16_code;
 int api_find_ord(int mod,u16 ord)
 {
     int i; for(i=0;i<api_count;i++)
-        if(api_table[i].mod==mod && api_table[i].ord==ord)return i;
+        if(api_table[i].mod==mod && api_table[i].ord==ord)
+            return i>=11 && !arena_base?-1:i;
     return -1;
 }
 int api_find_name(int mod,const char *name)
 {
     int i;for(i=0;i<api_count;i++)
-        if(api_table[i].mod==mod && !strcmp(api_table[i].name,name))return i;
+        if(api_table[i].mod==mod && !strcmp(api_table[i].name,name))
+            return i>=11 && !arena_base?-1:i;
     return -1;
 }
 const char *api_name(int i){return api_table[i].name;}
@@ -76,8 +165,6 @@ const char *api_known_name(int mod,u16 ord)
 #include <malloc.h>
 int opt_verbose,opt_trace,opt_debugport;
 u8 w16_scratch[W16_SCRATCH];
-int seg_alloc(u16 paras,u16 *seg){return _fmemalloc(paras,seg)?-1:0;}
-void seg_free(u16 seg){_fmemfree(seg);}
 void fcopy_in(void *d,u16 s,u16 o,u16 n){u16 i;for(i=0;i<n;i++)((u8*)d)[i]=rd8(s,o+i);}
 void fcopy_out(u16 s,u16 o,const void *d,u16 n){u16 i;for(i=0;i<n;i++)wr8(s,o+i,((const u8*)d)[i]);}
 void fzero(u16 s,u16 o,u16 n){u16 i;for(i=0;i<n;i++)wr8(s,o+i,0);}
@@ -86,7 +173,7 @@ void vlog(const char *fmt,...){va_list a;if(!opt_verbose)return;va_start(a,fmt);
 u16 W16_CDECL o16_run(u16 ip,u16 cs,u16 ss,u16 sp,u16 ds);
 u16 W16_CDECL o16_cs(void);
 void W16_CDECL o16_vio(void),o16_exit(void),o16_version(void),o16_mode(void);
-void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void);
+void W16_CDECL o16_alloc(void),o16_free(void),o16_close(void),o16_type(void),o16_read(void),o16_write(void),o16_dbcs(void),o16_realloc(void),o16_memavail(void);
 #endif
 int api_target(int i,u16 *seg,u16 *off)
 {
@@ -105,7 +192,10 @@ int api_target(int i,u16 *seg,u16 *off)
     case 6:*off=(u16)(unsigned)o16_close;break;
     case 7:*off=(u16)(unsigned)o16_type;break;
     case 8:*off=(u16)(unsigned)o16_read;break;
-    default:*off=(u16)(unsigned)o16_write;break;
+    case 9:*off=(u16)(unsigned)o16_write;break;
+    case 10:*off=(u16)(unsigned)o16_dbcs;break;
+    case 11:*off=(u16)(unsigned)o16_realloc;break;
+    default:*off=(u16)(unsigned)o16_memavail;break;
     }
 #endif
     return 0;
@@ -214,6 +304,41 @@ static u16 free_segment(u16 seg)
     if(!*p)return 5; /* never free an image, native, or another task's segment */
     old=*p;seg_free(seg);*p=old->next;free(old);return 0;
 }
+/* The narrow NLS profile is explicitly US SBCS: default 437, explicit
+ * 437 or 850. Both have no DBCS lead bytes. Unsupported countries/codepages
+ * fail without mutating either the input COUNTRYCODE or output buffer. */
+static u16 dbcs_vector(u16 cb,u16 cseg,u16 coff,u16 seg,u16 off)
+{
+    u16 country,cp;
+    if(!span(cseg,coff,4) || !output_span(seg,off,cb))return 487;
+    country=rd16(cseg,coff);cp=rd16(cseg,coff+2);
+    if(country && country!=1)return 398;
+    if(cp && cp!=437 && cp!=850)return 398;
+    fzero(seg,off,cb);
+    return cb<2?399:0; /* ERROR_NLS_TABLE_TRUNCATED, even a one-byte truncation */
+}
+static u16 realloc_segment(u16 size,u16 seg,u16 ss,u16 ap)
+{
+    struct owned_segment *p;int i;u16 paras;
+    if(!arena_base)return 50;
+    paras=size?(u16)(((u32)size+15)>>4):0x1000;
+    for(p=owned;p;p=p->next)if(p->sel==seg){
+        if(ss==seg && paras<p->paras)return 5; /* cannot discard a live stack's upper frames */
+        if(arena_resize(seg,paras))return 8;
+        p->paras=paras;return 0;
+    }
+    /* CRT startup may resize its automatically loaded DS. Code segments and
+     * other image data cannot be resized through this API. Protect the initial
+     * stack and the complete live argument frame when SS shares that DS. */
+    i=image.autodata-1;
+    if(i<0 || i>=image.nseg || image.seg[i].sel!=seg)return 5;
+    if(ss==seg && paras<image.seg[i].paras)return 5;
+    if(((u32)paras<<4)<image.init_sp ||
+       ((u32)paras<<4)<image.seg[i].minalloc ||
+       (ss==seg && ((u32)paras<<4)<(u32)ap+4))return 8;
+    if(arena_resize(seg,paras))return 8;
+    image.seg[i].paras=paras;return 0;
+}
 /* Explicit compatibility policy, not the ELKS kernel's version. OS/2 1.x
  * encodes major 1 as 10 and minor .30 as 30: high byte major, low byte minor.
  * This does not promise any import beyond this file's strict table. */
@@ -225,6 +350,13 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
         o16_done=1;o16_code=W16_EUNSUPP;return 487;
     }
     o16_pop=api_table[idx].argbytes;
+    if(idx==10)return dbcs_vector(AW(8),AW(6),AW(4),AW(2),AW(0));
+    if(idx==11)return realloc_segment(AW(2),AW(0),ss,ap);
+    if(idx==12){
+        if(!arena_base)return 50;
+        if(!output_span(AW(2),AW(0),4))return 487;
+        wr32(AW(2),AW(0),arena_available());return 0;
+    }
     if(idx==4)return alloc_segment(AW(6),AW(4),AW(2),AW(0));
     if(idx==5)return free_segment(AW(0));
     if(idx==6){
@@ -262,9 +394,18 @@ u16 W16_CDECL o16_dispatch(u16 idx,u16 ss,u16 ap)
 #ifndef O16_NO_MAIN
 int main(int argc,char **argv)
 {
-    int rc,noexec=0,ran=0;
-    if(argc==3 && !strcmp(argv[1],"-n")){noexec=1;argv++;argc--;}
-    if(argc!=2){fprintf(stderr,"usage: o16 [-n] OS2-TEXT.EXE\n");return 2;}
+    int rc,noexec=0,ran=0;u16 reserve=0;
+    while(argc>1 && argv[1][0]=='-'){
+        if(!strcmp(argv[1],"-n")){noexec=1;argv++;argc--;}
+        else if(!strcmp(argv[1],"-a") && argc>2){
+            char *end;unsigned long kb=strtoul(argv[2],&end,10);
+            if(!argv[2][0] || *end || kb<1 || kb>256)return 2;
+            reserve=(u16)(kb*64);argv+=2;argc-=2;
+        }else break;
+    }
+    if(argc!=2){fprintf(stderr,"usage: o16 [-n] [-a arena-KiB (1..256)] OS2-TEXT.EXE\n");return 2;}
+    if(reserve && arena_init(reserve))return W16_ENOMEM;
+    if(arena_base)fprintf(stderr,"o16: private arena=%u KiB; memory queries cover this domain only\n",reserve/64);
     rc=ne_open(&image,argv[1]);
     if(!rc)rc=ne_check_imports(&image);
     if(!rc)rc=ne_load(&image);
@@ -285,7 +426,7 @@ int main(int argc,char **argv)
     }
     streams_shutdown();owned_shutdown();
     if(console_fd>=0)close(console_fd);
-    ne_free(&image);
+    ne_free(&image);arena_shutdown();
     if(ran)fprintf(stderr,"o16: guest exit=%d; owned image released\n",rc);
     else fprintf(stderr,"o16: result=%d (%s); owned image released\n",rc,ne_errstr(rc));
 #ifdef W16_HOST

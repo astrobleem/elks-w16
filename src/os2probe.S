@@ -5,6 +5,7 @@
 .text
 .global o16_cs, o16_run, o16_vio, o16_exit, o16_version, o16_mode
 .global o16_alloc, o16_free, o16_close, o16_type, o16_read, o16_write
+.global o16_dbcs, o16_realloc, o16_memavail
 o16_cs:
     movw %cs,%ax
     ret
@@ -91,6 +92,18 @@ o16_read:
 o16_write:
     pushw %bp
     movw $9,%bp
+    jmp dispatch
+o16_dbcs:
+    pushw %bp
+    movw $10,%bp
+    jmp dispatch
+o16_realloc:
+    pushw %bp
+    movw $11,%bp
+    jmp dispatch
+o16_memavail:
+    pushw %bp
+    movw $12,%bp
     jmp dispatch
 dispatch:
     cld

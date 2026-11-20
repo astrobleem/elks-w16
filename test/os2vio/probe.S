@@ -34,7 +34,66 @@ mode_operand:
     je 1f
     jmp failed
 1:
+.ifdef ARENA_PROBE
+.global dbcs_operand, dsgrow_operand, avail_operand, realloc_operand, regrow_operand
+    movw $0,80
+    movw $0,82
+    movw $0xffff,84
+    movw $10,%ax
+    pushw %ax
+    pushw %ds
+    movw $80,%ax
+    pushw %ax
+    pushw %ds
+    movw $84,%ax
+    pushw %ax
+    .byte 0x9a
+dbcs_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    cmpw $0,84
+    je 1f
+    jmp failed
+1:
+    cmpw $0,92
+    je 1f
+    jmp failed
+1:
+    movw $8192,%ax
+    pushw %ax
+    pushw %ds
+    .byte 0x9a
+dsgrow_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    cmpb $0,8191
+    je 1f
+    jmp failed
+1:
+    pushw %ds
+    movw $96,%ax
+    pushw %ax
+    .byte 0x9a
+avail_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    movw 96,%ax
+    cmpw $0,98
+    je 1f
+    movw $0xffff,%ax
+1:
+.else
     movw $48,%ax
+.endif
     pushw %ax
     pushw %ds
     movw $68,%ax
@@ -48,6 +107,35 @@ alloc_operand:
     jz 1f
     jmp failed
 1:
+.ifdef ARENA_PROBE
+    movw 68,%ax
+    movw %ax,%es
+    movw $0x1234,%es:0
+    movw $1024,%ax
+    pushw %ax
+    pushw 68
+    .byte 0x9a
+realloc_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    movw $4096,%ax
+    pushw %ax
+    pushw 68
+    .byte 0x9a
+regrow_operand:
+    .word 0xffff,0xffff
+    orw %ax,%ax
+    jz 1f
+    jmp failed
+1:
+    cmpw $0x1234,%es:0
+    je 1f
+    jmp failed
+1:
+.endif
     pushw 68
     .byte 0x9a
 free_operand:

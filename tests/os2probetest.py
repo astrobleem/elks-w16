@@ -11,9 +11,10 @@ ENV = dict(os.environ, ASAN_OPTIONS='detect_leaks=0')
 def run(args, **kw):
     return subprocess.run(args, check=True, **kw)
 
-def fixture(folder):
+def fixture(folder, arena=False):
     obj, raw = folder/'probe.o', folder/'probe.bin'
-    run(['as', '--32', '-o', str(obj), str(ROOT/'test/os2vio/probe.S')])
+    run(['as', '--32']+(['--defsym','ARENA_PROBE=1'] if arena else [])+
+        ['-o', str(obj), str(ROOT/'test/os2vio/probe.S')])
     run(['objcopy', '-O', 'binary', '-j', '.text', str(obj), str(raw)])
     symbols = {}
     for line in subprocess.check_output(['nm', str(obj)], text=True).splitlines():
@@ -28,22 +29,25 @@ def fixture(folder):
     b[:2] = b'MZ'; word(0x18, 64); word(0x3c, 64)
     b[64:66] = b'NE'
     for off, val in ((0xc, 0x0102), (0xe, 2), (0x12, 2048), (0x16, 1),
-                     (0x1a, 2), (0x1c, 2), (0x1e, 2), (0x22, 64),
-                     (0x24, 80), (0x26, 80), (0x28, 88), (0x2a, 92), (0x32, 4)):
+                     (0x1a, 2), (0x1c, 2), (0x1e, 3), (0x22, 64),
+                     (0x24, 80), (0x26, 80), (0x28, 88), (0x2a, 94), (0x32, 4)):
         word(64+off, val)
     b[64+0x36] = 1
     b[144:152] = b'\x05PROBE\0\0'
-    word(152, 0); word(154, 9)
-    b[156:174] = b'\x08DOSCALLS\x08VIOCALLS'
+    word(152, 0); word(154, 9);word(156,18)
+    b[158:180] = b'\x08DOSCALLS\x08VIOCALLS\x03NLS'
     struct.pack_into('<4H', b, 128, 16, len(code), 0x100, len(code))
     struct.pack_into('<4H', b, 136, 64, len(data), 1, len(data))
     b[256:256+len(code)] = code
     pos = 256+len(code)
-    word(pos, 8); pos += 2
-    for operand, mod, ordinal in (('vio_operand', 2, 19), ('exit_operand', 1, 5),
+    records=(('vio_operand', 2, 19), ('exit_operand', 1, 5),
                                   ('version_operand', 1, 92), ('mode_operand', 1, 49),
                                   ('alloc_operand',1,34),('free_operand',1,39),
-                                  ('write_operand',1,138),('close_operand',1,59)):
+                                  ('write_operand',1,138),('close_operand',1,59))
+    if arena:records+=(('dbcs_operand',3,4),('dsgrow_operand',1,38),
+                       ('avail_operand',1,127),('realloc_operand',1,38),('regrow_operand',1,38))
+    word(pos,len(records));pos+=2
+    for operand,mod,ordinal in records:
         struct.pack_into('<BBHHH', b, pos, 3, 1, symbols[operand], mod, ordinal)
         pos += 8
     assert pos < 1024
@@ -60,11 +64,11 @@ def ibm_layout_fixture(original):
     def word(off,value):struct.pack_into('<H',b,128+off,value)
     for off,val in ((0xc,0x0202),(0xe,3),(0x10,5120),(0x12,5120),
                     (0x14,0x104),(0x16,1),(0x1a,3),(0x1c,3),
-                    (0x24,88),(0x26,88),(0x28,96),(0x2a,100)):
+                    (0x24,88),(0x26,88),(0x28,96),(0x2a,102)):
         word(off,val)
     b[216:224]=b'\x05PROBE\0\0'
-    word(96,0);word(98,9)
-    b[228:246]=b'\x08DOSCALLS\x08VIOCALLS'
+    word(96,0);word(98,9);word(100,18)
+    b[230:252]=b'\x08DOSCALLS\x08VIOCALLS\x03NLS'
     for i,desc in enumerate(((0x15,3559,0x0d70,3560),
                              (0x100,42,0x0d70,44),(0x104,489,0x0d09,2416))):
         struct.pack_into('<4H',b,192+8*i,*desc)
@@ -124,17 +128,25 @@ if __name__ == '__main__':
             assert p.returncode == expected, p.stderr
             assert 'live allocations=0' in p.stderr, p.stderr
         check(image, 0)
+        arena_image=fixture(d,arena=True);exe.write_bytes(arena_image)
+        p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','-n',str(exe)],
+                         env=ENV,text=True,capture_output=True)
+        assert p.returncode==0 and 'live allocations=0' in p.stderr,p.stderr
         layout, expanded = ibm_layout_fixture(image)
         check(layout, 0)
         ansi={'DOSCALLS':[5,34,38,39,49,59,77,89,92,137,138],
               'VIOCALLS':[3,5,19], 'KBDCALLS':[4,10,11,13,22],
               'MSG':[1,2], 'NLS':[1,4]}
         checkram={'DOSCALLS':[5,34,38,39,49,77,89,92,127,138], 'NLS':[4]}
-        for inventory,missing in ((ansi,13),(checkram,4)):
+        for inventory,missing in ((ansi,12),(checkram,3)):
             exe.write_bytes(import_inventory_fixture(layout,inventory))
             p=subprocess.run([str(ROOT/'src/o16-host'),'-n',str(exe)],
                              env=ENV,text=True,capture_output=True)
             assert p.returncode==13 and p.stderr.count('unsupported import ')==missing,p.stderr
+            assert 'live allocations=0' in p.stderr,p.stderr
+            p=subprocess.run([str(ROOT/'src/o16-host'),'-a','128','-n',str(exe)],
+                             env=ENV,text=True,capture_output=True)
+            assert p.returncode==13 and p.stderr.count('unsupported import ')==missing-(1 if inventory is ansi else 2),p.stderr
             assert 'live allocations=0' in p.stderr,p.stderr
         # A literal crossing scratch chunks, repeated more than once.
         large=bytearray(layout)
@@ -270,6 +282,20 @@ int main(void) {
         /* The normal initializer duplicates handles instead of borrowing them. */
         streams_init();assert(streams[1]!=1 && streams[2]!=2);streams_shutdown();
     }
+    /* Exact SBCS vector, all tail bytes cleared, input and guards preserved. */
+    wr16(s,30,0);wr16(s,32,0);fzero(s,40,12);wr8(s,39,123);wr8(s,50,123);
+    wr16(s,0,40);wr16(s,2,s);wr16(s,4,30);wr16(s,6,s);wr16(s,8,10);
+    assert(!o16_dispatch(10,s,0) && o16_pop==10);
+    for(signed int j=40;j<50;j++)assert(!rd8(s,j));
+    assert(rd8(s,39)==123 && rd8(s,50)==123 && !rd16(s,30) && !rd16(s,32));
+    wr16(s,30,1);wr16(s,32,437);assert(!o16_dispatch(10,s,0));
+    wr16(s,32,850);assert(!o16_dispatch(10,s,0));
+    wr16(s,32,932);wr8(s,40,123);assert(o16_dispatch(10,s,0)==398 && rd8(s,40)==123);
+    wr16(s,32,437);wr16(s,30,81);assert(o16_dispatch(10,s,0)==398);
+    wr16(s,30,0);wr16(s,8,1);assert(o16_dispatch(10,s,0)==399 && !rd8(s,40));
+    wr16(s,8,0);assert(o16_dispatch(10,s,0)==399);
+    wr16(s,8,10);wr16(s,0,60);assert(o16_dispatch(10,s,0)==487);
+    wr16(s,0,40);wr16(s,6,s+1);assert(o16_dispatch(10,s,0)==487);
     seg_free(s);close(fds[0]);close(fds[1]);assert(!host_live);
     {
         FILE *f;unsigned char expected[2416];u16 i,ds;
@@ -288,6 +314,60 @@ int main(void) {
         host_fail_after=1;assert(!ne_open(&image,LAYOUT));
         assert(ne_load(&image)==14);ne_free(&image);assert(!host_live);
     }
+    {
+        u16 data,a,b,c,i;u32 largest;struct ne_seg local;
+        host_fail_after=-1;assert(!arena_init(0x2000)); /* 128 KiB, one real backing allocation */
+        assert(!seg_alloc(4,&data));memset(&local,0,sizeof(local));
+        local.sel=data;local.paras=4;local.minalloc=16;local.flags=1;
+        image.seg=&local;image.nseg=1;image.autodata=1;image.init_sp=32;
+        assert(api_find_ord(0,38)==11 && api_find_ord(0,127)==12);
+        wr16(data,0,20);wr16(data,2,data);assert(!o16_dispatch(12,data,0));
+        largest=rd32(data,20);assert(largest==131072-64);
+        /* CRT DS growth is stable, preserves data, and protects live SS on shrink. */
+        wr8(data,40,123);wr16(data,0,data);wr16(data,2,128);
+        assert(!o16_dispatch(11,data,0) && local.sel==data && local.paras==8);
+        assert(rd8(data,40)==123 && !rd8(data,127));
+        wr16(data,2,64);assert(o16_dispatch(11,data,0)==5 && local.paras==8);
+        /* Allocate exactly the clamped query result, including 65535 -> 64 KiB. */
+        wr16(data,0,0);wr16(data,2,20);wr16(data,4,data);wr16(data,6,65535);
+        assert(!o16_dispatch(4,data,0));a=rd16(data,20);
+        assert(span(a,65535,1));wr8(a,0,42);wr8(a,1023,77);
+        wr16(data,0,0);wr16(data,2,20);wr16(data,4,data);wr16(data,6,1024);
+        assert(!o16_dispatch(4,data,0));b=rd16(data,20);
+        /* A blocked growth must preserve the original base, bounds and content. */
+        wr16(data,0,a);wr16(data,2,0);assert(!o16_dispatch(11,data,0));
+        wr16(data,2,2048);assert(!o16_dispatch(11,data,0)); /* shrink returns a gap */
+        wr16(data,2,4096);assert(!o16_dispatch(11,data,0)); /* grow within that gap */
+        assert(rd8(a,0)==42 && rd8(a,1023)==77);
+        wr16(data,0,0);wr16(data,2,20);wr16(data,4,data);wr16(data,6,1024);
+        assert(!o16_dispatch(4,data,0));c=rd16(data,20);assert(c==a+256);
+        wr16(data,0,a);wr16(data,2,8192);assert(o16_dispatch(11,data,0)==8);
+        assert(span(a,4095,1) && !span(a,4095,2) && rd8(a,0)==42);
+        wr16(data,0,c);assert(!o16_dispatch(5,data,0));
+        wr16(data,0,b);assert(!o16_dispatch(5,data,0));
+        wr16(data,0,20);wr16(data,2,data);assert(!o16_dispatch(12,data,0));
+        largest=rd32(data,20);assert(largest==131072-128-4096);
+        /* No sum-of-holes result: fill all but a small tail, free separated blocks. */
+        wr16(data,0,0);wr16(data,2,20);wr16(data,4,data);wr16(data,6,0);
+        assert(!o16_dispatch(4,data,0));b=rd16(data,20);
+        assert(arena_available()<65536 && arena_available()>0);
+        for(i=0;i<4096;i++)assert(rd8(a,i)==(i==0?42:i==1023?77:0));
+        owned_shutdown();assert(!owned);assert(arena_available()==131072-128);
+        /* Separated holes: sum is 65408, largest is 32768, and exact allocation fits. */
+        assert(!alloc_segment(32768,data,20,0));a=rd16(data,20);
+        assert(!alloc_segment(32768,data,20,0));b=rd16(data,20);
+        assert(!alloc_segment(32768,data,20,0));c=rd16(data,20);
+        assert(!free_segment(b));assert(arena_available()==32768);
+        assert(alloc_segment(32784,data,20,0)==8 && arena_available()==32768);
+        assert(!alloc_segment(32768,data,20,0) && rd16(data,20)==b);
+        owned_shutdown();assert(!owned);assert(arena_available()==131072-128);
+        seg_free(data);arena_shutdown();image.seg=0;image.nseg=0;assert(!host_live);
+        assert(api_find_ord(0,38)==-1 && api_find_ord(0,127)==-1);
+        /* Real loader segments, expanded relocations and failure unwind in the arena. */
+        assert(!arena_init(0x2000));assert(!ne_open(&image,LAYOUT));
+        assert(!ne_load(&image));assert(rd16(image.dgroup,2048)==0x104);
+        ne_free(&image);assert(!arena_blocks);arena_shutdown();assert(!host_live);
+    }
     return 0;
 }
 ''')
@@ -297,4 +377,4 @@ int main(void) {
              '-fno-pie','-no-pie','-I'+str(ROOT/'src'),str(harness),
              str(ROOT/'src/ne.c'),str(ROOT/'src/mem.c'),'-o',str(d/'calls')])
         run([str(d/'calls')],env=ENV)
-        print('OS/2 strict inventories (ANSI 13, CHECKRAM 4 missing), iterated data, bounded APIs, streams and segment lifecycle passed')
+        print('OS/2 strict inventories (ANSI 12/11, CHECKRAM 3/1 missing (direct/arena)), iterated data, bounded APIs, streams and segment lifecycle passed')

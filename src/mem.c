@@ -29,6 +29,11 @@ static void violation(const char *what, u16 seg, u16 off, u16 n)
     abort();
 }
 
+#ifdef W16_OS2_PROBE
+/* The opt-in loader may subdivide one reserved kernel allocation. */
+#define seg_alloc o16_raw_alloc
+#define seg_free o16_raw_free
+#endif
 int seg_alloc(u16 paras, u16 *seg)
 {
     if (host_fail_after == 0)
@@ -60,10 +65,27 @@ void seg_free(u16 seg)
     host_live--;
 }
 
+#ifdef W16_OS2_PROBE
+#undef seg_alloc
+#undef seg_free
+extern int o16_arena_alias(u16,u16,u16,u16 *,u32 *);
+#endif
 /* every guest access goes through here: it must lie inside the live allocation based at seg */
 u8 *host_ptr(u16 seg, u16 off, u16 n)
 {
     int i;
+#ifdef W16_OS2_PROBE
+    {
+        u16 base;u32 relative;int alias=o16_arena_alias(seg,off,n,&base,&relative);
+        if(alias<0)violation("unowned arena segment or out of bounds",seg,off,n);
+        if(alias>0){
+            for(i=nallocs-1;i>=0 && allocs[i].seg!=base;i--);
+            if(i<0 || !allocs[i].live || relative+n>allocs[i].bytes)
+                violation("invalid arena backing",seg,off,n);
+            return &host_mem[LIN(base,0)+relative];
+        }
+    }
+#endif
     for (i = nallocs - 1; i >= 0 && allocs[i].seg != seg; i--)
         ;
     if (i < 0)
