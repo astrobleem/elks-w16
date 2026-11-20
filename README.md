@@ -2,7 +2,7 @@
 
 # w16 for ELKS
 
-**Win16 applications on ELKS: 640×480 experimental VGA and 320×200 Tandy/PCjr graphics, in 16 colours.**
+**Win16 applications on 8086/8088 ELKS: native CGA, experimental VGA, and target-specific Tandy/PCjr graphics.**
 
 Run selected Windows programs on an 8086-class ELKS guest without running Windows. Choose the display build that matches the machine.
 
@@ -12,7 +12,7 @@ Run selected Windows programs on an 8086-class ELKS guest without running Window
 
 The logo was drawn with Paintbrush’s line tool using emulated mouse input. This is an emulator capture, not a physical-hardware test. Paintbrush support is experimental: this drawing does not establish that every tool or file operation works.
 
-[Experimental VGA setup](docs/build.md#experimental-vga-solitaire) · [Tandy/PCjr setup](docs/build.md#3-build-nano-x-and-w16) · [Screenshots](docs/gallery.md) · [Technical guide](docs/technical.md) · [MIT license](LICENSE)
+[CGA setup](docs/build.md#cga-on-stock-elks) · [Experimental VGA setup](docs/build.md#experimental-vga-solitaire) · [Tandy/PCjr setup](docs/build.md#tandypcjr-user-space-build) · [Screenshots](docs/gallery.md) · [Technical guide](docs/technical.md) · [MIT license](LICENSE)
 
 </div>
 
@@ -29,6 +29,8 @@ The logo was drawn with Paintbrush’s line tool using emulated mouse input. Thi
 
 `w16` loads a Windows NE executable, binds its supported Win16 imports to native handlers, and runs its code on ELKS. The Windows 3.0 examples use unchanged application executables; Windows 3.1 Minesweeper needs a converted private copy. Nano-X supplies display and input. No Microsoft executables or system files are included.
 
+**Current Program Manager milestone:** stock Windows 3.0 Program Manager opens its Games group and launches and closes stock Solitaire on an emulated **4.77 MHz 8088, 640 KiB, stock scancode ELKS and 640×200 monochrome CGA**. The first full deal, child cleanup, recovered RAM and a responsive parent were observed using a lean shell-free boot and `w16 -T`. This is an emulator result. Full Program Manager on physical hardware is unverified; the open DLGTEST example has passed one Escape back to a working shell on a real Tandy 1000 EX in its separate hardware setup.
+
 The supported programs and display configurations are listed below. This is not a general-purpose Windows compatibility environment.
 
 ## What runs
@@ -43,16 +45,18 @@ The supported programs and display configurations are listed below. This is not 
 | **Windows 3.0 WINVER** | Version dialog | Bring your own copy |
 | **Windows 3.0 CLOCK** | Analog/digital display, timer, Settings menu, About and WIN.INI preferences | Bring your own copy |
 | **Windows 3.0 REVERSI** | Play against the computer, menus, hints, cursors, accelerators and About | Bring your own copy |
-| **Windows 3.0 SOLITAIRE** | Stock dealing, basic tableau moves, and Game → Options in the [experimental VGA build](docs/build.md#experimental-vga-solitaire) | Bring your own copy |
+| **Windows 3.0 Program Manager** | Groups and launch/close of Solitaire with `-T` on emulated 8088 CGA; full hardware support unverified | Bring your own EXE, configuration and group files |
+| **Windows 3.0 SOLITAIRE** | First deal and close on emulated CGA; basic moves and Options on experimental VGA | Bring your own copy |
 
 ### Display configurations
 
 | Display build | Resolution | Emulator coverage |
 | :--- | :--- | :--- |
+| **CGA** | 640×200 monochrome or 320×200 four colours | IBM CGA with interpreted 4.77 MHz 8088; stock-scancode mono launch/close checks |
 | **Experimental VGA** | 640×480, 16 colours | Paintbrush and Solitaire in QEMU; converted Minesweeper in QEMU and DOSBox-X 8086 mode |
 | **Tandy / expanded PCjr** | 320×200, 16 colours | Tandy in 86Box and MartyPC; expanded PCjr in DOSBox-X |
 
-A result on one display is not a claim about the others. Physical hardware and original-machine performance have not been verified. See the [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) for the test configurations.
+A result on one display is not a claim about the others. Physical Tandy coverage is limited to the open dialog test; VGA and full Program Manager hardware behavior remain unverified. See the [technical guide](docs/technical.md#patch-internals-and-emulator-measurements) for the test configurations.
 
 
 <table>
@@ -90,40 +94,38 @@ The separately supplied Windows 3.0 executable runs in QEMU. Stock dealing, basi
 
 Start with the **[build and run guide](docs/build.md)**. You will need:
 
-- An **ELKS 0.9.2** source tree and its **ia16** cross toolchain. The public [Tandy branch](https://github.com/astrobleem/elks/tree/tandy-video-v0.9.2) and [PCjr branch](https://github.com/astrobleem/elks/tree/pcjr-video-v0.9.2) provide support for those two targets. For VGA, use an ELKS kernel configured for VGA and medium-model executables as described in the [VGA setup](docs/build.md#experimental-vga-solitaire).
-- **Microwindows/Nano-X**, with the Tandy/PCjr base patch and the two Nano-X patches included here. The client library must use the **medium memory model**.
-- **Open Watcom v2** to build the included Win16 examples. No Windows SDK, DDK or Windows media is needed for those examples.
-- A Linux build host with Make, GCC, Python 3, Git and `patch`.
+- A built **ELKS 0.9.2** tree and its **ia16** cross toolchain. The normal runtime is a native ELKS **NE** executable and needs **`CONFIG_EXEC_OS2=y` and `CONFIG_EXEC_MMODEL=y`**. Ordinary CGA uses unmodified upstream ELKS; the stock keyboard route additionally needs **`CONFIG_KEYBOARD_SCANCODE=y`**. See [kernel setup](docs/build.md#2-prepare-elks).
+- The pinned **Microwindows/Nano-X** checkout and three user-space baseline patches from the build guide. Keep each display server paired with the medium-model client archive used to link W16.
+- **Open Watcom v2** for the included open Win16 examples, and a Linux host with Make, GCC, Python 3, Git and `patch`.
 
-With ELKS and the patched Microwindows tree prepared, set the paths for either display build:
+After preparing those trees, build the current CGA path from this repository's root:
 
 ```bash
-# From this repository's root. Use absolute paths for both trees.
-export TOPDIR=/path/to/elks
-export MWDIR=/path/to/microwindows
+export TOPDIR=/path/to/built-stock-elks
+export MWDIR=/path/to/patched-microwindows
 . "$TOPDIR/env.sh"
+export CGA_OUT="$PWD/build/nanox-cga"
+ELKS_KBD=scancode sh scripts/build-nanox-cga.sh
+make -C src clean
+make TOPDIR="$TOPDIR" MWDIR="$CGA_OUT"
 ```
 
-**For experimental VGA (640×480)**, build the matching server and client library in a separate output directory:
+Install `$CGA_OUT/nano-x` as `/bin/nano-x` and `src/w16` as `/bin/w16`. **`src/w16` is the default native NE output**, with three code groups, private task data and shared read-only constants. The old two-group a.out runtime no longer fits and is not a supported build. No kernel patch or Tandy framebuffer reservation is required for ordinary CGA. `CGA_MODE=color` selects 320×200 four-colour CGA; panning remains opt-in and consumes extra conventional memory.
 
-```sh
+Build the open dialog with `WATCOM=/path/to/open-watcom make samples`, copy `test/dlgtest/DLGTEST.EXE` to the guest, and run `w16 dlgtest.exe`. Let W16 autostart its nonpersistent server for the Escape-to-shell check. The scancode backend is US set-1 and must match the running kernel; BIOS-polling input cannot preserve all Alt shortcuts.
+
+**Experimental VGA (640×480):**
+
+```bash
 export VGA_OUT="$PWD/build/nanox-vga"
-sh scripts/build-nanox-vga.sh
+ELKS_KBD=tty sh scripts/build-nanox-vga.sh
 make -C src clean
-make -C src TOPDIR="$TOPDIR" MWDIR="$VGA_OUT"
+make TOPDIR="$TOPDIR" MWDIR="$VGA_OUT"
 ```
 
-Copy `$VGA_OUT/nano-x` and `src/w16` to the VGA guest. Start `nano-x -p &` there before launching the application. Keep this server and its matching client library together: VGA screen capture and pixel readback use negotiated extensions.
+Install that server and its matching `src/w16`. Earlier VGA application results came from the documented emulator configurations. They do **not** verify the current VGA driver on the exact stock-scancode setup: its console-lock integration for the raw backend is still missing. The `tty` recipe builds user space; it does not establish working stock-kernel Alt shortcuts or physical VGA support. See [VGA evidence and limitations](docs/build.md#experimental-vga-solitaire).
 
-**For Tandy/PCjr (320×200)**, use the standard target-specific server:
-
-```sh
-sh scripts/build-nanox.sh
-make -C src clean
-make -C src TOPDIR="$TOPDIR" MWDIR="$MWDIR"
-```
-
-On that guest, start `nano-color -p &`. For either target, `WATCOM=/path/to/open-watcom make samples` builds the source examples; copy the sample to the guest and run `w16 hello16.exe`. See the [build guide](docs/build.md) for kernel, input and disk-image setup.
+The target-specific [Tandy/PCjr fork builds](docs/build.md#tandypcjr-user-space-build) remain separate from ordinary CGA/VGA and require their own kernel setup.
 
 With your own Windows 3.0 programs on the ELKS disk:
 
@@ -140,7 +142,7 @@ w16 -u -l PBRUSH=pbrush.dll pbrush.exe
 
 `-l` binds the companion DLL explicitly. `-u` permits startup with unresolved imports; calling one stops the program rather than pretending the operation succeeded.
 
-`-p` keeps Nano-X running between programs. Run one Win16 application at a time. The [keyboard patches](docs/build.md#2-prepare-elks) enable shortcuts such as Alt+F4 and Alt+Space; the system-menu Close command is also available with the mouse.
+`-p` intentionally keeps Nano-X running after the application closes. For an owned nonpersistent server, W16 waits for server exit before returning the console, with a bounded timeout. `-T` enables the tested isolated Win16 child-task path; 640 KiB co-launches remain sensitive to boot processes and application memory needs. See the [build guide](docs/build.md) for keyboard and display limits.
 
 ## How it fits together
 

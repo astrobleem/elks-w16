@@ -1,7 +1,7 @@
 .PHONY: all host samples test clean
 
 all:
-	$(MAKE) -C src
+	$(MAKE) -C src all
 
 host:
 	$(MAKE) -C src host

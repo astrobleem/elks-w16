@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert the optional linked W16 ELF layout to fixed native ELKS OS/2 NE."""
+"""Convert the linked W16 ELF layout to fixed native ELKS OS/2 NE."""
 import struct as s,sys
 from pathlib import Path
 def need(ok,msg):

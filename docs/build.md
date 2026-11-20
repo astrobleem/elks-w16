@@ -28,9 +28,23 @@ No Windows SDK, DDK, ROM image or Windows installation media is needed to build 
 
 ## 2. Prepare ELKS
 
-Use **one** of the target branches below. Keep Tandy and PCjr builds in separate source trees, and do not reuse kernel objects between them.
+Choose the kernel for the machine. Ordinary CGA uses upstream ELKS without source patches; Tandy/PCjr framebuffer reservations are separate historical fork configurations. Do not mix their kernel objects.
 
-### Tandy
+### CGA on stock ELKS
+
+```bash
+git clone https://github.com/ghaerr/elks.git ../elks-stock
+git -C ../elks-stock checkout v0.9.2
+export TOPDIR="$(cd ../elks-stock && pwd)"
+```
+
+Follow that tree's `BUILD.md` to build the ia16 toolchain, libc and system. Enable **`CONFIG_EXEC_OS2=y` and `CONFIG_EXEC_MMODEL=y`** for the native W16 NE executable. For the tested local keyboard route, use **`CONFIG_CONSOLE_DIRECT=y` and `CONFIG_KEYBOARD_SCANCODE=y`** on an IBM-PC target. No Tandy/PCjr reservation, UART, EMS or graphics-keyboard kernel patch is needed for this CGA route. Build and boot the same configuration whose headers are used below.
+
+`ELKS_KBD=scancode` selects the user-space US set-1 decoder through stock raw-console ioctls. BIOS-polling and serial input use the existing `tty` backend; polling discards some Alt distinctions before user space can recover them. International layouts and physical VGA with the new raw backend are unverified.
+
+The ordinary VGA user-space build is experimental. Earlier VGA emulator results do not prove the current stock-scancode combination: the VGA driver's raw-keyboard console-lock lifecycle has not been integrated. Do not apply a kernel patch merely to infer support for that combination.
+
+### Tandy fork configuration
 
 ```bash
 git clone --branch tandy-video-v0.9.2 --single-branch \
@@ -39,7 +53,7 @@ export TOPDIR="$(cd ../elks-tandy && pwd)"
 patch -d "$TOPDIR" -p1 < "$W16DIR/elks-graphics-keys.patch"
 ```
 
-Follow [`BUILD.md` on the Tandy branch](https://github.com/astrobleem/elks/blob/tandy-video-v0.9.2/BUILD.md) to build the ia16 toolchain, configure ELKS and build the system. Enable **`CONFIG_EXEC_MMODEL=y`**: `w16` uses the medium memory model.
+Follow [`BUILD.md` on the Tandy branch](https://github.com/astrobleem/elks/blob/tandy-video-v0.9.2/BUILD.md) to build the ia16 toolchain, configure ELKS and build the system. Enable **`CONFIG_EXEC_OS2=y` and `CONFIG_EXEC_MMODEL=y`**: the current `w16` output is native NE with far code.
 
 For a fresh tree, the normal ELKS sequence is:
 
@@ -55,7 +69,7 @@ cd "$W16DIR"
 
 The branch supplies the kernel-side video-memory reservation. On the **ELKS boot disk**, add `tandyvideo=1` to `/bootopts` to opt in. The driver checks that the kernel reserved a supported framebuffer before using it. This branch targets the original-Tandy memory layout, not every machine with a Tandy label. Read its [`Documentation/tandy-video.txt`](https://github.com/astrobleem/elks/blob/tandy-video-v0.9.2/Documentation/tandy-video.txt) before choosing a machine configuration.
 
-### Expanded PCjr
+### Expanded PCjr fork configuration
 
 ```bash
 git clone --branch pcjr-video-v0.9.2 --single-branch \
@@ -81,62 +95,68 @@ The PCjr kernel **and its matching MINIX bootloader must be installed together**
 
 `elks-pcjr.patch` makes reserved low memory available after boot staging and corrects the BIOS timer accounting. The prior full-suite PCjr runs need that additional memory. See [patch details](technical.md#patch-internals-and-emulator-measurements).
 
-### What the keyboard patch adds
+### Historical fork keyboard patch
 
-`elks-graphics-keys.patch` lets Alt+F4 and Alt+Space reach graphical applications, and fixes the relevant BIOS-keyboard sequences for the PCjr. It changes graphics-mode handling while retaining text-mode console switching. Without it, mouse-based closing is still available, but some keyboard shortcuts do not work. Rebuild the kernel after applying it.
+The fork recipes above use `elks-graphics-keys.patch`; it is not required by the stock-scancode CGA route. It lets Alt+F4 and Alt+Space reach graphical applications, and fixes the relevant BIOS-keyboard sequences for the PCjr. It changes graphics-mode handling while retaining text-mode console switching. Without it, mouse-based closing is still available, but some keyboard shortcuts do not work. Rebuild the kernel after applying it.
 
 ## 3. Build Nano-X and w16
 
-Apply the **three Microwindows patches in this order**, once each, to the revision from step 1:
+Apply these **user-space** baseline patches once, in order, to the pinned Microwindows revision from step 1. Their Tandy/PCjr filename does not require a kernel reservation when building CGA or VGA.
 
 ```bash
 patch -d "$MWDIR" -p1 < "$W16DIR/dependencies/microwindows-tandy-pcjr.patch"
 patch -d "$MWDIR" -p1 < "$W16DIR/nanox-w16.patch"
 patch -d "$MWDIR" -p1 < "$W16DIR/nanox-tandyfast.patch"
-
 cd "$W16DIR"
 . "$TOPDIR/env.sh"
-sh scripts/build-nanox.sh
-make -C src TOPDIR="$TOPDIR" MWDIR="$MWDIR"
 ```
 
-The [build helper](../scripts/build-nanox.sh) assumes the source trees are already present and patched. It does not download dependencies or install files into an ELKS disk.
+### CGA build
 
-It builds:
+```bash
+export CGA_OUT="$W16DIR/build/nanox-cga"
+ELKS_KBD=scancode sh scripts/build-nanox-cga.sh
+make -C src clean
+make TOPDIR="$TOPDIR" MWDIR="$CGA_OUT"
+export NANOX_SERVER="$CGA_OUT/nano-x"
+```
 
-| Output | Purpose |
-| :--- | :--- |
-| `$MWDIR/src/bin/nano-x` | The Tandy/PCjr colour Nano-X server |
-| `$MWDIR/src/lib/libnano-X.a` | Small-model library for Nano-X demos and test drivers |
-| `$MWDIR/src/lib/libnano-X-medium.a` | Medium-model library linked by `w16` |
-| `$MWDIR/nxcolor`, `$MWDIR/vidinfo`, `$MWDIR/vidreset` | Display utilities from the base patch |
-| `src/w16` | The native ELKS Win16 loader and API layer |
+The default mode is 640×200 monochrome. Set `CGA_MODE=color` on the helper command for 320×200 four colours; keep its output directory and matching W16 client separate. Panning is opt-in, requires a shadow framebuffer and has additional conventional-memory and performance costs. Do not enable it for a first test.
 
-The two client archives are intentionally separate. **Do not overwrite the small-model archive with medium-model objects.** The helper cleans and rebuilds the Nano-X tree first, then builds the medium-model objects in this repository's `build/nanox-medium/` directory. It also supplies `MEM_GETPCJR=15` when compiling against Tandy headers that lack that ioctl definition.
+The default build produces **`src/w16`**, a native ELKS NE executable with three code groups, private task data, a shared read-only bank and lazy UI storage. `src/w16-ro.ne` is the same build artifact under its internal name. The old two-code-group a.out runtime exceeds its segment limits and is no longer a supported target. The kernel needs `CONFIG_EXEC_OS2=y` and `CONFIG_EXEC_MMODEL=y`; this is distinct from the Windows NE program supplied as input to W16.
 
-`nanox-w16.patch` supplies server request batching, keyboard decoding, line-endpoint behaviour and the cursor-redraw correction. `nanox-tandyfast.patch` accelerates the colour driver's line, fill, copy and glyph paths. The base display patch and license notices live in [`dependencies/`](../dependencies).
+Copy the matching server and runtime as described below. Run the open DLGTEST first and press Escape once; an owned nonpersistent server is awaited before returning to the shell. The wait is bounded at 30 seconds and reports failure if the server does not exit. An already-running server or one started with `NXPERSIST=1` is not awaited.
+
+The CGA path has interpreted 4.77 MHz 8088/IBM CGA coverage, including stock Program Manager opening Games and launching/closing Solitaire on a lean 640 KiB stock-scancode setup. The separate physical Tandy result is limited to DLGTEST Escape-to-shell; full hardware Program Manager is unverified.
 
 ### Experimental VGA Solitaire
 
-The regular Tandy/PCjr build above is unchanged. The 640×480, 16-colour VGA build uses a matching Nano-X server and medium-model client with pixel readback and screen capture. It has been exercised in QEMU on ELKS 0.9.2 with VGA and medium-model executable support. It is not a Tandy/PCjr or physical hardware result.
+```bash
+export VGA_OUT="$W16DIR/build/nanox-vga"
+ELKS_KBD=tty sh scripts/build-nanox-vga.sh
+make -C src clean
+make TOPDIR="$TOPDIR" MWDIR="$VGA_OUT"
+export NANOX_SERVER="$VGA_OUT/nano-x"
+```
 
-After applying the three baseline patches above, build from the w16 repository root with your built ELKS and patched Microwindows trees:
+This builds the 640×480, 16-colour server, matching medium-model client and native NE runtime from the current source. The helper also exports the font source needed to build W16. **Do not infer stock-scancode VGA support from this build recipe.** The existing VGA driver's console-lock handling is not ready for the raw keyboard backend. The `tty` backend retains its existing input limitations on unpatched polling/scancode kernels.
+
+Earlier QEMU VGA runs exercised stock Solitaire dealing, basic moves and Options, and Paintbrush drawing. Those results used their recorded emulator/kernel setups, not a verification of this exact stock-scancode configuration. VGA hardware, all game commands and a full game remain unverified. Supply your own Windows 3.0 files; no proprietary files are included. Historical permissive runs used `-u`, which binds missing imports to diagnostic traps, not implementations.
+
+### Tandy/PCjr user-space build
+
+For the fork kernel configurations in step 2:
 
 ```bash
-export VGA_OUT="$PWD/build/nanox-vga"
-sh scripts/build-nanox-vga.sh
+sh scripts/build-nanox.sh
 make -C src clean
-make -C src TOPDIR="$TOPDIR" MWDIR="$VGA_OUT"
+make TOPDIR="$TOPDIR" MWDIR="$MWDIR"
+export NANOX_SERVER="$MWDIR/src/bin/nano-x"
 ```
 
-Copy `$VGA_OUT/nano-x` and `src/w16` to the ELKS disk. Supply your own Windows 3.0 `SOL.EXE`. On the VGA guest, start this Nano-X server rather than the Tandy/PCjr server:
+The helper also builds the small-model client archive and target display utilities. Keep small- and medium-model archives separate. Kernel reservations and the target-specific bootloader requirements belong to these fork configurations, not ordinary CGA/VGA.
 
-```sh
-nano-x -p &
-w16 -u sol.exe
-```
-
-The default loader rejects missing imports. `-u` allows this run to start by binding certain known missing imports to diagnostic traps. It does not implement them: if Solitaire calls one, the run stops and reports the import. Basic stock dealing, legal and rejected tableau moves, flipping an exposed card, and Game → Options have been exercised. Completing a game and all other game commands remain unverified.
+All helpers keep each server paired with the client archive used by W16. Clean `src` when switching display builds. They build user space only and do not install or patch the guest kernel.
 
 ## 4. Build the sample applications
 
@@ -168,22 +188,20 @@ Copy the built files to the guest, using your usual ELKS file-transfer or image 
 
 | Host file | Suggested ELKS path |
 | :--- | :--- |
-| `$MWDIR/src/bin/nano-x` | `/bin/nano-color` |
-| `$MWDIR/vidreset` | `/bin/vidreset` |
-| `$W16DIR/src/w16` | `/bin/w16` |
+| `$NANOX_SERVER` from the chosen build | `/bin/nano-x` |
+| `$W16DIR/src/w16` (native NE) | `/bin/w16` |
 | `$W16DIR/test/hello16/HELLO16.EXE` | `/root/hello16.exe` |
 | `$W16DIR/test/dlgtest/DLGTEST.EXE` | `/root/dlgtest.exe` |
 | `$W16DIR/test/mbtest/MBTEST.EXE` | `/root/mbtest.exe` |
 
-`nano-color` is simply the installed name for the server built as `nano-x`. Keep its build matched to the client library used for `w16`.
+Let W16 autostart `/bin/nano-x` for the normal close-to-shell path. `NXSERVER` can select another exact server path. `NXPERSIST=1` deliberately keeps an autostarted server alive; it is not suitable for an Escape-to-text-console smoke. Historical Tandy automation installs the server as `nano-color` instead.
 
 For a **MINIX filesystem image** already compatible with the selected kernel, ELKS's `mfs` utility can copy files into the image. Work on an unmounted image copy, never the active emulator disk. For example:
 
 ```bash
 # Set this to your own working copy of a compatible image.
 export IMAGE=/path/to/working-copy.img
-mfs "$IMAGE" cp "$MWDIR/src/bin/nano-x" /bin/nano-color
-mfs "$IMAGE" cp "$MWDIR/vidreset" /bin/vidreset
+mfs "$IMAGE" cp "$NANOX_SERVER" /bin/nano-x
 mfs "$IMAGE" cp "$W16DIR/src/w16" /bin/w16
 mfs "$IMAGE" cp "$W16DIR/test/hello16/HELLO16.EXE" /root/hello16.exe
 mfs "$IMAGE" cp "$W16DIR/test/dlgtest/DLGTEST.EXE" /root/dlgtest.exe

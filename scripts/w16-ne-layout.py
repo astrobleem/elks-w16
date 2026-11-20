@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional native NE layout: keep bitmap.o and user.o intact as a third code group."""
+"""Native NE layout: keep bitmap.o and user.o intact as a third code group."""
 import sys
 from pathlib import Path
 s=Path(sys.argv[1]).read_text();needle='\n\t.data 0x30000'
