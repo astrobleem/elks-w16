@@ -1,0 +1,78 @@
+--- a/src/Makefile.elks
++++ b/src/Makefile.elks
+@@ -39,6 +39,11 @@
+ LDFLAGS += -Wl,--gc-sections
+ 
+ AR = ia16-elf-ar
++
++# Optional stock ELKS scancode-console backend (US set-1).
++ifeq ($(ELKS_KBD),scancode)
++CFLAGS += -DELKS_RAWKBD=1
++endif
+ 
+ # screen, mouse and kbd drivers
+ ifeq ($(CONFIG_ARCH_PC98), y)
+@@ -84,6 +89,10 @@
+ NANOX = nanox/srvmain.o nanox/srvfunc.o nanox/srvutil.o nanox/srvevent.o \
+     nanox/nxutil.o nanox/nxdraw.o nanox/nxpaintnc.o nanox/srvclip1.o
+ NANOX += nanox/wmaction.o nanox/wmclients.o nanox/wmevents.o nanox/wmutil.o
++ifeq ($(ELKS_KBD),scancode)
++DRIVERS := $(filter-out drivers/kbd_tty.o,$(DRIVERS)) drivers/kbd_elks_raw.o
++endif
++
+ ENGINE = engine/devdraw.o engine/devmouse.o engine/devkbd.o engine/devclip1.o \
+ 	engine/devopen.o engine/devfont.o engine/devlist.o engine/devblit.o \
+     engine/devpal1.o engine/devpal4.o
+--- a/src/nanox/srvmain.c
++++ b/src/nanox/srvmain.c
+@@ -947,6 +947,16 @@
+ 	}
+ #endif
+ 
++#if ELKS_RAWKBD
++	/* Stock DCSET_KRAW is valid only while the screen owns DCGET_GRAPH. */
++	if ((psd = GdOpenScreen()) == NULL) {
++		free(wp);return -1;
++	}
++	if ((keyb_fd = GdOpenKeyboard()) == -1) {
++		EPRINTF("Cannot initialise ELKS scancode keyboard\n");
++		GdCloseScreen(psd);free(wp);return -1;
++	}
++#else
+ 	if ((keyb_fd = GdOpenKeyboard()) == -1) {
+ 		EPRINTF("Cannot initialise keyboard\n");
+ 		/*GsCloseSocket();*/
+@@ -961,12 +971,16 @@
+ 		free(wp);
+ 		return -1;
+ 	}
++#endif
+ 	GdSetPortraitMode(psd, portraitmode);
+ 
+ 	if ((mouse_fd = GdOpenMouse()) == -1) {
+ 		/*GsCloseSocket();*/
+-		GdCloseScreen(psd);
+-		GdCloseKeyboard();
++#if ELKS_RAWKBD
++		GdCloseKeyboard();GdCloseScreen(psd);
++#else
++		GdCloseScreen(psd);GdCloseKeyboard();
++#endif
+ 		EPRINTF("Cannot initialise mouse\n");
+ 		free(wp);
+ 		return -1;
+@@ -1074,9 +1088,14 @@
+ 	GsCloseSocket();
+ #endif
+ 
++#if ELKS_RAWKBD
++	GdCloseKeyboard(); /* release raw mode before the graphics console */
++#endif
+ 	GdCloseScreen(rootwp->psd);
+ 	GdCloseMouse();
++#if !ELKS_RAWKBD
+ 	GdCloseKeyboard();
++#endif
+ #if VTSWITCH
+ 	MwRedrawVt(mwvterm);
+ #endif

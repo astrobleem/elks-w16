@@ -1,4 +1,5 @@
 #!/bin/sh
+# ELKS_KBD=scancode opts into US set-1 on stock CONFIG_KEYBOARD_SCANCODE kernels; default tty.
 # Isolated native-size CGA build. Default CGA_MODE=mono; CGA_MODE=color selects 320x200x4.
 # CGA_PAN=1 adds a 300-row virtual screen; Alt+I/J/K/L pans, Alt+H returns.
 # CGA_VWIDTH/CGA_VHEIGHT optionally select bounded virtual dimensions (requires CGA_PAN=1).
@@ -112,12 +113,13 @@ for name in ['nanox/srvnet.c','nanox/srvfunc.c']:
  if s==old:raise SystemExit('Missing low-color readback guard in '+name)
  f.write_text(s)
 PYCODE
+ROOT="$ROOT" MWDIR="$WORK" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
 # Baseline hardcodes 8 KiB; change only our disposable copy to accept an override.
 sed 's/-maout-heap=0x2000/-maout-heap=$(NANOX_HEAP)/g' "$WORK/src/Makefile.elks" > "$WORK/src/Makefile.cga"
 # Empty PC98 is essential: upstream uses ifdef, so even CONFIG_ARCH_PC98=n selects it.
 make -C "$WORK/src" -f Makefile.cga CONFIG_ARCH_PC98= SCREEN_TANDY=n SCREEN_CGA=y clean
 make -C "$WORK/src" -f Makefile.cga CONFIG_ARCH_PC98= SCREEN_TANDY=n SCREEN_CGA=y \
-    NANOX_HEAP="$NANOX_HEAP" bin/nano-x lib/libnano-X.a
+    ELKS_KBD="${ELKS_KBD:-tty}" NANOX_HEAP="$NANOX_HEAP" bin/nano-x lib/libnano-X.a
 mkdir -p "$WORK/medium"
 for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
     object="$WORK/medium/$(basename "$source" .c).o"

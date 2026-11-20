@@ -213,6 +213,11 @@ fi
 
 echo "== 10. menus: Alt+F4 with a menu bar popup or the system menu open (set MWDIR)"
 if [ -n "${MWDIR:-}" ]; then
+    if python3 tests/elksrawkbdtest.py > $T/rawkbd.txt 2>&1; then
+        ok "$(tail -n 1 $T/rawkbd.txt)"
+    else
+        bad "stock ELKS raw keyboard"; cat $T/rawkbd.txt
+    fi
     if gcc -DW16_HOST -Wall -Wno-unused-parameter -fsanitize=address,undefined -fno-pie -no-pie -I"$MWDIR/src/include" -Isrc \
            -o $T/menukey tests/menukey_test.c src/dlgtmpl.c > $T/menukey.txt 2>&1 && $T/menukey >> $T/menukey.txt 2>&1; then
         ok "$(grep '^==' $T/menukey.txt)"

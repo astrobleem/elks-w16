@@ -1,4 +1,5 @@
 #!/bin/sh
+# ELKS_KBD=scancode opts into US set-1 on stock CONFIG_KEYBOARD_SCANCODE kernels; default tty.
 # Optional isolated VGA build. Existing Tandy checkout and defaults are unchanged.
 # TOPDIR=built-elks MWDIR=baseline-patched-microwindows sh scripts/build-nanox-vga.sh
 # NANOX_HEAP=0xfff0 selects ELKS's maximum-heap sentinel; default is 32 KiB.
@@ -42,12 +43,13 @@ for name in nanox-readpixel.patch nanox-screenand.patch nanox-capturepixels.patc
     fi
     patch --batch --forward -d "$WORK" -p1 < "$patchfile"
 done
+ROOT="$ROOT" MWDIR="$WORK" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
 # Baseline hardcodes 8 KiB; change only our disposable copy to accept an override.
 sed 's/-maout-heap=0x2000/-maout-heap=$(NANOX_HEAP)/g' "$WORK/src/Makefile.elks" > "$WORK/src/Makefile.vga"
 # Empty PC98 is essential: upstream uses ifdef, so even CONFIG_ARCH_PC98=n selects it.
 make -C "$WORK/src" -f Makefile.vga CONFIG_ARCH_PC98= SCREEN_TANDY=n SCREEN_CGA=n clean
 make -C "$WORK/src" -f Makefile.vga CONFIG_ARCH_PC98= SCREEN_TANDY=n SCREEN_CGA=n \
-    NANOX_HEAP="$NANOX_HEAP" bin/nano-x
+    ELKS_KBD="${ELKS_KBD:-tty}" NANOX_HEAP="$NANOX_HEAP" bin/nano-x
 mkdir -p "$WORK/medium"
 for source in nanox/client.c nanox/nxproto.c nanox/nxutil.c drivers/osdep.c; do
     object="$WORK/medium/$(basename "$source" .c).o"

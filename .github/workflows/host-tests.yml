@@ -58,3 +58,4 @@ jobs:
             -fno-pie -no-pie -I"$RUNNER_TEMP/microwindows/src/include" -Isrc \
             -o "$RUNNER_TEMP/menukey" tests/menukey_test.c src/dlgtmpl.c
           "$RUNNER_TEMP/menukey"
+          MWDIR="$RUNNER_TEMP/microwindows" python3 tests/elksrawkbdtest.py

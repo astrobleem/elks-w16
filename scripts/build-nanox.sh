@@ -1,4 +1,5 @@
 #!/bin/sh
+# ELKS_KBD=scancode opts into US set-1 on stock CONFIG_KEYBOARD_SCANCODE kernels; default tty.
 # Build a patched Nano-X checkout without mixing small- and medium-model objects.
 # TOPDIR=/path/to/built-elks MWDIR=/path/to/patched-microwindows sh scripts/build-nanox.sh
 set -eu
@@ -28,9 +29,11 @@ if ! patch --fuzz=0 --force --reverse --dry-run -d "$MWDIR" -p1 < "$patchfile" >
     patch --fuzz=0 --batch --forward -d "$MWDIR" -p1 < "$patchfile"
 fi
 
+ROOT="$ROOT" MWDIR="$MWDIR" ELKS_KBD="${ELKS_KBD:-tty}" sh "$ROOT/scripts/elks-keyboard.sh"
+
 # Clean first, so a formerly medium-model client archive cannot be reused here.
 make -C "$MWDIR/src" -f Makefile.elks clean
-make -C "$MWDIR/src" -f Makefile.elks SCREEN_TANDY=y LOCALFLAGS=-DMEM_GETPCJR=15
+make -C "$MWDIR/src" -f Makefile.elks SCREEN_TANDY=y ELKS_KBD="${ELKS_KBD:-tty}" LOCALFLAGS=-DMEM_GETPCJR=15
 
 # These utilities share the normal small-model screen-driver object.
 for utility in nxcolor vidinfo vidreset; do
