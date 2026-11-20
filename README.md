@@ -31,6 +31,17 @@ The logo was drawn with Paintbrush’s line tool using emulated mouse input. Thi
 
 **Current Program Manager milestone:** stock Windows 3.0 Program Manager opens its Games group and launches and closes stock Solitaire on an emulated **4.77 MHz 8088, 640 KiB, stock scancode ELKS and 640×200 monochrome CGA**. The first full deal, child cleanup, recovered RAM and a responsive parent were observed using a lean shell-free boot and `w16 -T`. This is an emulator result. Full Program Manager on physical hardware is unverified; the open DLGTEST example has passed one Escape back to a working shell on a real Tandy 1000 EX in its separate hardware setup.
 
+### Program Manager on CGA
+
+Captured in the same 8088 emulator run on stock ELKS. Click either screenshot for the full-size capture.
+
+<table>
+<tr>
+<td align="center"><a href="docs/screenshots/progman-games-stock-elks-8088-cga.png"><img src="docs/screenshots/progman-games-stock-elks-8088-cga.png" width="440" alt="Windows 3.0 Program Manager with Games selected in its Window menu"></a><br>Program Manager’s Games menu</td>
+<td align="center"><a href="docs/screenshots/progman-solitaire-stock-elks-8088-cga.png"><img src="docs/screenshots/progman-solitaire-stock-elks-8088-cga.png" width="440" alt="Windows 3.0 Solitaire launched from Program Manager with all seven columns dealt"></a><br>Solitaire after the first deal</td>
+</tr>
+</table>
+
 The supported programs and display configurations are listed below. This is not a general-purpose Windows compatibility environment.
 
 ## What runs
