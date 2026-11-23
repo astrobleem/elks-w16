@@ -59,6 +59,17 @@ The supported programs and display configurations are listed below. This is not 
 | **Windows 3.0 Program Manager** | Groups and launch/close of Solitaire with `-T` on emulated 8088 CGA; full hardware support unverified | Bring your own EXE, configuration and group files |
 | **Windows 3.0 SOLITAIRE** | First deal and close on emulated CGA; basic moves and Options on experimental VGA | Bring your own copy |
 
+### Win16 API binding coverage
+
+| Module | Bindings / named exports | Coverage |
+| :--- | ---: | ---: |
+| KERNEL | 73 / 192 | 38.0% |
+| USER | 157 / 387 | 40.6% |
+| GDI | 72 / 235 | 30.6% |
+| Total | 302 / 814 | 37.1% |
+
+This is a static snapshot against one Windows 3.0 real-mode reference set. The denominator counts unique named export ordinals (aliases count once); it excludes ordinal-only exports and other DLLs. The numerator counts entries W16 resolves by ordinal in its default configuration, including exported constants and raw entries, but not diagnostic traps. A binding does not prove correct behavior or that an application runs. See the app results above for what has actually been exercised.
+
 ### Display configurations
 
 | Display build | Resolution | Emulator coverage |
